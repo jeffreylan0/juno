@@ -38,15 +38,28 @@ let panelPending = false;
 let armedTabId: number | undefined;
 /** The tab the pending plan came from, so the panel opens against it. */
 let planTabId: number | undefined;
+/**
+ * True once the panel has been opened for the current arming. Clicking the
+ * toolbar icon is an extension gesture Chrome always honours, so that is where
+ * the panel is opened; re-opening it later would only risk tripping the
+ * fallback on a panel that is already there.
+ */
+let panelOpenedForArm = false;
 
 export default defineBackground(() => {
   browser.action.onClicked.addListener((tab) => {
+    // First statement, before any await: sidePanel.open() needs live user
+    // activation, and an action click is the one gesture Chrome always accepts.
+    // Waiting for the drag to finish, as this used to, leaves it to chance.
+    void openPanelForArm(tab?.id);
     void getSettings().then((s) => startSelection(tab?.id, s.defaultSelectionKind));
   });
 
   browser.commands.onCommand.addListener((command, tab) => {
     const kind: SelectionKind | null = command === 'select-box' ? 'box' : command === 'select-text' ? 'text' : null;
-    if (kind) void startSelection(tab?.id, kind);
+    if (!kind) return;
+    void openPanelForArm(tab?.id);
+    void startSelection(tab?.id, kind);
   });
 
   browser.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
@@ -65,12 +78,13 @@ export default defineBackground(() => {
         }
         return;
       case 'selection:committed':
-        // First statement, no awaits before it: this call has to run while the
-        // drag's user activation is still live or Chrome refuses to open the
-        // panel. Everything else about the selection can wait.
+        // The panel was opened when the selection was armed. Only try again if
+        // that did not happen — a shortcut fired from a surface with no tab,
+        // say — and do it here, before any await, while the drag's activation
+        // is still the freshest thing Chrome has seen.
         armedTabId = undefined;
         planTabId = sender.tab?.id;
-        void openPanel(sender.tab?.id);
+        if (!panelOpenedForArm) void openPanel(sender.tab?.id);
         return;
       case 'selection:done':
         armedTabId = undefined;
@@ -171,6 +185,11 @@ async function openPanel(tabId: number | undefined): Promise<boolean> {
     setPanelPending(true);
     return false;
   }
+}
+
+/** Opens the panel for a fresh arming and remembers whether it worked. */
+async function openPanelForArm(tabId: number | undefined): Promise<void> {
+  panelOpenedForArm = await openPanel(tabId);
 }
 
 /** Asks the page to offer a "Show it" button, since we cannot open the panel ourselves. */

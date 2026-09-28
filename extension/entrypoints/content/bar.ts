@@ -65,16 +65,21 @@ export const BAR_STYLE = `
 .settings {
   max-height: 0; overflow-y: auto; overscroll-behavior: contain;
   transition: max-height 220ms ease;
-  border-bottom: 1px solid transparent;
+  border-top: 1px solid transparent;
 }
-.settings.open { max-height: min(46vh, 340px); border-bottom-color: rgba(255, 255, 255, 0.12); }
+.settings.open { max-height: min(46vh, 340px); border-top-color: rgba(255, 255, 255, 0.12); }
 .settings-inner { display: flex; flex-direction: column; gap: 12px; padding: 14px 14px 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.6; }
 .field select {
-  font: inherit; font-size: 12px; padding: 6px 8px; border-radius: 8px; cursor: pointer;
+  font: inherit; font-size: 12px; padding: 6px 30px 6px 8px; border-radius: 8px; cursor: pointer;
   color: #fff; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.18);
+  /* The native arrow sits hard against the edge and ignores our padding. */
+  -webkit-appearance: none; -moz-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23ffffff' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; background-size: 12px 12px;
 }
+.field select::-ms-expand { display: none; }
 .field select option { color: #0f172a; background: #fff; }
 .more {
   align-self: flex-start; font: inherit; font-size: 12px; cursor: pointer;
@@ -161,7 +166,10 @@ export class Bar {
     this.notices = document.createElement('div');
     this.notices.className = 'notices';
 
-    this.el.append(this.settings, row, this.notices);
+    // Row, then settings, then notices: the gear opens between the controls
+    // and whatever the page is warning about, and since the bar is anchored at
+    // its bottom, the whole thing still grows upwards.
+    this.el.append(row, this.settings, this.notices);
   }
 
   /** Hides the instruction while a selection is actually being drawn. */

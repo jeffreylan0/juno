@@ -42,8 +42,9 @@ const STYLE = `
 ${BAR_STYLE}
 `;
 
-/** How far the tooltip sits from the pointer. */
-const TIP_OFFSET = { x: 16, y: 18 };
+/** How far the tooltip sits from the pointer. Close enough to read without
+ * moving your eyes off the corner you are dragging. */
+const TIP_OFFSET = { x: 8, y: 10 };
 
 export interface OverlayHandlers {
   /** The user picked a different mode from the bar's chips. */
@@ -238,6 +239,10 @@ export class Overlay {
       const onWheel = (e: WheelEvent) => {
         if (isOurUi(e)) return;
         e.preventDefault();
+        // Mid-drag the box is pinned to the viewport and cannot grow to follow
+        // the page, so scrolling would hand back a crop of something the user
+        // never framed. Swallow it until the drag ends.
+        if (this.drawing) return;
         applyWheel(scrollTargetAt(e.clientX, e.clientY, this.host), e);
       };
       this.backdrop?.addEventListener('wheel', onWheel, { passive: false });

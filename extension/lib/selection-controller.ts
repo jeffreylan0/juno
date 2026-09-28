@@ -129,13 +129,16 @@ export class SelectionController {
 
   /** On a browser PDF viewer, only a screenshot is possible — offer the reader. */
   private offerReader(): void {
-    this.overlay.notice("This is the browser's PDF viewer, so only a screenshot can be read.", {
-      label: 'Open in reader',
-      onClick: () => {
-        this.overlay.abort();
-        location.href = readerUrlFor(this.pdf.url, (p) => browser.runtime.getURL(p as `/${string}`));
+    this.overlay.notice(
+      "This is the browser's PDF viewer: only a screenshot can be read, and the page cannot scroll while selecting.",
+      {
+        label: 'Open in reader',
+        onClick: () => {
+          this.overlay.abort();
+          location.href = readerUrlFor(this.pdf.url, (p) => browser.runtime.getURL(p as `/${string}`));
+        },
       },
-    });
+    );
   }
 }
 

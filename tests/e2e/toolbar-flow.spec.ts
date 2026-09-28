@@ -23,6 +23,23 @@ async function clickToolbar(sw: Worker, url: string): Promise<void> {
   }, url);
 }
 
+/** Waits for a CSS transition to finish, so boxes are not measured in flight. */
+async function settled(page: Page, selector: string): Promise<void> {
+  let last = -1;
+  await expect
+    .poll(
+      async () => {
+        const box = await page.locator(selector).boundingBox();
+        const height = box?.height ?? -1;
+        const stable = height === last;
+        last = height;
+        return stable;
+      },
+      { intervals: [80, 80, 80, 80, 80, 80], timeout: 4000 },
+    )
+    .toBe(true);
+}
+
 async function armed(sw: Worker, page: Page, path = 'text.html'): Promise<void> {
   const url = `${FIXTURE_ORIGIN}/${path}`;
   await page.goto(url);
@@ -131,27 +148,52 @@ test('clicking the bar never starts a selection', async ({ context, extensionId,
   expect(await getPlan(panel)).toBeNull();
 });
 
-test('the gear expands the bar upwards into settings', async ({ context, serviceWorker }) => {
+test('the gear expands the bar upwards, between the controls and the notices', async ({ context, serviceWorker }) => {
   const page = await context.newPage();
   await armed(serviceWorker, page);
   const bar = page.locator(BAR);
   const settings = page.locator(`${BAR} .settings`);
 
-  const closedBottom = (await bar.boundingBox())!.y + (await bar.boundingBox())!.height;
-  const closedTop = (await bar.boundingBox())!.y;
+  const closed = (await bar.boundingBox())!;
 
   await bar.locator('.gear').click();
   await expect(settings).toHaveClass(/open/);
   await expect(settings.locator('select')).toHaveCount(4);
+  await settled(page, BAR);
 
   const open = (await bar.boundingBox())!;
   // It grew upward: the top rose, the bottom stayed put.
-  expect(open.y).toBeLessThan(closedTop);
-  expect(Math.abs(open.y + open.height - closedBottom)).toBeLessThan(4);
+  expect(open.y).toBeLessThan(closed.y);
+  expect(Math.abs(open.y + open.height - (closed.y + closed.height))).toBeLessThan(4);
+
+  // Settings sit below the control row, not above it.
+  const row = (await page.locator(`${BAR} .row`).boundingBox())!;
+  const panel = (await settings.boundingBox())!;
+  expect(panel.y).toBeGreaterThanOrEqual(row.y + row.height - 1);
 
   // No secrets in page-reachable DOM.
   await expect(page.locator(`${BAR} input[type="password"]`)).toHaveCount(0);
   await expect(settings).toContainText('All settings, keys and prompts');
+});
+
+test('the wheel is ignored once a drag has started', async ({ context, serviceWorker }) => {
+  const page = await context.newPage();
+  await armed(serviceWorker, page, 'long.html');
+
+  const before = await page.evaluate(() => window.scrollY);
+  await page.mouse.move(400, 300);
+  await page.mouse.down();
+  await page.mouse.move(500, 400, { steps: 4 });
+  await page.mouse.wheel(0, 600);
+  await page.waitForTimeout(150);
+  // A box is pinned to the viewport, so letting the page move under it would
+  // capture something the student never framed.
+  expect(await page.evaluate(() => window.scrollY)).toBe(before);
+  await page.mouse.up();
+
+  // And it comes back once the drag is over.
+  await page.mouse.wheel(0, 600);
+  await expect.poll(async () => page.evaluate(() => window.scrollY)).toBeGreaterThan(before);
 });
 
 test('a completed selection still produces a plan', async ({ context, extensionId, serviceWorker }) => {
@@ -170,8 +212,11 @@ test('a completed selection still produces a plan', async ({ context, extensionI
   const plan = (await getPlan(panel))!;
   expect(plan.parts.map((p) => p.kind)).toContain('image');
 
-  const badge = await serviceWorker.evaluate(async () => chrome.action.getBadgeText({}));
-  expect(badge, 'panel needed a manual click; the gesture did not carry').toBe('');
+  // The drag is a real gesture, so whichever attempt lands, nothing is left
+  // nagging the student for a click.
+  await expect
+    .poll(async () => serviceWorker.evaluate(async () => chrome.action.getBadgeText({})), { timeout: 10_000 })
+    .toBe('');
 });
 
 test('when Chrome refuses the panel, the page offers a click that opens it', async ({ context, serviceWorker }) => {
@@ -188,4 +233,34 @@ test('when Chrome refuses the panel, the page offers a click that opens it', asy
   await expect(toast).toBeVisible();
   await toast.locator('button', { hasText: 'Show it' }).click();
   await expect(page.locator('selection-ai-toast')).toHaveCount(0);
+});
+
+/**
+ * Chromium does enforce the user-activation rule on sidePanel.open(): a real
+ * drag satisfies it, and the synthetic action dispatch a test has to use does
+ * not. That asymmetry is what this pins down. In a real browser the click-time
+ * open succeeds and the badge never appears; here it is refused, which
+ * exercises the retry that has to be there when a gesture is missing.
+ */
+test('the panel is asked for at arm time, and again if that was refused', async ({ context, serviceWorker }) => {
+  const page = await context.newPage();
+  const url = `${FIXTURE_ORIGIN}/text.html`;
+  await page.goto(url);
+  await page.bringToFront();
+
+  await clickToolbar(serviceWorker, url);
+  await expect(page.locator(BAR)).toBeVisible({ timeout: 10_000 });
+
+  // The attempt happened before any drag; the badge is how a refusal surfaces.
+  const badge = () => serviceWorker.evaluate(async () => chrome.action.getBadgeText({}));
+  await expect.poll(badge, { timeout: 5000 }).toBe('1');
+
+  const target = (await page.locator('#problem').boundingBox())!;
+  await page.mouse.move(target.x - 4, target.y - 4);
+  await page.mouse.down();
+  await page.mouse.move(target.x + target.width + 4, target.y + target.height + 4, { steps: 8 });
+  await page.mouse.up();
+
+  // The drag is a real gesture, so the retry lands and the badge clears.
+  await expect.poll(badge, { timeout: 10_000 }).toBe('');
 });
