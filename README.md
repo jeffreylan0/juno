@@ -6,20 +6,21 @@ Chrome, Edge and Firefox from one WXT codebase; Safari from week 12.
 
 ## Status
 
-Weeks 1–2 of the build plan are done: the workspace, the shared payload schema, the provider layer (mock, local, bring-your-own-key, hosted stub), capture and cropping, the router, the toolbar popup, the answer panel, the options page, the eval harness and CI. Weeks 3–6 add the real selectors and extractors.
+Weeks 1–2 of the build plan are done: the workspace, the shared payload schema, the provider layer (mock, local, bring-your-own-key, hosted stub), capture and cropping, the router, the selection overlay, the answer panel, the settings page, a PDF.js reader, the eval harness and CI. Weeks 3–6 add the real selectors and extractors.
 
 | Area | State |
 | --- | --- |
-| Toolbar popup → selection → crop → plan → streamed answer | working, Chrome and Firefox |
+| Toolbar click → selection → crop → plan → streamed answer | working, Chrome and Firefox |
 | Box selection | working, with a centred hint and Escape to cancel |
 | Text selection | working; KaTeX/MathJax range widening lands week 3 |
-| Element selection | week 4 (the popup shows it disabled) |
+| Element selection | week 4 (the mode chip is shown disabled) |
+| PDFs | reader with a real PDF.js text layer; all modes work there |
 | Extractors (visible, math, table, code) | `extract/visible.ts` only; rest weeks 4–5 |
 | Providers | mock, local (Ollama), BYOK (Anthropic + OpenAI); gateway is a stub |
 | Eval | 5 seed problems of 100; mock and image-only routes run |
 | Worker, Stripe, Supabase | stubs with the week-9/10/11 shape |
 
-The popup and the panel are deliberately unstyled beyond a set of CSS tokens at the top of `entrypoints/popup/popup.css` and `ui/panel.css`. Replacing those two blocks re-themes both.
+The surfaces are deliberately unstyled beyond a block of CSS tokens at the top of `ui/panel.css`, `entrypoints/options/options.css` and `entrypoints/reader/reader.css`, plus the `--sai-*` variables the in-page overlay reads. Replacing those blocks re-themes everything.
 
 ## Quick start
 
@@ -30,7 +31,9 @@ pnpm dev                       # Chrome with live reload
 pnpm dev:firefox               # same in Firefox
 ```
 
-Clicking the toolbar icon opens a small popup and arms a box selection at once, so the usual move is click, then drag. The popup's icons switch to text selection (element selection arrives in week 4); Escape cancels from either the popup or the page. The answer panel slides in only once a selection has been made. Alt+Shift+S and Alt+Shift+A skip the popup and arm box or text selection directly.
+Clicking the toolbar icon arms a selection immediately — crosshair, centred hint, ready to drag on the first click. The hint carries the mode chips, so box and text switch without going back to the toolbar; element selection arrives in week 4. Escape cancels. The answer panel opens as soon as a selection is committed. Alt+Shift+S and Alt+Shift+A arm box or text directly.
+
+On a PDF opened in the browser's own viewer only box selection is possible, because the text lives inside a plugin the extension cannot read. Selection AI says so and offers to reopen the file in its own PDF.js reader, where the text is real DOM and all modes work. Local files need *Allow access to file URLs* turned on for the extension in `chrome://extensions`.
 
 The default provider is `mock`, which replays recorded answers and otherwise streams a placeholder — no network, no spend.
 
@@ -75,9 +78,9 @@ Four routes are compared: `mock` (replay), `local` (Ollama), `image-only` (just 
 ```
 selection-ai/
 ├── extension/          WXT project: Chrome, Edge, Firefox, Safari
-│   ├── entrypoints/    background, content/, popup/, sidepanel/, options/
+│   ├── entrypoints/    background, content/, reader/, sidepanel/, options/
 │   ├── extract/        visible.ts (math, table, code land weeks 4–5)
-│   ├── lib/            planner, capture, router, cache, storage, messages, render, providers/
+│   ├── lib/            planner, capture, router, cache, storage, messages, render, pdf-detect, selection-controller, providers/
 │   └── ui/             Panel, Tray, Preview, Answer, WhatIRead
 ├── shared/             payload.ts (types), prompts.ts (mode prompts) — one schema for all three packages
 ├── worker/             Cloudflare Worker for hosted plans (week 9)
@@ -88,7 +91,7 @@ selection-ai/
 
 Three rules hold the design together. Page-touching code lives in the content script; anything holding a key or making a network call lives in the background. Every provider speaks one OpenAI-compatible message shape, converted to the Anthropic Messages API only at the edge in `providers/byok.ts`. And `shared/payload.ts` is the single schema the extension, the Worker and the eval scripts all build against.
 
-Two browser rules are worth knowing before changing the toolbar flow. The popup holds keyboard focus while it is open, so it has to relay Escape to the page itself — and it must wait for that message to send before calling `window.close()`, or the message is dropped. And `sidePanel.open()` needs a real user gesture, which a message relayed from a content script does not reliably carry; when the panel cannot be opened after a selection, the background badges the toolbar icon and the popup offers a button that does carry one.
+Three browser rules are worth knowing before changing the toolbar flow. `sidePanel.open()` needs a live user gesture, and the drag's activation expires quickly — so the content script sends `selection:committed` the instant a selection lands, before any capture or extraction, and the background calls `open()` as its first statement. If Chrome still refuses, the page shows a one-click toast, which is a fresh gesture it does accept. Chrome will not inject a content script into an extension page, so the reader runs `lib/selection-controller.ts` itself and the background routes to it by a tab registry rather than by URL — `tabs.get` does not reveal a URL without the `tabs` permission. And pdf.js 6 calls `Map.getOrInsertComputed`, so the reader imports the legacy build to keep working on the browsers students actually run.
 
 ## Privacy and permissions
 
@@ -96,4 +99,4 @@ The manifest asks for `activeTab`, `scripting`, `storage` and `sidePanel` — no
 
 ## Next
 
-Week 3 finishes selection: widening a text range to whole KaTeX or MathJax expressions, and Option-drag to subtract regions from a box. Week 4 adds hover-to-pick elements via `elementFromPoint`, which turns on the third popup icon. Weeks 5–6 are the extractors and the real planner, which is what Gate A measures.
+Week 3 finishes selection: widening a text range to whole KaTeX or MathJax expressions, and Option-drag to subtract regions from a box. Week 4 adds hover-to-pick elements via `elementFromPoint`, which turns on the third mode chip. Weeks 5–6 are the extractors and the real planner, which is what Gate A measures.

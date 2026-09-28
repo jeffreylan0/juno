@@ -64,12 +64,13 @@ export default defineConfig({
           description: 'Ask about the current text selection',
         },
       },
+      // No default_popup: clicking the icon arms a selection straight away, so
+      // the page is ready for input on the first click. Mode switching lives in
+      // the overlay's hint.
       action: {
-        default_title: 'Selection AI',
-        // Clicking the icon opens this popup to pick a selection mode; the
-        // answer panel opens later, once a selection has been made.
-        default_popup: 'popup.html',
+        default_title: 'Selection AI — select and ask',
       },
+      web_accessible_resources: [{ resources: ['reader.html'], matches: ['<all_urls>'] }],
     };
 
     if (browser === 'firefox') {

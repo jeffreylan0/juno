@@ -4,17 +4,30 @@
  * keeps the store well under Safari's 5 MB cap.
  */
 import { storage } from '#imports';
-import type { ModelRef, Provider, SelectionKind } from '@shared/payload';
+import { DEFAULT_PROMPTS } from '@shared/prompts';
+import type { Mode, ModelRef, Provider, SelectionKind } from '@shared/payload';
+
+/**
+ * What happens the moment a selection lands.
+ * - `prefill`: the mode's default prompt goes in the box, editable, and
+ *   nothing is sent until the student asks. No surprise spend.
+ * - `auto`: the ask goes out immediately with the default prompt.
+ * - `auto-box`: box selections go out immediately; text and element wait.
+ */
+export type SendBehavior = 'prefill' | 'auto' | 'auto-box';
 
 export interface Settings {
   provider: Provider;
-  defaultMode: 'explain' | 'hint' | 'check';
-  /** Which selection mode the toolbar popup arms on open. */
+  defaultMode: Mode;
+  /** Which selection mode the toolbar arms on click. */
   defaultSelectionKind: SelectionKind;
   /** Preferred vendor for the router's model table. */
   vendor: 'anthropic' | 'openai';
   /** Explicit model override; empty means "let the router choose". */
   modelOverride: ModelRef | null;
+  /** The question that lands in the box for each mode. */
+  prompts: Record<Mode, string>;
+  sendBehavior: SendBehavior;
   /** Hostnames where the shortcut does nothing (exams, private portals). */
   blockedSites: string[];
   localBaseUrl: string;
@@ -28,6 +41,8 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultSelectionKind: 'box',
   vendor: 'anthropic',
   modelOverride: null,
+  prompts: { ...DEFAULT_PROMPTS },
+  sendBehavior: 'prefill',
   blockedSites: [],
   localBaseUrl: 'http://localhost:11434/v1',
   localModel: 'qwen2.5vl:7b',
@@ -50,9 +65,18 @@ export const keysItem = storage.defineItem<Keys>('local:keys', {
 });
 
 export async function getSettings(): Promise<Settings> {
-  return { ...DEFAULT_SETTINGS, ...(await settingsItem.getValue()) };
+  const stored = await settingsItem.getValue();
+  // Merge one level into `prompts` too, so a new mode added later still has text.
+  return { ...DEFAULT_SETTINGS, ...stored, prompts: { ...DEFAULT_PROMPTS, ...stored?.prompts } };
 }
 
 export async function getKeys(): Promise<Keys> {
   return await keysItem.getValue();
+}
+
+/** Whether a selection of this kind should be sent without waiting for the student. */
+export function shouldAutoSend(settings: Settings, kind: SelectionKind): boolean {
+  if (settings.sendBehavior === 'auto') return true;
+  if (settings.sendBehavior === 'auto-box') return kind === 'box';
+  return false;
 }

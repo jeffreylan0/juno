@@ -22,10 +22,12 @@ export function clampToViewport(r: Rect, vw: number, vh: number): Rect {
 }
 
 export interface BoxSelectorHandlers {
-  /** Any pointer movement, so the overlay can keep its hint visible. */
+  /** Pointer movement while NOT dragging, so the hint can stay awake. */
   onActivity?: () => void;
   /** The drag began, so the hint can get out of the way. */
   onDragStart?: () => void;
+  /** The drag ended without producing a usable rectangle. */
+  onDragCancel?: () => void;
   /** A usable rectangle was drawn. */
   onDone: (rect: Rect) => void;
 }
@@ -58,8 +60,13 @@ export class BoxSelector {
     });
 
     on('pointermove', (e: PointerEvent) => {
-      this.handlers.onActivity?.();
-      if (!this.start) return;
+      if (!this.start) {
+        // Only idle movement counts as activity. Reporting it mid-drag would
+        // cancel the fade that onDragStart just triggered, which is what left
+        // the hint sitting on top of the selection.
+        this.handlers.onActivity?.();
+        return;
+      }
       this.draw(normalizeRect(this.start.x, this.start.y, e.clientX, e.clientY));
     });
 
@@ -70,7 +77,7 @@ export class BoxSelector {
       if (r.width < MIN_SIZE || r.height < MIN_SIZE) {
         // Too small to be deliberate: reset and let the user try again.
         this.box.style.display = 'none';
-        this.handlers.onActivity?.();
+        this.handlers.onDragCancel?.();
         return;
       }
       this.handlers.onDone(r);

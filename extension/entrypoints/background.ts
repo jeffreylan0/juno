@@ -4,9 +4,10 @@
  * tokens to the panel over a Port. Anything that holds keys or makes network
  * calls lives here, never in the content script.
  *
- * The toolbar action opens the popup (manifest `default_popup`), so there is no
- * onClicked listener; the popup arms the selection, and the answer panel opens
- * only once a selection has actually been made.
+ * Clicking the toolbar action arms a selection immediately — no popup, so the
+ * page is ready for input on the first click. Mode switching lives in the
+ * overlay's hint; settings live on the options page. The answer panel opens
+ * the instant a selection is committed, while the drag's gesture is still live.
  */
 import type { AskRequest, Mode, Plan, SelectionKind } from '@shared/payload';
 import { AreaCacheStore } from '@/lib/cache';
@@ -39,6 +40,10 @@ let armedTabId: number | undefined;
 let planTabId: number | undefined;
 
 export default defineBackground(() => {
+  browser.action.onClicked.addListener((tab) => {
+    void getSettings().then((s) => startSelection(tab?.id, s.defaultSelectionKind));
+  });
+
   browser.commands.onCommand.addListener((command, tab) => {
     const kind: SelectionKind | null = command === 'select-box' ? 'box' : command === 'select-text' ? 'text' : null;
     if (kind) void startSelection(tab?.id, kind);
@@ -53,9 +58,19 @@ export default defineBackground(() => {
         return;
       case 'selection:abort':
         if (armedTabId !== undefined) {
-          void browser.tabs.sendMessage(armedTabId, { type: 'selection:abort' }).catch(() => {});
+          const target = armedTabId;
           armedTabId = undefined;
+          if (isOwnPage(target)) void browser.runtime.sendMessage({ type: 'selection:abort', tabId: target }).catch(() => {});
+          else void browser.tabs.sendMessage(target, { type: 'selection:abort' }).catch(() => {});
         }
+        return;
+      case 'selection:committed':
+        // First statement, no awaits before it: this call has to run while the
+        // drag's user activation is still live or Chrome refuses to open the
+        // panel. Everything else about the selection can wait.
+        armedTabId = undefined;
+        planTabId = sender.tab?.id;
+        void openPanel(sender.tab?.id);
         return;
       case 'selection:done':
         armedTabId = undefined;
@@ -78,10 +93,21 @@ export default defineBackground(() => {
       case 'panel:ready':
         setPanelPending(false);
         return;
+      case 'reader:hello':
+        // The reader cannot know its own tab id without the tabs permission,
+        // and we cannot recognise it by URL for the same reason. One hello
+        // settles both: we remember the tab, it learns its id from the reply.
+        if (sender.tab?.id !== undefined) {
+          readerTabs.add(sender.tab.id);
+          sendResponse({ tabId: sender.tab.id });
+        }
+        return true;
       default:
         return;
     }
   });
+
+  browser.tabs.onRemoved.addListener((tabId) => readerTabs.delete(tabId));
 
   browser.runtime.onConnect.addListener((port) => {
     if (port.name !== PORT_ASK) return;
@@ -142,6 +168,17 @@ async function openPanel(tabId: number | undefined): Promise<boolean> {
   }
 }
 
+/** Asks the page to offer a "Show it" button, since we cannot open the panel ourselves. */
+async function promptForPanel(tabId: number | undefined): Promise<void> {
+  if (tabId === undefined) return;
+  try {
+    if (isOwnPage(tabId)) await browser.runtime.sendMessage({ type: 'panel:needs-click', tabId });
+    else await browser.tabs.sendMessage(tabId, { type: 'panel:needs-click' });
+  } catch {
+    // Nothing listening; the toolbar badge is the remaining signal.
+  }
+}
+
 /** A badge on the toolbar is the only hint we can give without a gesture. */
 function setPanelPending(value: boolean): void {
   panelPending = value;
@@ -163,6 +200,18 @@ async function ensureContentScript(tabId: number): Promise<void> {
   await browser.scripting.executeScript({ target: { tabId }, files: [CONTENT_SCRIPT] });
 }
 
+/**
+ * Tabs showing our own reader page. They run the selection flow themselves, so
+ * they must not be injected into. Identifying them by tab.url is unreliable —
+ * tabs.get only reveals a URL with the "tabs" permission, which we do not ask
+ * for — so the reader announces itself on load instead.
+ */
+const readerTabs = new Set<number>();
+
+function isOwnPage(tabId: number | undefined): boolean {
+  return tabId !== undefined && readerTabs.has(tabId);
+}
+
 async function startSelection(tabId: number | undefined, kind: SelectionKind): Promise<void> {
   if (tabId === undefined) return;
   const settings = await getSettings();
@@ -172,6 +221,15 @@ async function startSelection(tabId: number | undefined, kind: SelectionKind): P
     console.info('[selection-ai] blocked site, ignoring', host);
     return;
   }
+
+  if (isOwnPage(tabId)) {
+    // Chrome refuses to inject a content script into an extension page, and
+    // tabs.sendMessage does not reach one either, so broadcast with the tab id.
+    await browser.runtime.sendMessage({ type: 'selection:start', kind, tabId }).catch(() => {});
+    armedTabId = tabId;
+    return;
+  }
+
   try {
     await ensureContentScript(tabId);
   } catch (err) {
@@ -205,8 +263,10 @@ async function handleSelectionDone(msg: SelectionDoneMsg, tab: chrome.tabs.Tab |
   pendingPlan = buildPlan({ selection: msg, mode, capture });
   planTabId = tab?.id;
 
-  // The panel appears now, not when the toolbar icon was clicked.
-  await openPanel(planTabId);
+  // selection:committed already tried to open the panel with the drag's
+  // gesture. If Chrome refused it, ask the page for one click — that is a
+  // fresh gesture in a page context, which it does accept.
+  if (panelPending) await promptForPanel(planTabId);
   try {
     await browser.runtime.sendMessage({ type: 'plan:ready', plan: pendingPlan });
   } catch {

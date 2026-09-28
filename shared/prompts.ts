@@ -52,16 +52,21 @@ export function partToText(p: Part, index: number): string {
   }
 }
 
-/** Default question when the student just selects and hits Ask. */
+/**
+ * What goes in the question box when a selection lands, per mode. These are
+ * the shipped defaults; the settings page lets the student rewrite them, and
+ * `sendBehavior` decides whether they are sent straight away or wait for an
+ * edit.
+ */
+export const DEFAULT_PROMPTS: Record<Mode, string> = {
+  explain: 'Explain this step by step, then give the final answer.',
+  hint: 'Give me one hint for the next step. Do not give away the answer.',
+  check: 'Here is my work. Check it and tell me where the first mistake is.',
+};
+
+/** Default question when the student just selects and asks with an empty box. */
 export function defaultQuestion(mode: Mode): string {
-  switch (mode) {
-    case 'explain':
-      return 'Explain this.';
-    case 'hint':
-      return 'Give me a hint for this.';
-    case 'check':
-      return 'Check my work.';
-  }
+  return DEFAULT_PROMPTS[mode];
 }
 
 /** Builds the user-turn text (images are attached separately by the provider). */

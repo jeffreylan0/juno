@@ -1,0 +1,66 @@
+/**
+ * Barebones reader chrome. Tokens at the top, same as the panel and options,
+ * so the real design lands in one place.
+ */
+:root {
+  color-scheme: light dark;
+  --bg: #f1f5f9;
+  --chrome: #ffffff;
+  --fg: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --accent: #2563eb;
+  --radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  font-size: 13px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1220;
+    --chrome: #111827;
+    --fg: #e5e7eb;
+    --muted: #94a3b8;
+    --line: #1f2937;
+    --accent: #60a5fa;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); display: flex; flex-direction: column; }
+
+.bar {
+  display: flex; align-items: center; gap: 8px; flex: none;
+  padding: 8px 12px; background: var(--chrome); border-bottom: 1px solid var(--line);
+}
+.brand { font-weight: 600; }
+.file { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
+.spacer { flex: 1; }
+.bar button {
+  font: inherit; cursor: pointer; min-width: 30px; padding: 4px 8px;
+  color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 6px;
+}
+.bar button:hover { border-color: var(--accent); color: var(--accent); }
+.bar input { font: inherit; width: 58px; padding: 4px 6px; text-align: right; color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 6px; }
+.of { color: var(--muted); }
+#zoom { min-width: 44px; text-align: center; color: var(--muted); }
+
+.viewer { flex: 1; overflow: auto; padding: 16px 0 40px; }
+.page {
+  position: relative; margin: 0 auto 16px; background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); overflow: hidden;
+}
+.page canvas { display: block; }
+.page .placeholder {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #94a3b8; font-size: 12px;
+}
+
+.status {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: 640px;
+  background: var(--chrome); color: var(--fg); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 12px 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  line-height: 1.5;
+}
+.status code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+.status.error { border-color: #b91c1c; }

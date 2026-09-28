@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitWhatIRead, systemPrompt, userPromptText } from '@shared/prompts';
+import { DEFAULT_PROMPTS, splitWhatIRead, systemPrompt, userPromptText } from '@shared/prompts';
 import { canonicalizeRequest, estimateTokens, stableStringify, type Plan } from '@shared/payload';
 
 describe('prompts', () => {
@@ -34,7 +34,7 @@ describe('prompts', () => {
     const text = userPromptText(plan);
     expect(text).toContain('$$x^2$$');
     expect(text).toContain('```python');
-    expect(text).toContain('Question: Check my work.');
+    expect(text).toContain(`Question: ${DEFAULT_PROMPTS.check}`);
   });
 });
 

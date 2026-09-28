@@ -9,6 +9,14 @@
       "#imports": ["./shims/imports.ts"]
     }
   },
-  "include": ["*.ts", "shims/*.ts", "../shared/*.ts", "../extension/lib/**/*.ts"],
-  "exclude": ["../extension/lib/storage.ts"]
+  // Only the extension modules the eval scripts actually run. The rest of
+  // extension/lib touches browser globals that do not exist in Node.
+  "include": [
+    "*.ts",
+    "shims/*.ts",
+    "../shared/*.ts",
+    "../extension/lib/cache.ts",
+    "../extension/lib/router.ts",
+    "../extension/lib/providers/**/*.ts"
+  ]
 }

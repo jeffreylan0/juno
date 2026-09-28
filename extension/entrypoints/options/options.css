@@ -1,15 +1,60 @@
-:root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif; font-size: 14px; }
-body { margin: 0; background: Canvas; color: CanvasText; }
-.options { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
-h1 { font-size: 20px; margin: 0 0 16px; }
-h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; margin: 24px 0 8px; }
-section { display: flex; flex-direction: column; gap: 8px; }
-label { display: flex; flex-direction: column; gap: 4px; }
-label.radio { flex-direction: row; align-items: flex-start; gap: 8px; }
-label.radio span { display: flex; flex-direction: column; }
-label.radio small { opacity: .7; }
-input, select, textarea { font: inherit; padding: 6px 8px; border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 6px; background: Field; color: FieldText; }
-.help { opacity: .7; margin: 0; font-size: 13px; }
+/**
+ * Barebones settings theme. Tokens live at the top; the real design replaces
+ * this block and nothing else.
+ */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --accent: #2563eb;
+  --surface: #f8fafc;
+  --radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  font-size: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1220;
+    --fg: #e5e7eb;
+    --muted: #94a3b8;
+    --line: #1f2937;
+    --accent: #60a5fa;
+    --surface: #111827;
+  }
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); }
+.options { max-width: 620px; margin: 0 auto; padding: 32px 20px 64px; }
+h1 { font-size: 22px; margin: 0 0 6px; }
+.lede { color: var(--muted); margin: 0 0 8px; line-height: 1.55; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0; }
+
+section {
+  display: flex; flex-direction: column; gap: 10px;
+  margin-top: 24px; padding: 16px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 12px;
+}
+.head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+
+label { display: flex; flex-direction: column; gap: 5px; }
+label.radio { flex-direction: row; align-items: flex-start; gap: 9px; }
+label.radio span { display: flex; flex-direction: column; gap: 2px; }
+label.radio small { color: var(--muted); }
+
+input, select, textarea {
+  font: inherit; padding: 7px 9px; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: var(--radius); resize: vertical;
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.help { color: var(--muted); margin: 0; font-size: 13px; line-height: 1.5; }
+kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font: inherit; font-size: 12px; }
+.link { border: 0; background: none; padding: 0; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; }
+.link:hover { text-decoration: underline; }
+
 footer { margin-top: 24px; display: flex; align-items: center; gap: 12px; }
-footer button { font: inherit; padding: 8px 16px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; }
-.saved { opacity: .7; }
+footer button { font: inherit; padding: 9px 18px; border: 0; border-radius: var(--radius); background: var(--accent); color: #fff; cursor: pointer; }
+.saved { color: var(--muted); }

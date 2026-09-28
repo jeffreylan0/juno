@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Selection AI — PDF reader</title>
+  </head>
+  <body>
+    <header class="bar">
+      <span class="brand">Selection AI reader</span>
+      <span class="file" id="file"></span>
+      <span class="spacer"></span>
+      <button type="button" id="prev" title="Previous page">&#8249;</button>
+      <input id="page" type="number" min="1" value="1" aria-label="Page" />
+      <span class="of">/ <span id="pages">?</span></span>
+      <button type="button" id="next" title="Next page">&#8250;</button>
+      <button type="button" id="out" title="Zoom out">&minus;</button>
+      <span id="zoom">100%</span>
+      <button type="button" id="in" title="Zoom in">+</button>
+    </header>
+    <main id="viewer" class="viewer"></main>
+    <div id="status" class="status" hidden></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

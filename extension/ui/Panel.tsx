@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AskChunk, AskRequest, ChatTurn, Mode, ModelRef, Plan, Usage } from '@shared/payload';
 import { MODES } from '@shared/payload';
 import { PORT_ASK, type AskPortIn } from '@/lib/messages';
-import { getSettings, settingsItem, type Settings } from '@/lib/storage';
+import { getSettings, settingsItem, shouldAutoSend, type Settings } from '@/lib/storage';
 import { Answer } from './Answer';
 import { Preview } from './Preview';
 import { Tray } from './Tray';
@@ -30,6 +30,8 @@ export function Panel() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [busy, setBusy] = useState(false);
+  /** A plan just arrived and has not yet been prefilled or auto-sent. */
+  const [pendingAuto, setPendingAuto] = useState(false);
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
 
@@ -46,6 +48,7 @@ export function Panel() {
       if (p) {
         setPlan(p);
         setMode(p.mode);
+        setPendingAuto(true);
       }
     });
     const onMessage = (raw: unknown) => {
@@ -53,6 +56,7 @@ export function Panel() {
       if (msg?.type === 'plan:ready' && msg.plan) {
         setPlan(msg.plan);
         setTurns([]);
+        setPendingAuto(true);
       }
     };
     browser.runtime.onMessage.addListener(onMessage);
@@ -78,9 +82,10 @@ export function Panel() {
     setTurns((t) => t.map((x) => (x.streaming ? { ...x, streaming: false } : x)));
   }, []);
 
-  const ask = useCallback(() => {
+  const ask = useCallback(
+    (override?: string) => {
     if (!plan || busy) return;
-    const q = question.trim();
+    const q = (override ?? question).trim();
     const history: ChatTurn[] = turns.filter((t) => !t.error).map(({ role, text }) => ({ role, text }));
     const request: AskRequest = { plan: { ...plan, mode, question: q || undefined }, history };
     const userTurn: Turn = { id: crypto.randomUUID(), role: 'user', text: q || `(${MODE_LABEL[mode]} the selection)` };
@@ -111,7 +116,19 @@ export function Panel() {
     port.onDisconnect.addListener(() => setBusy(false));
     const start: AskPortIn = { type: 'ask:start', request };
     port.postMessage(start);
-  }, [plan, busy, question, turns, mode]);
+    },
+    [plan, busy, question, turns, mode],
+  );
+
+  // A fresh selection either prefills the box with the mode's saved prompt or
+  // goes straight out, depending on the student's sendBehavior setting.
+  useEffect(() => {
+    if (!pendingAuto || !plan || !settings) return;
+    setPendingAuto(false);
+    const prompt = settings.prompts[plan.mode] ?? '';
+    if (shouldAutoSend(settings, plan.selection.kind)) ask(prompt);
+    else setQuestion(prompt);
+  }, [pendingAuto, plan, settings, ask]);
 
   return (
     <div className="panel">
@@ -123,7 +140,15 @@ export function Panel() {
             </button>
           ))}
         </div>
-        <ModelPicker settings={settings} />
+        <div className="bar-right">
+          <ModelPicker settings={settings} />
+          <button type="button" className="icon" title="Settings" aria-label="Settings" onClick={() => browser.runtime.openOptionsPage()}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+        </div>
       </header>
 
       <Tray plan={plan} />

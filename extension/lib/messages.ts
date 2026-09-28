@@ -7,7 +7,7 @@ import type { AskChunk, AskRequest, Mode, Plan, Rect, SelectionKind } from '@sha
 
 export const PORT_ASK = 'selection-ai:ask';
 
-/** Popup → background: inject the content script and arm a selection. */
+/** Any extension page → background: inject the content script and arm a selection. */
 export interface SelectionArmMsg {
   type: 'selection:arm';
   kind: SelectionKind;
@@ -19,7 +19,17 @@ export interface StartSelectionMsg {
   kind: SelectionKind;
 }
 
-/** Popup → background → content: tear down an armed selection (Esc). */
+/**
+ * Content → background, the instant a selection is committed and before any
+ * capture work. Chrome opens the side panel from a content-script gesture only
+ * while that activation is live, so this is the one chance to catch it.
+ */
+export interface SelectionCommittedMsg {
+  type: 'selection:committed';
+  kind: SelectionKind;
+}
+
+/** Background → content: tear down an armed selection (Esc). */
 export interface SelectionAbortMsg {
   type: 'selection:abort';
 }
@@ -69,6 +79,20 @@ export interface PanelReadyMsg {
   type: 'panel:ready';
 }
 
+/**
+ * Reader → background on load. Registers the tab as one that runs the
+ * selection flow itself, and the reply tells the reader its own tab id — an
+ * extension page cannot learn either without the "tabs" permission.
+ */
+export interface ReaderHelloMsg {
+  type: 'reader:hello';
+}
+
+/** Background → content/reader: offer a click that can open the answer panel. */
+export interface PanelNeedsClickMsg {
+  type: 'panel:needs-click';
+}
+
 /** Panel → background over the ask port. */
 export interface AskStartMsg {
   type: 'ask:start';
@@ -83,6 +107,7 @@ export type AskPortOut = AskChunk;
 export type RuntimeMessage =
   | SelectionArmMsg
   | StartSelectionMsg
+  | SelectionCommittedMsg
   | SelectionAbortMsg
   | SelectionDoneMsg
   | SelectionCancelMsg
@@ -90,7 +115,9 @@ export type RuntimeMessage =
   | PlanGetMsg
   | PlanSetModeMsg
   | PanelOpenMsg
-  | PanelReadyMsg;
+  | PanelReadyMsg
+  | PanelNeedsClickMsg
+  | ReaderHelloMsg;
 
 export function isRuntimeMessage(x: unknown): x is RuntimeMessage {
   return !!x && typeof x === 'object' && typeof (x as { type?: unknown }).type === 'string';
