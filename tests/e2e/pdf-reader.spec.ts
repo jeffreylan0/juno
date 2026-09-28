@@ -103,3 +103,19 @@ test('a box selection in the reader carries the page text alongside the crop', a
   expect(kinds).toContain('image');
 });
 
+test('the reader scrolls while a selection is armed, though its scroller is not the window', async ({ context, extensionId, serviceWorker }) => {
+  const reader = await openReader(context, extensionId);
+  await reader.bringToFront();
+  await armInReader(serviceWorker, reader, 'box');
+  await expect(reader.locator(`${OVERLAY} .bar`)).toBeVisible({ timeout: 10_000 });
+
+  // The reader paginates inside #viewer; window.scrollY never moves here, so
+  // forwarding the wheel to the window alone would leave the page frozen.
+  const before = await reader.evaluate(() => document.getElementById('viewer')!.scrollTop);
+  await reader.mouse.move(500, 400);
+  await reader.mouse.wheel(0, 800);
+  await expect
+    .poll(async () => reader.evaluate(() => document.getElementById('viewer')!.scrollTop))
+    .toBeGreaterThan(before + 100);
+  await expect(reader.locator(`${OVERLAY} .bar`)).toBeVisible();
+});

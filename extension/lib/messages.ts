@@ -93,6 +93,11 @@ export interface PanelNeedsClickMsg {
   type: 'panel:needs-click';
 }
 
+/** Content/reader → background: open the full settings page. */
+export interface OptionsOpenMsg {
+  type: 'options:open';
+}
+
 /** Panel → background over the ask port. */
 export interface AskStartMsg {
   type: 'ask:start';
@@ -117,6 +122,7 @@ export type RuntimeMessage =
   | PanelOpenMsg
   | PanelReadyMsg
   | PanelNeedsClickMsg
+  | OptionsOpenMsg
   | ReaderHelloMsg;
 
 export function isRuntimeMessage(x: unknown): x is RuntimeMessage {

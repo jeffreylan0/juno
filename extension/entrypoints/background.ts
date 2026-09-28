@@ -93,6 +93,11 @@ export default defineBackground(() => {
       case 'panel:ready':
         setPanelPending(false);
         return;
+      case 'options:open':
+        // The bar's quick settings deliberately omit keys and prompts; this is
+        // how the student reaches the page that has them.
+        void browser.runtime.openOptionsPage();
+        return;
       case 'reader:hello':
         // The reader cannot know its own tab id without the tabs permission,
         // and we cannot recognise it by URL for the same reason. One hello
