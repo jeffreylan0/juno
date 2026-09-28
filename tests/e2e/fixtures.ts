@@ -59,10 +59,59 @@ export async function startSelection(serviceWorker: Worker, kind: 'box' | 'text'
  * Messages to the background must come from here: a service worker never
  * receives its own runtime.sendMessage.
  */
-export async function openPanel(context: BrowserContext, extensionId: string) {
+export async function openPanel(context: BrowserContext, extensionId: string, tabId?: number) {
   const panel = await context.newPage();
-  await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
+  // A panel opened as a tab would follow itself as "the active tab"; pinning
+  // it to the page under test shows that page's thread instead.
+  await panel.goto(`chrome-extension://${extensionId}/sidepanel.html${tabId !== undefined ? `?tabId=${tabId}` : ''}`);
   return panel;
+}
+
+/** The tab id of the page showing `url`. */
+export async function tabIdFor(sw: Worker, url: string): Promise<number> {
+  return await sw.evaluate(async (u: string) => {
+    const [tab] = await chrome.tabs.query({ url: u });
+    if (tab?.id === undefined) throw new Error(`no tab for ${u}`);
+    return tab.id;
+  }, url);
+}
+
+/** Merges into the stored settings, as the options page would. */
+export async function setSettings(sw: Worker, patch: Record<string, unknown>): Promise<void> {
+  await sw.evaluate(async (p: Record<string, unknown>) => {
+    const { settings } = await chrome.storage.local.get('settings');
+    await chrome.storage.local.set({ settings: { ...(settings ?? {}), ...p } });
+  }, patch);
+  // The background caches settings; give its watcher a moment to catch up.
+  await new Promise((r) => setTimeout(r, 150));
+}
+
+/** How many real side panels are open, from Chrome's own list of contexts. */
+export async function sidePanelCount(sw: Worker): Promise<number> {
+  return await sw.evaluate(async () => {
+    // @ts-expect-error SIDE_PANEL is missing from older @types/chrome
+    const contexts = await chrome.runtime.getContexts({ contextTypes: ['SIDE_PANEL'] });
+    return contexts.length;
+  });
+}
+
+/** Drags a box from (x0, y0) to (x1, y1) with a real mouse. */
+export async function dragBox(page: Page, x0: number, y0: number, x1: number, y1: number): Promise<void> {
+  await page.mouse.move(x0, y0);
+  await page.mouse.down();
+  await page.mouse.move(x1, y1, { steps: 8 });
+  await page.mouse.up();
+}
+
+/**
+ * Draws a box around `selector` and sends it. A drawn box waits to be
+ * adjusted by default, so this also presses Enter to ask.
+ */
+export async function boxAndAsk(page: Page, selector: string, pad = 4): Promise<void> {
+  const box = (await page.locator(selector).boundingBox())!;
+  await dragBox(page, box.x - pad, box.y - pad, box.x + box.width + pad, box.y + box.height + pad);
+  await expect(page.locator('selection-ai-overlay')).toHaveAttribute('data-state', 'adjusting');
+  await page.keyboard.press('Enter');
 }
 
 /**

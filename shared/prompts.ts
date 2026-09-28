@@ -6,9 +6,10 @@ import type { Mode, Part, Plan } from './payload';
  */
 
 export const WHAT_I_READ_INSTRUCTION =
-  'Start your reply with exactly one line beginning "Read:" that restates, in at most 25 words, ' +
+  'In your first reply about a selection, start with exactly one line beginning "Read:" that restates, in at most 25 words, ' +
   'what you received (the problem, expression, table or figure). Then a blank line, then your answer. ' +
-  'If part of the input is unreadable, say so in that line instead of guessing.';
+  'If part of the input is unreadable, say so in that line instead of guessing. ' +
+  'In follow-up replies in the same conversation, answer directly without the "Read:" line.';
 
 export const FORMAT_INSTRUCTION =
   'Write Markdown. Use $...$ for inline math and $$...$$ for display math (KaTeX). ' +
@@ -69,12 +70,21 @@ export function defaultQuestion(mode: Mode): string {
   return DEFAULT_PROMPTS[mode];
 }
 
-/** Builds the user-turn text (images are attached separately by the provider). */
-export function userPromptText(plan: Plan): string {
+/**
+ * The opening user turn of a conversation: the selection plus the student's
+ * first question. Images are attached separately by the provider. The
+ * selection is sent once, here, and never repeated on follow-ups.
+ */
+export function selectionPrompt(plan: Plan, question: string | undefined): string {
   const parts = plan.parts.map(partToText).join('\n\n');
-  const q = plan.question?.trim() || defaultQuestion(plan.mode);
+  const q = question?.trim() || defaultQuestion(plan.mode);
   const page = plan.page.title ? `Page: ${plan.page.title}\n` : '';
   return `${page}Selected content:\n\n${parts}\n\nQuestion: ${q}`;
+}
+
+/** The opening turn when there is no history yet: the plan carries the question. */
+export function userPromptText(plan: Plan): string {
+  return selectionPrompt(plan, plan.question);
 }
 
 /** Splits the "Read:" line from an answer. Returns null for read if absent. */

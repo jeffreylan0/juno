@@ -10,7 +10,8 @@ import { Overlay, type OverlayHost } from '@/entrypoints/content/overlay';
 import { textInRect } from '@/extract/visible';
 import { showToast } from '@/entrypoints/content/toast';
 import { availableModes, detectPdf, readerUrlFor, type PdfContext } from './pdf-detect';
-import type { SelectionCommittedMsg, SelectionDoneMsg } from './messages';
+import type { SelectionCancelMsg, SelectionCommittedMsg, SelectionDoneMsg } from './messages';
+import { getSettings } from './storage';
 
 export interface SelectionControllerOptions {
   /** Invalidation hook; the content script has one, the reader does not. */
@@ -23,6 +24,10 @@ export class SelectionController {
   private overlay: Overlay;
   private pdf: PdfContext;
   private modes: SelectionKind[];
+  /** Bumped by every start(), so a superseded arming ends quietly. */
+  private generation = 0;
+  /** Set when the bar's X ended the selection: the panel closes too. */
+  private closing = false;
 
   constructor(private opts: SelectionControllerOptions = {}) {
     const doc = opts.doc ?? document;
@@ -30,6 +35,7 @@ export class SelectionController {
     this.modes = availableModes(this.pdf);
     this.overlay = new Overlay(opts.host ?? { onInvalidated: () => {} }, {
       onModeChange: (kind) => void this.start(kind),
+      onClose: () => (this.closing = true),
     });
   }
 
@@ -63,20 +69,27 @@ export class SelectionController {
     void browser.runtime.sendMessage(msg).catch(() => {});
   }
 
+  /** Escape cancels the selection; the bar's X also closes the answer panel. */
   private cancel(): void {
-    void browser.runtime.sendMessage({ type: 'selection:cancel' }).catch(() => {});
+    const msg: SelectionCancelMsg = { type: 'selection:cancel', closePanel: this.closing };
+    this.closing = false;
+    void browser.runtime.sendMessage(msg).catch(() => {});
   }
 
   async start(requested: SelectionKind): Promise<void> {
-    // Switching mode re-arms; drop whatever is running first.
+    const gen = ++this.generation;
+    // Switching mode re-arms; drop whatever is running first. The arming it
+    // replaces resolves null, but it is not a cancel, so it must not say so.
     this.overlay.abort();
+    this.closing = false;
+    const current = () => gen === this.generation;
     const kind = this.modes.includes(requested) ? requested : (this.modes[0] as SelectionKind);
     const page = { url: location.href, title: document.title };
     const devicePixelRatio = window.devicePixelRatio || 1;
 
     if (kind === 'text') {
       const sel = await this.overlay.selectText(this.modes);
-      if (!sel) return this.cancel();
+      if (!sel) return void (current() && this.cancel());
       this.commit('text');
       const done: SelectionDoneMsg = {
         type: 'selection:done',
@@ -92,10 +105,12 @@ export class SelectionController {
     }
 
     if (kind === 'box') {
-      const armed = this.overlay.selectBox(this.modes);
+      const adjust = await this.adjustBox();
+      if (!current()) return;
+      const armed = this.overlay.selectBox(this.modes, { adjust });
       if (this.pdf.isPdf) this.offerReader();
       const rect = await armed;
-      if (!rect) return this.cancel();
+      if (!rect) return void (current() && this.cancel());
       this.commit('box');
       // Overlay is gone; wait two frames so the capture does not include it.
       await nextPaint();
@@ -113,6 +128,14 @@ export class SelectionController {
 
     // 'element' arrives in week 4 (select-element.ts).
     this.cancel();
+  }
+
+  private async adjustBox(): Promise<boolean> {
+    try {
+      return (await getSettings()).adjustBox;
+    } catch {
+      return true;
+    }
   }
 
   /**

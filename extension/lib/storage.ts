@@ -16,6 +16,15 @@ import type { Mode, ModelRef, Provider, SelectionKind } from '@shared/payload';
  */
 export type SendBehavior = 'prefill' | 'auto' | 'auto-box';
 
+/**
+ * When the answer panel opens.
+ * - `on-selection`: the moment a selection is made. It never covers the page
+ *   while you are still choosing what to select. The default.
+ * - `on-click`: as soon as the toolbar icon is clicked, so it is already
+ *   waiting — at the cost of taking up part of the page you are selecting on.
+ */
+export type PanelOpen = 'on-selection' | 'on-click';
+
 export interface Settings {
   provider: Provider;
   defaultMode: Mode;
@@ -28,6 +37,12 @@ export interface Settings {
   /** The question that lands in the box for each mode. */
   prompts: Record<Mode, string>;
   sendBehavior: SendBehavior;
+  panelOpen: PanelOpen;
+  /**
+   * After a box is drawn, keep it on screen with handles so an edge can be
+   * nudged before anything is sent. Off sends on release, in one motion.
+   */
+  adjustBox: boolean;
   /** Hostnames where the shortcut does nothing (exams, private portals). */
   blockedSites: string[];
   localBaseUrl: string;
@@ -43,6 +58,8 @@ export const DEFAULT_SETTINGS: Settings = {
   modelOverride: null,
   prompts: { ...DEFAULT_PROMPTS },
   sendBehavior: 'prefill',
+  panelOpen: 'on-selection',
+  adjustBox: true,
   blockedSites: [],
   localBaseUrl: 'http://localhost:11434/v1',
   localModel: 'qwen2.5vl:7b',

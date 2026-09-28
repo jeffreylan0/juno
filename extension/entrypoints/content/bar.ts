@@ -1,7 +1,8 @@
 /**
- * The in-page control bar: a red cancel X, the selection modes, the current
- * instruction, and a gear that expands the bar upwards into a scrollable
- * settings menu. Notices sit underneath the control row.
+ * The in-page control bar: a red X that closes everything (the bar and the
+ * answer panel), the selection modes, the current instruction, an Ask button
+ * while a box is being adjusted, and a gear that expands the bar upwards into
+ * a scrollable settings menu. Notices sit underneath the control row.
  *
  * It is pinned near the bottom of the viewport. A position setting can move it
  * later; for now every surface agrees on one place so it is always findable.
@@ -13,7 +14,7 @@
  */
 import type { SelectionKind } from '@shared/payload';
 import { MODES, type Mode } from '@shared/payload';
-import { getSettings, settingsItem, type SendBehavior, type Settings } from '@/lib/storage';
+import { getSettings, settingsItem, type PanelOpen, type SendBehavior, type Settings } from '@/lib/storage';
 import { UI_ATTR } from './scroll';
 
 export const BAR_STYLE = `
@@ -37,12 +38,21 @@ export const BAR_STYLE = `
   display: flex; align-items: center; gap: 5px; cursor: pointer; font: inherit; font-size: 12px;
   color: rgba(255, 255, 255, 0.72); background: transparent; border: 0; border-radius: 7px; padding: 4px 9px;
 }
-.chip:hover:not(:disabled) { color: #fff; }
-.chip[aria-pressed='true'] { background: rgba(255, 255, 255, 0.92); color: #0f172a; }
+.chip:hover:not(:disabled) { color: #fff; background: rgba(255, 255, 255, 0.1); }
+/* After the hover rule, so hovering the selected chip keeps dark-on-light. */
+.chip[aria-pressed='true'], .chip[aria-pressed='true']:hover { background: rgba(255, 255, 255, 0.92); color: #0f172a; }
 .chip:disabled { opacity: 0.4; cursor: default; }
 .chip svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .say { opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .say.gone { visibility: hidden; }
+.ask {
+  display: none; align-items: center; gap: 5px; flex: none; cursor: pointer;
+  font: inherit; font-size: 12px; border: 0; border-radius: 8px; padding: 4px 11px;
+  background: var(--sai-accent, #3b82f6); color: #fff;
+}
+.ask.on { display: flex; }
+.ask:hover { background: var(--sai-accent-hover, #2563eb); }
+.ask svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .gear {
   display: flex; align-items: center; justify-content: center; flex: none;
   width: 26px; height: 26px; border: 0; border-radius: 8px; cursor: pointer;
@@ -88,6 +98,9 @@ export const BAR_STYLE = `
 @media (prefers-reduced-motion: reduce) { .settings { transition: none; } }
 `;
 
+/** Shown while a drawn box waits to be adjusted and sent. */
+export const ADJUST_HINT = 'Drag the edges to adjust · Enter to ask';
+
 const MODE_HINT: Record<SelectionKind, string> = {
   box: 'Drag to select an area',
   text: 'Select text on the page',
@@ -104,7 +117,10 @@ const GEAR =
   '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>';
 
 export interface BarHandlers {
-  onCancel: () => void;
+  /** The red X: ends the selection and closes the answer panel too. */
+  onClose: () => void;
+  /** The Ask button, shown while a drawn box is being adjusted. */
+  onConfirm: () => void;
   onModeChange: (kind: SelectionKind) => void;
 }
 
@@ -120,7 +136,9 @@ export class Bar {
   private settings: HTMLElement;
   private settingsInner: HTMLElement;
   private gear: HTMLButtonElement;
+  private ask: HTMLButtonElement;
   private settingsBuilt = false;
+  private drawing = false;
 
   constructor(
     private kind: SelectionKind,
@@ -143,14 +161,22 @@ export class Bar {
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'close';
-    close.title = 'Cancel (Escape)';
-    close.setAttribute('aria-label', 'Cancel selection');
+    close.title = 'Close';
+    close.setAttribute('aria-label', 'Close selection and answer panel');
     close.textContent = '✕';
-    close.addEventListener('click', () => this.handlers.onCancel());
+    close.addEventListener('click', () => this.handlers.onClose());
 
     this.say = document.createElement('span');
     this.say.className = 'say';
     this.say.textContent = MODE_HINT[kind];
+
+    this.ask = document.createElement('button');
+    this.ask.type = 'button';
+    this.ask.className = 'ask';
+    this.ask.title = 'Ask about this box (Enter)';
+    this.ask.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+    this.ask.append(document.createTextNode('Ask'));
+    this.ask.addEventListener('click', () => this.handlers.onConfirm());
 
     this.gear = document.createElement('button');
     this.gear.type = 'button';
@@ -161,7 +187,7 @@ export class Bar {
     this.gear.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${GEAR}</svg>`;
     this.gear.addEventListener('click', () => void this.toggleSettings());
 
-    row.append(close, this.buildChips(), this.say, this.gear);
+    row.append(close, this.buildChips(), this.say, this.ask, this.gear);
 
     this.notices = document.createElement('div');
     this.notices.className = 'notices';
@@ -174,12 +200,25 @@ export class Bar {
 
   /** Hides the instruction while a selection is actually being drawn. */
   setDrawing(drawing: boolean): void {
+    this.drawing = drawing;
     this.say.classList.toggle('gone', drawing);
     if (drawing) this.closeSettings();
   }
 
+  /** A box is drawn and waiting: show the Ask button and how to adjust it. */
+  setAdjusting(adjusting: boolean): void {
+    this.ask.classList.toggle('on', adjusting);
+    this.say.textContent = adjusting ? ADJUST_HINT : MODE_HINT[this.kind];
+  }
+
+  /**
+   * Replaces the instruction. Mid-drag the instruction is hidden (the cursor
+   * tooltip takes over), but a warning such as "the selection stops at the
+   * edge" still needs to be seen, so non-empty text shows through.
+   */
   setInstruction(text: string): void {
     this.say.textContent = text;
+    this.say.classList.toggle('gone', this.drawing && !text);
   }
 
   resetInstruction(): void {
@@ -215,7 +254,7 @@ export class Bar {
       chip.dataset.kind = kind;
       chip.setAttribute('aria-pressed', String(kind === this.kind));
       chip.disabled = !available;
-      chip.title = available ? MODE_HINT[kind] : `${label(kind)} selection is not available here`;
+      chip.title = available ? MODE_HINT[kind] : unavailableTitle(kind);
       chip.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[kind]}</svg>`;
       chip.append(document.createTextNode(label(kind)));
       if (available && kind !== this.kind) {
@@ -256,6 +295,24 @@ export class Bar {
     this.settingsInner.append(
       field('Selection mode', [['box', 'Box — drag around anything'], ['text', 'Text — select text on the page']], settings.defaultSelectionKind, (v) =>
         void save({ defaultSelectionKind: v as SelectionKind }),
+      ),
+      field(
+        'After drawing a box',
+        [
+          ['adjust', 'Let me adjust it, then ask'],
+          ['send', 'Ask as soon as I let go'],
+        ],
+        settings.adjustBox ? 'adjust' : 'send',
+        (v) => void save({ adjustBox: v === 'adjust' }),
+      ),
+      field(
+        'Open the answer panel',
+        [
+          ['on-selection', 'When a selection is made'],
+          ['on-click', 'When I click the toolbar icon'],
+        ],
+        settings.panelOpen,
+        (v) => void save({ panelOpen: v as PanelOpen }),
       ),
       field('Ask mode', MODES.map((m) => [m, modeLabel(m)] as [string, string]), settings.defaultMode, (v) => void save({ defaultMode: v as Mode })),
       field(
@@ -306,6 +363,12 @@ function field(name: string, options: [string, string][], value: string, onChang
   select.addEventListener('change', () => onChange(select.value));
   wrap.append(title, select);
   return wrap;
+}
+
+function unavailableTitle(kind: SelectionKind): string {
+  // Element selection is built next; say so rather than implying a fault.
+  if (kind === 'element') return 'Element selection — coming next';
+  return `${label(kind)} selection is not available here`;
 }
 
 function label(kind: SelectionKind): string {

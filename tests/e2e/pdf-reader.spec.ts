@@ -94,6 +94,9 @@ test('a box selection in the reader carries the page text alongside the crop', a
   await reader.mouse.down();
   await reader.mouse.move(box.x + box.width + 10, box.y + box.height + 10, { steps: 10 });
   await reader.mouse.up();
+  // The drawn box waits to be adjusted; Enter asks.
+  await expect(reader.locator(OVERLAY)).toHaveAttribute('data-state', 'adjusting');
+  await reader.keyboard.press('Enter');
 
   await expect.poll(async () => (await getPlan(panel))?.parts.length ?? 0, { timeout: 15_000 }).toBeGreaterThan(0);
   const plan = (await getPlan(panel))!;

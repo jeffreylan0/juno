@@ -2,8 +2,8 @@
  * OpenAI-compatible chat message shape, used verbatim by OpenAI, Ollama and the
  * Worker, and converted by byok.ts for Anthropic.
  */
-import type { AskRequest } from '@shared/payload';
-import { systemPrompt, userPromptText } from '@shared/prompts';
+import type { AskRequest, Plan } from '@shared/payload';
+import { selectionPrompt, systemPrompt } from '@shared/prompts';
 import { ProviderError } from './types';
 
 export type ContentPart =
@@ -15,16 +15,41 @@ export interface ChatMessage {
   content: string | ContentPart[];
 }
 
+/**
+ * Builds a conversation. The selection is attached exactly once, to the
+ * opening user turn, the way a chat app attaches a file to the first message:
+ *
+ *   system · user(selection + Q1) · assistant(A1) · user(Q2) · …
+ *
+ * Follow-ups are plain text. Re-attaching the selection to every turn would
+ * resend the image each time, cost tokens for nothing, and leave the model
+ * unsure whether a "new" selection had arrived.
+ */
 export function toChatMessages(req: AskRequest): ChatMessage[] {
   const { plan, history = [] } = req;
   const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt(plan.mode) }];
-  for (const turn of history) messages.push({ role: turn.role, content: turn.text });
-  const content: ContentPart[] = [{ type: 'text', text: userPromptText(plan) }];
+
+  // History must open with the student's first question; anything else means
+  // there is no usable opening turn, so treat this as the start of a thread.
+  const opensWithUser = history[0]?.role === 'user';
+  if (!opensWithUser || history.length === 0) {
+    messages.push({ role: 'user', content: openingTurn(plan, plan.question) });
+    return messages;
+  }
+
+  const [first, ...rest] = history;
+  messages.push({ role: 'user', content: openingTurn(plan, first!.text) });
+  for (const turn of rest) messages.push({ role: turn.role, content: turn.text });
+  messages.push({ role: 'user', content: plan.question?.trim() || 'Go on.' });
+  return messages;
+}
+
+function openingTurn(plan: Plan, question: string | undefined): ContentPart[] {
+  const content: ContentPart[] = [{ type: 'text', text: selectionPrompt(plan, question) }];
   for (const part of plan.parts) {
     if (part.kind === 'image') content.push({ type: 'image_url', image_url: { url: part.dataUrl, detail: 'high' } });
   }
-  messages.push({ role: 'user', content });
-  return messages;
+  return content;
 }
 
 /** Parses a text/event-stream body into `data:` payload strings. */

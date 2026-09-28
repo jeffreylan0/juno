@@ -12,7 +12,7 @@
  */
 import type { Rect, SelectionKind } from '@shared/payload';
 import { Bar, BAR_STYLE, type NoticeAction } from './bar';
-import { BoxSelector } from './select-box';
+import { BoxSelector, HANDLES } from './select-box';
 import { readSelection, type TextSelection } from './select-text';
 import { UI_ATTR, applyWheel, scrollTargetAt } from './scroll';
 
@@ -27,6 +27,24 @@ const STYLE = `
   box-shadow: 0 0 0 100vmax var(--sai-scrim, rgba(15, 23, 42, 0.35));
   pointer-events: none; display: none;
 }
+.box.adjusting { border-style: solid; }
+/* Visual only: the drag surface hit-tests the edges (select-box.ts), so the
+ * handles never need pointer events of their own. */
+.handle {
+  position: absolute; width: 10px; height: 10px; display: none;
+  transform: translate(-50%, -50%); margin: -1px 0 0 -1px;
+  background: #fff; border: 2px solid var(--sai-accent, #3b82f6); border-radius: 3px;
+  box-sizing: border-box;
+}
+.box.adjusting .handle { display: block; }
+.handle[data-h='nw'] { left: 0; top: 0; }
+.handle[data-h='n'] { left: 50%; top: 0; }
+.handle[data-h='ne'] { left: 100%; top: 0; }
+.handle[data-h='e'] { left: 100%; top: 50%; }
+.handle[data-h='se'] { left: 100%; top: 100%; }
+.handle[data-h='s'] { left: 50%; top: 100%; }
+.handle[data-h='sw'] { left: 0; top: 100%; }
+.handle[data-h='w'] { left: 0; top: 50%; }
 .tip {
   position: fixed; left: 0; top: 0; display: none; align-items: center; gap: 6px;
   font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
@@ -49,7 +67,23 @@ const TIP_OFFSET = { x: 8, y: 10 };
 export interface OverlayHandlers {
   /** The user picked a different mode from the bar's chips. */
   onModeChange: (kind: SelectionKind) => void;
+  /**
+   * The bar's X was pressed. The selection is cancelled either way; this is
+   * where the caller also closes the answer panel. Escape does not call it.
+   */
+  onClose?: () => void;
 }
+
+export interface BoxOptions {
+  /** Keep the drawn box on screen to resize before asking. */
+  adjust: boolean;
+}
+
+/**
+ * armed: waiting for the first drag. drawing: a pointer drag is in progress.
+ * adjusting: a box is drawn and waits to be resized or sent.
+ */
+type OverlayState = 'armed' | 'drawing' | 'adjusting';
 
 /**
  * Just enough of WXT's ContentScriptContext to tear down cleanly. The reader is
@@ -65,9 +99,11 @@ export class Overlay {
   private backdrop: HTMLElement | null = null;
   private tip: HTMLElement | null = null;
   private bar: Bar | null = null;
-  private drawing = false;
+  private state: OverlayState = 'armed';
   /** Cancels whatever selection is currently armed. */
   private cancelCurrent: (() => void) | null = null;
+  /** Sends the box being adjusted, if there is one. */
+  private confirmCurrent: (() => void) | null = null;
 
   constructor(
     private ctx: OverlayHost,
@@ -96,6 +132,12 @@ export class Overlay {
 
     const box = document.createElement('div');
     box.className = 'box';
+    for (const h of HANDLES) {
+      const handle = document.createElement('div');
+      handle.className = 'handle';
+      handle.dataset.h = h;
+      box.append(handle);
+    }
 
     const tip = document.createElement('div');
     tip.className = 'tip';
@@ -103,7 +145,11 @@ export class Overlay {
     tip.append(kbd('Escape'), say('to cancel'));
 
     const bar = new Bar(kind, modes, {
-      onCancel: () => this.abort(),
+      onClose: () => {
+        this.handlers.onClose?.();
+        this.abort();
+      },
+      onConfirm: () => this.confirmCurrent?.(),
       onModeChange: (next) => this.handlers.onModeChange(next),
     });
 
@@ -117,8 +163,7 @@ export class Overlay {
     this.backdrop = backdrop;
     this.tip = tip;
     this.bar = bar;
-    this.drawing = false;
-    this.setDrawing(false);
+    this.setState('armed');
     return backdrop;
   }
 
@@ -129,20 +174,24 @@ export class Overlay {
     this.backdrop = null;
     this.tip = null;
     this.bar = null;
-    this.drawing = false;
+    this.state = 'armed';
+    this.confirmCurrent = null;
   }
 
-  /** True while the pointer is down and a selection is being drawn. */
-  private setDrawing(drawing: boolean): void {
-    this.drawing = drawing;
+  private setState(state: OverlayState): void {
+    this.state = state;
+    const drawing = state === 'drawing';
     this.bar?.setDrawing(drawing);
+    // The cursor tooltip is for the drag itself; while adjusting, the bar
+    // carries the instructions and the Ask button.
     this.tip?.classList.toggle('on', drawing);
-    this.host?.setAttribute('data-state', drawing ? 'drawing' : 'armed');
-    if (!drawing) this.bar?.resetInstruction();
+    this.host?.setAttribute('data-state', state);
+    if (state === 'armed') this.bar?.resetInstruction();
+    if (!drawing) this.bar?.setAdjusting(state === 'adjusting');
   }
 
   private moveTip(x: number, y: number): void {
-    if (!this.tip || !this.drawing) return;
+    if (!this.tip || this.state !== 'drawing') return;
     const rect = this.tip.getBoundingClientRect();
     // Flip back inside the viewport rather than running off the edge.
     const left = x + TIP_OFFSET.x + rect.width > innerWidth ? x - TIP_OFFSET.x - rect.width : x + TIP_OFFSET.x;
@@ -161,18 +210,25 @@ export class Overlay {
   }
 
   /** Resolves with a viewport rect in CSS pixels, or null when cancelled. */
-  async selectBox(modes: SelectionKind[]): Promise<Rect | null> {
+  async selectBox(modes: SelectionKind[], options: BoxOptions = { adjust: false }): Promise<Rect | null> {
     const backdrop = this.mount('box', modes);
     const box = backdrop.querySelector<HTMLElement>('.box')!;
     return await this.run((finish) => {
-      const selector = new BoxSelector(backdrop, box, {
-        onDragStart: () => this.setDrawing(true),
-        onDragCancel: () => this.setDrawing(false),
-        onMove: (x, y) => this.moveTip(x, y),
-        onClamped: (clamped) =>
-          this.bar?.setInstruction(clamped ? 'The selection stops at the edge of the screen' : ''),
-        onDone: finish,
-      });
+      const selector = new BoxSelector(
+        backdrop,
+        box,
+        {
+          onDragStart: () => this.setState('drawing'),
+          onDragEnd: (usable) => this.setState(usable && options.adjust ? 'adjusting' : 'armed'),
+          onMove: (x, y) => this.moveTip(x, y),
+          onClamped: (clamped) =>
+            this.bar?.setInstruction(clamped ? 'The selection stops at the edge of the screen' : ''),
+          onAdjust: () => this.setState('adjusting'),
+          onDone: finish,
+        },
+        options,
+      );
+      this.confirmCurrent = () => void selector.confirm();
       return selector.attach();
     });
   }
@@ -183,7 +239,7 @@ export class Overlay {
     return await this.run((finish) => {
       const onDown = (e: MouseEvent) => {
         if (isOurUi(e)) return;
-        this.setDrawing(true);
+        this.setState('drawing');
         this.moveTip(e.clientX, e.clientY);
       };
       const onMove = (e: PointerEvent) => this.moveTip(e.clientX, e.clientY);
@@ -192,7 +248,7 @@ export class Overlay {
         // The selection settles a tick after mouseup.
         setTimeout(() => {
           const sel = readSelection();
-          this.setDrawing(false);
+          this.setState('armed');
           if (sel) finish(sel);
         }, 0);
       };
@@ -225,6 +281,13 @@ export class Overlay {
       };
 
       const onKey = (e: KeyboardEvent) => {
+        if (e.key === 'Enter' && this.state === 'adjusting' && !isOurUi(e)) {
+          // On our own Ask button, Enter already clicks it.
+          e.preventDefault();
+          e.stopPropagation();
+          this.confirmCurrent?.();
+          return;
+        }
         if (e.key !== 'Escape') return;
         e.preventDefault();
         e.stopPropagation();
@@ -239,10 +302,10 @@ export class Overlay {
       const onWheel = (e: WheelEvent) => {
         if (isOurUi(e)) return;
         e.preventDefault();
-        // Mid-drag the box is pinned to the viewport and cannot grow to follow
-        // the page, so scrolling would hand back a crop of something the user
-        // never framed. Swallow it until the drag ends.
-        if (this.drawing) return;
+        // Mid-drag, and while a drawn box waits to be adjusted, the box is
+        // pinned to the viewport and cannot follow the page, so scrolling
+        // would hand back a crop of something the user never framed.
+        if (this.state !== 'armed') return;
         applyWheel(scrollTargetAt(e.clientX, e.clientY, this.host), e);
       };
       this.backdrop?.addEventListener('wheel', onWheel, { passive: false });

@@ -16,6 +16,7 @@ import {
   keysItem,
   settingsItem,
   type Keys,
+  type PanelOpen,
   type SendBehavior,
   type Settings,
 } from '@/lib/storage';
@@ -27,6 +28,19 @@ const PROVIDERS: { id: Settings['provider']; label: string; help: string }[] = [
   { id: 'local', label: 'Local (Ollama)', help: 'An OpenAI-compatible server on your own machine. Free and private.' },
   { id: 'byok', label: 'My own API key', help: 'Direct calls to Anthropic or OpenAI with the key below.' },
   { id: 'gateway', label: 'Hosted plan', help: 'Sign in; usage counts against your plan. Arrives in week 9.' },
+];
+
+const PANEL: { id: PanelOpen; label: string; help: string }[] = [
+  {
+    id: 'on-selection',
+    label: 'When a selection is made',
+    help: 'The panel stays out of the way while you choose what to select, then opens beside the page.',
+  },
+  {
+    id: 'on-click',
+    label: 'When I click the toolbar icon',
+    help: 'Opens at once, so the last answer is in view — but it narrows the page you are selecting from.',
+  },
 ];
 
 const SEND: { id: SendBehavior; label: string; help: string }[] = [
@@ -90,6 +104,27 @@ export function Options() {
             <option value="text">Text — select text on the page</option>
           </select>
         </label>
+        <label className="check">
+          <input type="checkbox" checked={settings.adjustBox} onChange={(e) => setSettings({ ...settings, adjustBox: e.target.checked })} />
+          <span>
+            <b>Adjust a box before asking</b>
+            <small>
+              After you draw a box it stays on screen with handles: drag an edge to resize, drag inside to move, then press Ask
+              or Enter. Off, a box is sent the moment you let go.
+            </small>
+          </span>
+        </label>
+        <label>
+          Open the answer panel
+          <select value={settings.panelOpen} onChange={(e) => setSettings({ ...settings, panelOpen: e.target.value as PanelOpen })}>
+            {PANEL.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="help">{PANEL.find((p) => p.id === settings.panelOpen)?.help} The red ✕ on the bar closes the panel too.</p>
         <p className="help">
           On a PDF opened in the browser's own viewer, only box selection is possible — the text lives inside a plugin the
           extension cannot read. Selection AI offers to reopen the file in its own reader, where all modes work.

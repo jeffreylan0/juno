@@ -1,11 +1,12 @@
 /**
- * Typed messages between the content script, the background, the popup and the
- * panel. Every message carries a `type`; request/response pairs go through
- * `sendMessage`, streams go through a runtime Port named PORT_ASK.
+ * Typed messages between the content script, the background, the reader and
+ * the panel. Every message carries a `type` and goes through `sendMessage`.
+ *
+ * Conversations do not travel over messages at all: the background writes
+ * each tab's thread to `storage.session` (see threads.ts) and the panel
+ * renders from storage change events. Messages here are commands only.
  */
-import type { AskChunk, AskRequest, Mode, Plan, Rect, SelectionKind } from '@shared/payload';
-
-export const PORT_ASK = 'selection-ai:ask';
+import type { Mode, Rect, SelectionKind } from '@shared/payload';
 
 /** Any extension page → background: inject the content script and arm a selection. */
 export interface SelectionArmMsg {
@@ -47,31 +48,55 @@ export interface SelectionDoneMsg {
   page: { url: string; title: string };
 }
 
-/** Content → background: the user cancelled. */
+/** Content → background: the user cancelled. `closePanel` is set by the X. */
 export interface SelectionCancelMsg {
   type: 'selection:cancel';
+  /** The bar's X closes everything; Escape only cancels the selection. */
+  closePanel?: boolean;
 }
 
-/** Background → panel: a new plan is ready to show in the tray. */
-export interface PlanReadyMsg {
-  type: 'plan:ready';
-  plan: Plan;
-}
-
-/** Panel or popup → background: fetch the current pending plan. */
+/**
+ * Anything → background: the plan for a tab, or the most recent one when no
+ * tab is given. Used by tests and diagnostics; the panel reads storage.
+ */
 export interface PlanGetMsg {
   type: 'plan:get';
+  tabId?: number;
 }
 
-/** Panel → background: change the mode of the pending plan. */
-export interface PlanSetModeMsg {
-  type: 'plan:setMode';
+/** Panel → background: ask a question in a tab's conversation. */
+export interface ChatSendMsg {
+  type: 'chat:send';
+  tabId: number;
+  question: string;
   mode: Mode;
 }
 
-/** Popup → background: open the answer panel from a real user gesture. */
+/** Panel → background: stop the answer streaming in a tab's conversation. */
+export interface ChatStopMsg {
+  type: 'chat:stop';
+  tabId: number;
+}
+
+/** Panel → background: change the ask mode for a tab's conversation. */
+export interface ChatModeMsg {
+  type: 'chat:mode';
+  tabId: number;
+  mode: Mode;
+}
+
+/** Content/toast → background: open the answer panel from a real user gesture. */
 export interface PanelOpenMsg {
   type: 'panel:open';
+}
+
+/**
+ * Background → panel: close yourself. Chrome has no sidePanel.close(), but a
+ * side panel document may close its own window.
+ */
+export interface PanelCloseMsg {
+  type: 'panel:close';
+  windowId?: number;
 }
 
 /** Panel → background: the panel is alive, so nothing needs to prompt for it. */
@@ -98,17 +123,6 @@ export interface OptionsOpenMsg {
   type: 'options:open';
 }
 
-/** Panel → background over the ask port. */
-export interface AskStartMsg {
-  type: 'ask:start';
-  request: AskRequest;
-}
-export interface AskAbortMsg {
-  type: 'ask:abort';
-}
-export type AskPortIn = AskStartMsg | AskAbortMsg;
-export type AskPortOut = AskChunk;
-
 export type RuntimeMessage =
   | SelectionArmMsg
   | StartSelectionMsg
@@ -116,10 +130,12 @@ export type RuntimeMessage =
   | SelectionAbortMsg
   | SelectionDoneMsg
   | SelectionCancelMsg
-  | PlanReadyMsg
   | PlanGetMsg
-  | PlanSetModeMsg
+  | ChatSendMsg
+  | ChatStopMsg
+  | ChatModeMsg
   | PanelOpenMsg
+  | PanelCloseMsg
   | PanelReadyMsg
   | PanelNeedsClickMsg
   | OptionsOpenMsg
@@ -127,10 +143,4 @@ export type RuntimeMessage =
 
 export function isRuntimeMessage(x: unknown): x is RuntimeMessage {
   return !!x && typeof x === 'object' && typeof (x as { type?: unknown }).type === 'string';
-}
-
-export function isAskPortIn(x: unknown): x is AskPortIn {
-  if (!x || typeof x !== 'object') return false;
-  const t = (x as { type?: unknown }).type;
-  return t === 'ask:start' || t === 'ask:abort';
 }

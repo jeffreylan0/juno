@@ -1,137 +1,176 @@
 /**
- * The panel: mode picker, tray of selection chips, question box, chat thread
- * with streaming answers. Runs in the Chrome/Edge side panel, the Firefox
- * sidebar, and (from week 12) inside the Safari in-page overlay.
+ * The panel: one conversation per tab. It follows whichever tab is active in
+ * its window, renders that tab's thread from storage.session, and sends
+ * questions to the background, which owns the conversation and streams the
+ * answer back into storage.
+ *
+ * The selection is the conversation's opening attachment. It sits above the
+ * composer until the first question is sent, then lives inside that first
+ * message; every later question is a follow-up on the same selection.
+ *
+ * Runs in the Chrome/Edge side panel, the Firefox sidebar, and (from week 12)
+ * inside the Safari in-page overlay.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AskChunk, AskRequest, ChatTurn, Mode, ModelRef, Plan, Usage } from '@shared/payload';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Mode, ModelRef, Plan } from '@shared/payload';
 import { MODES } from '@shared/payload';
-import { PORT_ASK, type AskPortIn } from '@/lib/messages';
-import { getSettings, settingsItem, shouldAutoSend, type Settings } from '@/lib/storage';
+import { getSettings, settingsItem, type Settings } from '@/lib/storage';
+import { chatKey, getThread, selKey, type Chat } from '@/lib/threads';
 import { Answer } from './Answer';
-import { Preview } from './Preview';
-import { Tray } from './Tray';
-
-interface Turn extends ChatTurn {
-  id: string;
-  streaming?: boolean;
-  usage?: Usage;
-  model?: ModelRef;
-  cached?: boolean;
-  error?: string;
-}
+import { SelectionCard } from './Selection';
 
 const MODE_LABEL: Record<Mode, string> = { explain: 'Explain', hint: 'Hint', check: 'Check' };
 
-export function Panel() {
+/**
+ * `?tabId=N` pins the panel to one tab. Tests use it, since they open the
+ * panel as a tab of its own, and it leaves room for per-tab panels later.
+ */
+function pinnedTabId(): number | null {
+  const raw = new URL(location.href).searchParams.get('tabId');
+  return raw ? Number(raw) : null;
+}
+
+/** Tracks the tab this panel should show: pinned, or the active tab in its window. */
+function useCurrentTab(): number | null {
+  const [tabId, setTabId] = useState<number | null>(pinnedTabId());
+  useEffect(() => {
+    if (pinnedTabId() !== null) return;
+    let windowId: number | undefined;
+    let cancelled = false;
+    void (async () => {
+      const win = await browser.windows.getCurrent();
+      windowId = win.id;
+      const [tab] = await browser.tabs.query({ active: true, windowId });
+      if (!cancelled && tab?.id !== undefined) setTabId(tab.id);
+    })();
+    const onActivated = (info: { tabId: number; windowId: number }) => {
+      if (windowId === undefined || info.windowId === windowId) setTabId(info.tabId);
+    };
+    browser.tabs.onActivated.addListener(onActivated);
+    return () => {
+      cancelled = true;
+      browser.tabs.onActivated.removeListener(onActivated);
+    };
+  }, []);
+  return tabId;
+}
+
+/** The stored thread for a tab, kept live by storage change events. */
+function useThread(tabId: number | null): { plan: Plan | null; chat: Chat | null } {
   const [plan, setPlan] = useState<Plan | null>(null);
-  const [mode, setMode] = useState<Mode>('explain');
-  const [question, setQuestion] = useState('');
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [chat, setChat] = useState<Chat | null>(null);
+  useEffect(() => {
+    setPlan(null);
+    setChat(null);
+    if (tabId === null) return;
+    let live = true;
+    void getThread(tabId).then((t) => {
+      if (!live) return;
+      setPlan(t.plan);
+      setChat(t.chat);
+    });
+    const onChanged = (changes: Record<string, { newValue?: unknown }>, areaName: string) => {
+      if (areaName !== 'session') return;
+      if (selKey(tabId) in changes) setPlan((changes[selKey(tabId)]!.newValue as Plan | undefined) ?? null);
+      if (chatKey(tabId) in changes) setChat((changes[chatKey(tabId)]!.newValue as Chat | undefined) ?? null);
+    };
+    browser.storage.onChanged.addListener(onChanged);
+    return () => {
+      live = false;
+      browser.storage.onChanged.removeListener(onChanged);
+    };
+  }, [tabId]);
+  return { plan, chat };
+}
+
+export function Panel() {
+  const tabId = useCurrentTab();
+  const { plan, chat } = useThread(tabId);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [busy, setBusy] = useState(false);
-  /** A plan just arrived and has not yet been prefilled or auto-sent. */
-  const [pendingAuto, setPendingAuto] = useState(false);
-  const portRef = useRef<chrome.runtime.Port | null>(null);
+  /** Unsent drafts per tab, so switching tabs does not lose what you typed. */
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  /** Plans already prefilled, so a stored thread is not re-prefilled on every render. */
+  const prefilled = useRef(new Set<string>());
   const threadRef = useRef<HTMLDivElement>(null);
 
-  // Load settings and any plan that arrived before the panel opened.
+  const turns = chat?.planId === plan?.id ? (chat?.turns ?? []) : [];
+  const mode: Mode = (chat?.planId === plan?.id ? chat?.mode : undefined) ?? plan?.mode ?? settings?.defaultMode ?? 'explain';
+  const busy = turns.some((t) => t.streaming);
+  const draft = tabId !== null ? (drafts[tabId] ?? '') : '';
+  const started = turns.length > 0;
+
   useEffect(() => {
     // Clears the toolbar badge the background sets when it could not open us.
-    void browser.runtime.sendMessage({ type: 'panel:ready' });
-    void getSettings().then((s) => {
-      setSettings(s);
-      setMode(s.defaultMode);
-    });
-    const unwatch = settingsItem.watch((s) => s && setSettings(s));
-    void browser.runtime.sendMessage({ type: 'plan:get' }).then((p: Plan | null) => {
-      if (p) {
-        setPlan(p);
-        setMode(p.mode);
-        setPendingAuto(true);
-      }
-    });
+    void browser.runtime.sendMessage({ type: 'panel:ready' }).catch(() => {});
+    void getSettings().then(setSettings);
+    const unwatch = settingsItem.watch(() => void getSettings().then(setSettings));
+
+    // The bar's X closes everything. Chrome has no sidePanel.close(), but a
+    // side panel document may close its own window.
+    let windowId: number | undefined;
+    void browser.windows.getCurrent().then((w) => (windowId = w.id));
     const onMessage = (raw: unknown) => {
-      const msg = raw as { type?: string; plan?: Plan };
-      if (msg?.type === 'plan:ready' && msg.plan) {
-        setPlan(msg.plan);
-        setTurns([]);
-        setPendingAuto(true);
-      }
+      const msg = raw as { type?: string; windowId?: number };
+      if (msg?.type !== 'panel:close') return;
+      if (msg.windowId !== undefined && windowId !== undefined && msg.windowId !== windowId) return;
+      window.close();
     };
     browser.runtime.onMessage.addListener(onMessage);
     return () => {
-      browser.runtime.onMessage.removeListener(onMessage);
       unwatch();
+      browser.runtime.onMessage.removeListener(onMessage);
     };
   }, []);
 
-  useEffect(() => {
-    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
-  }, [turns]);
-
-  const changeMode = useCallback((m: Mode) => {
-    setMode(m);
-    void browser.runtime.sendMessage({ type: 'plan:setMode', mode: m });
-  }, []);
-
-  const abort = useCallback(() => {
-    const msg: AskPortIn = { type: 'ask:abort' };
-    portRef.current?.postMessage(msg);
-    setBusy(false);
-    setTurns((t) => t.map((x) => (x.streaming ? { ...x, streaming: false } : x)));
-  }, []);
-
-  const ask = useCallback(
-    (override?: string) => {
-    if (!plan || busy) return;
-    const q = (override ?? question).trim();
-    const history: ChatTurn[] = turns.filter((t) => !t.error).map(({ role, text }) => ({ role, text }));
-    const request: AskRequest = { plan: { ...plan, mode, question: q || undefined }, history };
-    const userTurn: Turn = { id: crypto.randomUUID(), role: 'user', text: q || `(${MODE_LABEL[mode]} the selection)` };
-    const answerId = crypto.randomUUID();
-    setTurns((t) => [...t, userTurn, { id: answerId, role: 'assistant', text: '', streaming: true }]);
-    setQuestion('');
-    setBusy(true);
-
-    portRef.current?.disconnect();
-    const port = browser.runtime.connect({ name: PORT_ASK });
-    portRef.current = port;
-    port.onMessage.addListener((chunk: AskChunk) => {
-      setTurns((t) =>
-        t.map((x) => {
-          if (x.id !== answerId) return x;
-          switch (chunk.type) {
-            case 'delta':
-              return { ...x, text: x.text + chunk.text };
-            case 'done':
-              return { ...x, streaming: false, usage: chunk.usage, model: chunk.model, cached: chunk.cached };
-            case 'error':
-              return { ...x, streaming: false, error: chunk.message };
-          }
-        }),
-      );
-      if (chunk.type !== 'delta') setBusy(false);
-    });
-    port.onDisconnect.addListener(() => setBusy(false));
-    const start: AskPortIn = { type: 'ask:start', request };
-    port.postMessage(start);
+  const setDraft = useCallback(
+    (text: string) => {
+      if (tabId === null) return;
+      setDrafts((d) => ({ ...d, [tabId]: text }));
     },
-    [plan, busy, question, turns, mode],
+    [tabId],
   );
 
-  // A fresh selection either prefills the box with the mode's saved prompt or
-  // goes straight out, depending on the student's sendBehavior setting.
+  // A fresh selection puts the mode's saved prompt in the box, ready to edit.
+  // (Sending straight away, when the settings ask for it, is the background's job.)
   useEffect(() => {
-    if (!pendingAuto || !plan || !settings) return;
-    setPendingAuto(false);
-    const prompt = settings.prompts[plan.mode] ?? '';
-    if (shouldAutoSend(settings, plan.selection.kind)) ask(prompt);
-    else setQuestion(prompt);
-  }, [pendingAuto, plan, settings, ask]);
+    if (!plan || !settings || tabId === null) return;
+    if (prefilled.current.has(plan.id) || started) return;
+    prefilled.current.add(plan.id);
+    setDraft(settings.prompts[mode] ?? '');
+  }, [plan, settings, tabId, started, mode, setDraft]);
+
+  useEffect(() => {
+    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
+  }, [turns.length, turns[turns.length - 1]?.text]);
+
+  const send = useCallback(() => {
+    if (!plan || tabId === null || busy) return;
+    void browser.runtime.sendMessage({ type: 'chat:send', tabId, question: draft, mode });
+    setDraft('');
+  }, [plan, tabId, busy, draft, mode, setDraft]);
+
+  const stop = useCallback(() => {
+    if (tabId !== null) void browser.runtime.sendMessage({ type: 'chat:stop', tabId });
+  }, [tabId]);
+
+  const changeMode = useCallback(
+    (m: Mode) => {
+      if (tabId === null) return;
+      void browser.runtime.sendMessage({ type: 'chat:mode', tabId, mode: m });
+      // Before anything is sent, the box still holds the old mode's prompt;
+      // swap it for the new one unless the student has already edited it.
+      if (!started && settings && draft === (settings.prompts[mode] ?? '')) setDraft(settings.prompts[m] ?? '');
+    },
+    [tabId, started, settings, draft, mode, setDraft],
+  );
+
+  const placeholder = useMemo(() => {
+    if (!plan) return 'Select something on the page first';
+    return started ? 'Ask a follow-up…' : `Ask about the selection, then ${MODE_LABEL[mode]}`;
+  }, [plan, started, mode]);
 
   return (
-    <div className="panel">
+    <div className="panel" data-tab={tabId ?? ''}>
       <header className="bar">
         <div className="modes" role="tablist">
           {MODES.map((m) => (
@@ -151,55 +190,73 @@ export function Panel() {
         </div>
       </header>
 
-      <Tray plan={plan} />
-      <Preview plan={plan} />
-
       <div className="thread" ref={threadRef}>
-        {turns.map((t) =>
-          t.role === 'user' ? (
-            <div key={t.id} className="turn user">{t.text}</div>
-          ) : (
-            <div key={t.id} className="turn assistant">
-              {t.error ? <div className="error">{t.error}</div> : <Answer text={t.text} streaming={!!t.streaming} />}
-              {!t.streaming && !t.error && (
-                <div className="usage">
-                  {t.model ? `${t.model.vendor}/${t.model.model}` : ''}
-                  {t.cached ? ' · replayed' : ''}
-                  {t.usage ? ` · ${t.usage.inputTokens}→${t.usage.outputTokens} tok` : ''}
-                  {t.usage?.costUsd !== undefined ? ` · $${t.usage.costUsd.toFixed(4)}` : ''}
-                </div>
-              )}
-            </div>
-          ),
+        {!plan && (
+          <div className="empty">
+            Nothing selected on this tab yet. Click the toolbar icon, or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>, then
+            select what you want to ask about.
+          </div>
         )}
+        {plan &&
+          turns.map((t, i) =>
+            t.role === 'user' ? (
+              <div key={t.id} className="turn user">
+                {/* The selection belongs to the opening message, like an attachment. */}
+                {i === 0 && <SelectionCard plan={plan} variant="sent" />}
+                <div className="turn-text">{t.text}</div>
+              </div>
+            ) : (
+              <div key={t.id} className="turn assistant" data-streaming={t.streaming ? 'true' : 'false'}>
+                {t.error ? <div className="error">{t.error}</div> : <Answer text={t.text} streaming={!!t.streaming} />}
+                {!t.streaming && !t.error && <Usage model={t.model} usage={t.usage} cached={t.cached} />}
+              </div>
+            ),
+          )}
       </div>
+
+      {plan && !started && <SelectionCard plan={plan} variant="pending" />}
 
       <form
         className="composer"
         onSubmit={(e) => {
           e.preventDefault();
-          ask();
+          send();
         }}
       >
         <textarea
-          value={question}
-          placeholder={plan ? `Ask about the selection (optional), then ${MODE_LABEL[mode]}` : 'Select something on the page first'}
-          onChange={(e) => setQuestion(e.target.value)}
+          value={draft}
+          placeholder={placeholder}
+          onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              ask();
+              send();
             }
           }}
           rows={2}
           disabled={!plan}
         />
         {busy ? (
-          <button type="button" onClick={abort}>Stop</button>
+          <button type="button" onClick={stop}>
+            Stop
+          </button>
         ) : (
-          <button type="submit" disabled={!plan}>{MODE_LABEL[mode]}</button>
+          <button type="submit" disabled={!plan}>
+            {started ? 'Send' : MODE_LABEL[mode]}
+          </button>
         )}
       </form>
+    </div>
+  );
+}
+
+function Usage({ model, usage, cached }: { model?: ModelRef; usage?: { inputTokens: number; outputTokens: number; costUsd?: number }; cached?: boolean }) {
+  return (
+    <div className="usage">
+      {model ? `${model.vendor}/${model.model}` : ''}
+      {cached ? ' · replayed' : ''}
+      {usage ? ` · ${usage.inputTokens}→${usage.outputTokens} tok` : ''}
+      {usage?.costUsd !== undefined ? ` · $${usage.costUsd.toFixed(4)}` : ''}
     </div>
   );
 }

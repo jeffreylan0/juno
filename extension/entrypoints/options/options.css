@@ -40,14 +40,15 @@ section {
 .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 
 label { display: flex; flex-direction: column; gap: 5px; }
-label.radio { flex-direction: row; align-items: flex-start; gap: 9px; }
-label.radio span { display: flex; flex-direction: column; gap: 2px; }
-label.radio small { color: var(--muted); }
+label.radio, label.check { flex-direction: row; align-items: flex-start; gap: 9px; }
+label.radio span, label.check span { display: flex; flex-direction: column; gap: 2px; }
+label.radio small, label.check small { color: var(--muted); }
 
 input, select, textarea {
   font: inherit; padding: 7px 9px; color: var(--fg); background: var(--bg);
   border: 1px solid var(--line); border-radius: var(--radius); resize: vertical;
 }
+input[type='checkbox'], input[type='radio'] { padding: 0; margin: 3px 0 0; flex: none; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 .help { color: var(--muted); margin: 0; font-size: 13px; line-height: 1.5; }

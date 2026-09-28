@@ -1,10 +1,11 @@
 /**
  * The toolbar flow: one click arms a selection, the bar carries the controls,
- * the cursor tooltip appears only while a selection is being drawn, the page
- * still scrolls, and the bar itself is never selectable.
+ * the cursor tooltip appears only while a selection is being drawn, a drawn
+ * box can be adjusted before asking, the page still scrolls, the bar itself
+ * is never selectable, and its X closes the answer panel too.
  */
 import type { Page, Worker } from '@playwright/test';
-import { FIXTURE_ORIGIN, expect, openPanel, test } from './fixtures';
+import { FIXTURE_ORIGIN, dragBox, expect, openPanel, setSettings, sidePanelCount, tabIdFor, test } from './fixtures';
 import type { Plan } from '../../shared/payload';
 
 const OVERLAY = 'selection-ai-overlay';
@@ -56,7 +57,11 @@ test('one toolbar click arms a box selection with the bar in place', async ({ co
   await expect(bar.locator('.chip[data-kind="box"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(bar.locator('.chip[data-kind="text"]')).toBeEnabled();
   await expect(bar.locator('.chip[data-kind="element"]')).toBeDisabled();
+  // Element selection is the next feature; the chip says so rather than
+  // looking broken.
+  await expect(bar.locator('.chip[data-kind="element"]')).toHaveAttribute('title', 'Element selection — coming next');
   await expect(bar.locator('.close')).toBeVisible();
+  await expect(bar.locator('.ask')).toBeHidden();
   await expect(bar.locator('.gear')).toBeVisible();
   await expect(bar.locator('.say')).toHaveText('Drag to select an area');
 
@@ -67,6 +72,24 @@ test('one toolbar click arms a box selection with the bar in place', async ({ co
 
   // Nothing follows the cursor until a selection is actually being drawn.
   await expect(page.locator(TIP)).toBeHidden();
+
+  // By default the answer panel waits for the selection, so it does not
+  // narrow the page while the student is still choosing what to select.
+  expect(await sidePanelCount(serviceWorker)).toBe(0);
+});
+
+test('hovering the selected mode keeps its label readable', async ({ context, serviceWorker }) => {
+  const page = await context.newPage();
+  await armed(serviceWorker, page);
+  const chip = page.locator(`${BAR} .chip[data-kind="box"]`);
+  await chip.hover();
+  const { color, background } = await chip.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { color: s.color, background: s.backgroundColor };
+  });
+  // Dark text on the light pill, never white on white.
+  expect(color).toBe('rgb(15, 23, 42)');
+  expect(background).not.toBe(color);
 });
 
 test('the tooltip takes over from the bar for the duration of the drag', async ({ context, serviceWorker }) => {
@@ -98,14 +121,30 @@ test('the tooltip takes over from the bar for the duration of the drag', async (
   await page.mouse.up();
 });
 
-test('the cancel button ends the selection like Escape does', async ({ context, extensionId, serviceWorker }) => {
+test('the X ends the selection and closes the answer panel', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
   await armed(serviceWorker, page);
-  const panel = await openPanel(context, extensionId);
+  const panel = await openPanel(context, extensionId, await tabIdFor(serviceWorker, `${FIXTURE_ORIGIN}/text.html`));
+  await expect(panel.locator('.panel')).toBeVisible();
   await page.bringToFront();
 
+  const closed = panel.waitForEvent('close', { timeout: 10_000 });
   await page.locator(`${BAR} .close`).click();
   await expect(page.locator(OVERLAY)).toHaveCount(0);
+  await closed;
+  expect(panel.isClosed()).toBe(true);
+});
+
+test('Escape ends the selection but leaves the answer panel open', async ({ context, extensionId, serviceWorker }) => {
+  const page = await context.newPage();
+  await armed(serviceWorker, page);
+  const panel = await openPanel(context, extensionId, await tabIdFor(serviceWorker, `${FIXTURE_ORIGIN}/text.html`));
+  await page.bringToFront();
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator(OVERLAY)).toHaveCount(0);
+  await page.waitForTimeout(400);
+  expect(panel.isClosed()).toBe(false);
   expect(await getPlan(panel)).toBeNull();
 });
 
@@ -158,7 +197,9 @@ test('the gear expands the bar upwards, between the controls and the notices', a
 
   await bar.locator('.gear').click();
   await expect(settings).toHaveClass(/open/);
-  await expect(settings.locator('select')).toHaveCount(4);
+  await expect(settings.locator('select')).toHaveCount(6);
+  await expect(settings).toContainText('After drawing a box');
+  await expect(settings).toContainText('Open the answer panel');
   await settled(page, BAR);
 
   const open = (await bar.boundingBox())!;
@@ -189,34 +230,115 @@ test('the wheel is ignored once a drag has started', async ({ context, serviceWo
   // A box is pinned to the viewport, so letting the page move under it would
   // capture something the student never framed.
   expect(await page.evaluate(() => window.scrollY)).toBe(before);
+  // Let go on a box too small to count, which puts the selection back to armed.
+  await page.mouse.move(402, 302, { steps: 2 });
   await page.mouse.up();
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'armed');
 
-  // And it comes back once the drag is over.
+  // And the wheel comes back once the drag is over.
   await page.mouse.wheel(0, 600);
   await expect.poll(async () => page.evaluate(() => window.scrollY)).toBeGreaterThan(before);
 });
 
-test('a completed selection still produces a plan', async ({ context, extensionId, serviceWorker }) => {
+test('a drawn box waits to be adjusted, then Enter asks and the panel opens', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
   await armed(serviceWorker, page);
   const panel = await openPanel(context, extensionId);
   await page.bringToFront();
 
   const target = (await page.locator('#problem').boundingBox())!;
-  await page.mouse.move(target.x - 4, target.y - 4);
-  await page.mouse.down();
-  await page.mouse.move(target.x + target.width + 4, target.y + target.height + 4, { steps: 8 });
-  await page.mouse.up();
+  await dragBox(page, target.x - 4, target.y - 4, target.x + target.width + 4, target.y + target.height + 4);
 
+  // Letting go does not send anything yet: the box stays, with handles.
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'adjusting');
+  await expect(page.locator(`${OVERLAY} .box.adjusting`)).toBeVisible();
+  await expect(page.locator(`${OVERLAY} .handle`)).toHaveCount(8);
+  await expect(page.locator(`${BAR} .ask`)).toBeVisible();
+  await expect(page.locator(`${BAR} .say`)).toHaveText('Drag the edges to adjust · Enter to ask');
+  expect(await getPlan(panel)).toBeNull();
+  expect(await sidePanelCount(serviceWorker)).toBe(0);
+
+  await page.keyboard.press('Enter');
   await expect.poll(async () => (await getPlan(panel))?.parts.length ?? 0, { timeout: 15_000 }).toBeGreaterThan(0);
   const plan = (await getPlan(panel))!;
   expect(plan.parts.map((p) => p.kind)).toContain('image');
 
-  // The drag is a real gesture, so whichever attempt lands, nothing is left
+  // Enter is a real gesture, so the panel opens on it and nothing is left
   // nagging the student for a click.
+  await expect.poll(async () => sidePanelCount(serviceWorker), { timeout: 10_000 }).toBe(1);
   await expect
     .poll(async () => serviceWorker.evaluate(async () => chrome.action.getBadgeText({})), { timeout: 10_000 })
     .toBe('');
+});
+
+test('dragging a corner resizes the box, and Ask sends the resized one', async ({ context, extensionId, serviceWorker }) => {
+  const page = await context.newPage();
+  await armed(serviceWorker, page);
+  const panel = await openPanel(context, extensionId);
+  await page.bringToFront();
+
+  await dragBox(page, 100, 100, 300, 200);
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'adjusting');
+  // Pull the bottom-right corner out, then nudge the whole box.
+  await dragBox(page, 300, 200, 360, 260);
+  await dragBox(page, 200, 150, 220, 160);
+  const drawn = await page.locator(`${OVERLAY} .box`).evaluate((el) => ({ left: el.style.left, width: el.style.width }));
+  expect(drawn).toEqual({ left: '120px', width: '260px' });
+
+  await page.locator(`${BAR} .ask`).click();
+  await expect.poll(async () => (await getPlan(panel))?.selection.kind ?? null, { timeout: 15_000 }).toBe('box');
+  expect((await getPlan(panel))!.selection.rect).toEqual({ x: 120, y: 110, width: 260, height: 160 });
+});
+
+test('Escape while adjusting cancels the whole selection', async ({ context, extensionId, serviceWorker }) => {
+  const page = await context.newPage();
+  await armed(serviceWorker, page);
+  const panel = await openPanel(context, extensionId);
+  await page.bringToFront();
+
+  await dragBox(page, 100, 100, 300, 200);
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'adjusting');
+  await page.keyboard.press('Escape');
+  await expect(page.locator(OVERLAY)).toHaveCount(0);
+  expect(await getPlan(panel)).toBeNull();
+});
+
+test('with adjusting turned off, letting go sends the box at once', async ({ context, extensionId, serviceWorker }) => {
+  await setSettings(serviceWorker, { adjustBox: false });
+  const page = await context.newPage();
+  await armed(serviceWorker, page);
+  const panel = await openPanel(context, extensionId);
+  await page.bringToFront();
+
+  await dragBox(page, 100, 100, 300, 200);
+  await expect.poll(async () => (await getPlan(panel))?.selection.kind ?? null, { timeout: 15_000 }).toBe('box');
+});
+
+test('the wheel is ignored while a drawn box waits to be adjusted', async ({ context, serviceWorker }) => {
+  const page = await context.newPage();
+  await armed(serviceWorker, page, 'long.html');
+
+  const before = await page.evaluate(() => window.scrollY);
+  await dragBox(page, 200, 200, 400, 300);
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'adjusting');
+  await page.mouse.wheel(0, 600);
+  await page.waitForTimeout(150);
+  expect(await page.evaluate(() => window.scrollY)).toBe(before);
+});
+
+test('the real side panel closes from the X too', async ({ context, serviceWorker }) => {
+  const page = await context.newPage();
+  await armed(serviceWorker, page);
+  const target = (await page.locator('#problem').boundingBox())!;
+  await dragBox(page, target.x - 4, target.y - 4, target.x + target.width + 4, target.y + target.height + 4);
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => sidePanelCount(serviceWorker), { timeout: 10_000 }).toBe(1);
+
+  // Arm again, then close everything from the bar.
+  await clickToolbar(serviceWorker, `${FIXTURE_ORIGIN}/text.html`);
+  await expect(page.locator(BAR)).toBeVisible({ timeout: 10_000 });
+  await page.locator(`${BAR} .close`).click();
+  await expect.poll(async () => sidePanelCount(serviceWorker), { timeout: 10_000 }).toBe(0);
 });
 
 test('when Chrome refuses the panel, the page offers a click that opens it', async ({ context, serviceWorker }) => {
@@ -236,13 +358,15 @@ test('when Chrome refuses the panel, the page offers a click that opens it', asy
 });
 
 /**
- * Chromium does enforce the user-activation rule on sidePanel.open(): a real
- * drag satisfies it, and the synthetic action dispatch a test has to use does
- * not. That asymmetry is what this pins down. In a real browser the click-time
- * open succeeds and the badge never appears; here it is refused, which
- * exercises the retry that has to be there when a gesture is missing.
+ * With the panel set to open on the toolbar click. Chromium enforces the
+ * user-activation rule on sidePanel.open(): a real drag or key press
+ * satisfies it, and the synthetic action dispatch a test has to use does not.
+ * In a real browser the click-time open succeeds and the badge never appears;
+ * here it is refused, which exercises the retry that has to be there when a
+ * gesture is missing.
  */
-test('the panel is asked for at arm time, and again if that was refused', async ({ context, serviceWorker }) => {
+test('set to open on click, the panel is asked for at arm time, and again if refused', async ({ context, serviceWorker }) => {
+  await setSettings(serviceWorker, { panelOpen: 'on-click' });
   const page = await context.newPage();
   const url = `${FIXTURE_ORIGIN}/text.html`;
   await page.goto(url);
@@ -256,11 +380,10 @@ test('the panel is asked for at arm time, and again if that was refused', async 
   await expect.poll(badge, { timeout: 5000 }).toBe('1');
 
   const target = (await page.locator('#problem').boundingBox())!;
-  await page.mouse.move(target.x - 4, target.y - 4);
-  await page.mouse.down();
-  await page.mouse.move(target.x + target.width + 4, target.y + target.height + 4, { steps: 8 });
-  await page.mouse.up();
+  await dragBox(page, target.x - 4, target.y - 4, target.x + target.width + 4, target.y + target.height + 4);
+  await page.keyboard.press('Enter');
 
-  // The drag is a real gesture, so the retry lands and the badge clears.
+  // Enter is a real gesture, so the retry lands and the badge clears.
   await expect.poll(badge, { timeout: 10_000 }).toBe('');
+  await expect.poll(async () => sidePanelCount(serviceWorker), { timeout: 10_000 }).toBe(1);
 });

@@ -47,15 +47,51 @@ function sseResponse(events: string[]): Response {
 }
 
 describe('message shape', () => {
-  it('builds one OpenAI-compatible user turn with text then images', () => {
-    const msgs = toChatMessages({ plan: plan(), history: [{ role: 'user', text: 'earlier' }, { role: 'assistant', text: 'ok' }] });
-    expect(msgs[0]?.role).toBe('system');
-    expect(msgs).toHaveLength(4);
-    const last = msgs[3]!;
-    expect(Array.isArray(last.content)).toBe(true);
-    const content = last.content as { type: string }[];
+  it('attaches the selection once, to the opening user turn', () => {
+    const msgs = toChatMessages({ plan: plan() });
+    expect(msgs.map((m) => m.role)).toEqual(['system', 'user']);
+    const content = msgs[1]!.content as { type: string; text?: string }[];
     expect(content.map((c) => c.type)).toEqual(['text', 'image_url']);
-    expect((content[0] as { text: string }).text).toContain('Question: Why?');
+    expect(content[0]!.text).toContain('Selected content:');
+    expect(content[0]!.text).toContain('Question: Why?');
+  });
+
+  it('sends a follow-up as text after the history, with the selection still in the first turn', () => {
+    const msgs = toChatMessages({
+      plan: { ...plan(), question: 'And the units?' },
+      history: [
+        { role: 'user', text: 'Explain this' },
+        { role: 'assistant', text: 'Read: a force diagram. It shows…' },
+      ],
+    });
+    expect(msgs.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
+    const opening = msgs[1]!.content as { type: string; text?: string }[];
+    expect(opening.map((c) => c.type)).toEqual(['text', 'image_url']);
+    // The opening turn carries the student's original question, not the follow-up.
+    expect(opening[0]!.text).toContain('Question: Explain this');
+    expect(msgs[2]!.content).toBe('Read: a force diagram. It shows…');
+    expect(msgs[3]!.content).toBe('And the units?');
+    // Only one copy of the image is ever sent.
+    const images = msgs.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((c) => c.type === 'image_url');
+    expect(images).toHaveLength(1);
+  });
+
+  it('keeps roles alternating in the Anthropic body for a multi-turn conversation', () => {
+    const body = toAnthropicBody(
+      toChatMessages({
+        plan: { ...plan(), question: 'Next?' },
+        history: [
+          { role: 'user', text: 'Q1' },
+          { role: 'assistant', text: 'A1' },
+          { role: 'user', text: 'Q2' },
+          { role: 'assistant', text: 'A2' },
+        ],
+      }),
+      'claude-sonnet-5',
+    );
+    const roles = body.messages.map((m) => m.role);
+    expect(roles).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
+    expect(body.system).toContain('follow-up');
   });
 
   it('converts to the Anthropic body with system split out and images first', () => {

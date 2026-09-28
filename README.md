@@ -11,9 +11,10 @@ Weeks 1–2 of the build plan are done: the workspace, the shared payload schema
 | Area | State |
 | --- | --- |
 | Toolbar click → selection → crop → plan → streamed answer | working, Chrome and Firefox |
-| Box selection | working, with a control bar, cursor tooltip and Escape or the X to cancel |
-| Text selection | working; KaTeX/MathJax range widening lands week 3 |
-| Element selection | week 4 (the mode chip is shown disabled) |
+| Box selection | working: control bar, cursor tooltip, resize-and-move handles before asking, Escape to cancel, the X to close everything |
+| Text selection | working, with the captured text previewed in the panel; KaTeX/MathJax range widening lands week 3 |
+| Conversation | one thread per tab: the selection is attached to the first question, follow-ups go back and forth on it |
+| Element selection | next up, once this round tests clean (the chip reads "coming next") |
 | PDFs | reader with a real PDF.js text layer; all modes work there |
 | Extractors (visible, math, table, code) | `extract/visible.ts` only; rest weeks 4–5 |
 | Providers | mock, local (Ollama), BYOK (Anthropic + OpenAI); gateway is a stub |
@@ -31,7 +32,11 @@ pnpm dev                       # Chrome with live reload
 pnpm dev:firefox               # same in Firefox
 ```
 
-Clicking the toolbar icon arms a selection immediately — crosshair and ready to drag on the first click. A bar near the bottom of the screen carries a red cancel button, the mode chips, the current instruction and a gear that expands the bar upward into quick settings; notices such as the PDF warning appear beneath the controls. Once you start drawing, the instruction hands over to a small tooltip anchored to the cursor reading **Escape** to cancel. The page still scrolls while a selection is armed, by wheel or keyboard, and clicking anywhere on the bar never starts a selection. Alt+Shift+S and Alt+Shift+A arm box or text directly.
+Clicking the toolbar icon arms a selection immediately — crosshair and ready to drag on the first click. A bar near the bottom of the screen carries a red X, the mode chips, the current instruction and a gear that expands the bar upward into quick settings; notices such as the PDF warning appear beneath the controls. Once you start drawing, the instruction hands over to a small tooltip anchored to the cursor reading **Escape** to cancel. The page still scrolls while a selection is armed, by wheel or keyboard, and clicking anywhere on the bar never starts a selection. Alt+Shift+S and Alt+Shift+A arm box or text directly.
+
+Letting go of a box does not send it. The box stays with eight handles: drag an edge or corner to resize, drag inside to move, drag outside to start over, then press **Enter**, double-click the box or click **Ask**. (Options → *Adjust a box before asking* turns this off, and a box is sent the moment you let go.) Escape cancels the selection; the X also closes the answer panel.
+
+The answer panel opens once the selection is made, so it never narrows the page while you are still choosing what to select; Options → *Open the answer panel* can open it on the toolbar click instead. Each tab has its own conversation. The selection sits above the composer with the mode's default prompt ready to edit, rides along with the first question like an attachment, and every question after that is a follow-up on the same selection. Switch tabs and the panel switches with you; a new selection in a tab starts a new conversation there.
 
 A box is clamped to the visible viewport, because `captureVisibleTab` can only return what is on screen; drag against an edge and the bar says so, and the wheel is ignored for the duration of a drag so the crop always matches what was framed. Selecting across the fold needs scroll-and-stitch capture, which is not built.
 
@@ -84,8 +89,8 @@ selection-ai/
 ├── extension/          WXT project: Chrome, Edge, Firefox, Safari
 │   ├── entrypoints/    background, content/ (overlay, bar, select-*, scroll), reader/, sidepanel/, options/
 │   ├── extract/        visible.ts (math, table, code land weeks 4–5)
-│   ├── lib/            planner, capture, router, cache, storage, messages, render, pdf-detect, selection-controller, providers/
-│   └── ui/             Panel, Tray, Preview, Answer, WhatIRead
+│   ├── lib/            planner, capture, router, cache, storage, threads, messages, render, pdf-detect, selection-controller, providers/
+│   └── ui/             Panel, Selection, Tray, Answer, WhatIRead
 ├── shared/             payload.ts (types), prompts.ts (mode prompts) — one schema for all three packages
 ├── worker/             Cloudflare Worker for hosted plans (week 9)
 ├── eval/               run, batch, score, crops, problems/
@@ -95,12 +100,12 @@ selection-ai/
 
 Three rules hold the design together. Page-touching code lives in the content script; anything holding a key or making a network call lives in the background. Every provider speaks one OpenAI-compatible message shape, converted to the Anthropic Messages API only at the edge in `providers/byok.ts`. And `shared/payload.ts` is the single schema the extension, the Worker and the eval scripts all build against.
 
-Four browser rules are worth knowing before changing the toolbar flow. A full-screen drag surface swallows the wheel, so the overlay forwards it to whatever is scrollable under the pointer — in the reader that is a container, not the window — and it never takes keyboard focus, which is what leaves arrows and space working. Escape is caught on `document` in capture and never needed focus. `sidePanel.open()` needs a live user gesture, and Chromium really does enforce it, so the panel is opened from the toolbar click — the one gesture that always counts — with a retry when the selection commits in case there was no tab to open against, and a one-click toast on the page as the last resort. Chrome will not inject a content script into an extension page, so the reader runs `lib/selection-controller.ts` itself and the background routes to it by a tab registry rather than by URL — `tabs.get` does not reveal a URL without the `tabs` permission. And pdf.js 6 calls `Map.getOrInsertComputed`, so the reader imports the legacy build to keep working on the browsers students actually run.
+Four browser rules are worth knowing before changing the toolbar flow. A full-screen drag surface swallows the wheel, so the overlay forwards it to whatever is scrollable under the pointer — in the reader that is a container, not the window — and it never takes keyboard focus, which is what leaves arrows and space working. Escape is caught on `document` in capture and never needed focus. `sidePanel.open()` needs a live user gesture, and Chromium really does enforce it, so the panel opens on the gesture that commits the selection — the release, or the Enter or Ask that confirms an adjusted box — or on the toolbar click when that setting is on, with a one-click toast on the page as the last resort. Closing uses `sidePanel.close()` (Chrome 141+), and the panel also closes its own window when asked, for browsers without it. Conversations live in `storage.session`, not in the service worker, because an idle MV3 worker is torn down after about 30 seconds; the background is the only writer, streams each answer into the thread, and the panel just renders it. Chrome will not inject a content script into an extension page, so the reader runs `lib/selection-controller.ts` itself and the background routes to it by a tab registry rather than by URL — `tabs.get` does not reveal a URL without the `tabs` permission. And pdf.js 6 calls `Map.getOrInsertComputed`, so the reader imports the legacy build to keep working on the browsers students actually run.
 
 ## Privacy and permissions
 
-The manifest asks for `activeTab`, `scripting`, `storage` and `sidePanel` — no host permissions, because the content script is injected only when you invoke it. Nothing is sent until you ask; only the selection is sent, never the whole page. The extension ships no API key, loads no code from a server at runtime, and keeps no image in storage. Blocked sites (Options) turn the shortcut off entirely for hostnames you list.
+The manifest asks for `activeTab`, `scripting`, `storage` and `sidePanel` — no host permissions, because the content script is injected only when you invoke it. Nothing is sent until you ask; only the selection is sent, never the whole page. The extension ships no API key and loads no code from a server at runtime. A tab's selection and conversation are kept in `storage.session`, which lives in memory, is unreadable from web pages, is dropped when the tab closes, and clears when the browser quits; nothing is written to disk. Blocked sites (Options) turn the shortcut off entirely for hostnames you list.
 
 ## Next
 
-Week 3 finishes selection: widening a text range to whole KaTeX or MathJax expressions, and Option-drag to subtract regions from a box. Week 4 adds hover-to-pick elements via `elementFromPoint`, which turns on the third mode chip. Weeks 5–6 are the extractors and the real planner, which is what Gate A measures.
+Element selection comes first, pulled forward from week 4 as soon as the current round tests clean: hover to highlight via `elementFromPoint`, click to pick, arrow keys to widen to the parent, which turns on the third mode chip. Then the rest of week 3 — widening a text range to whole KaTeX or MathJax expressions, and Option-drag to subtract regions from a box — and weeks 5–6, the extractors and the real planner, which is what Gate A measures.

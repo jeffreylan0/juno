@@ -11,7 +11,19 @@ import type { ProviderContext, ProviderDriver, StreamResult } from './types';
 export const MOCK_MODEL: ModelRef = { vendor: 'mock', model: 'mock-1' };
 
 function placeholder(req: AskRequest, hash: string): string {
-  const { plan } = req;
+  const { plan, history = [] } = req;
+  // Follow-ups get a reply that visibly follows on, so the back-and-forth can
+  // be exercised without a real model.
+  if (history.length > 0) {
+    const turn = Math.floor(history.length / 2) + 1;
+    return [
+      `**Mock follow-up** (turn ${turn}, mode: ${plan.mode}) to: "${(plan.question ?? '').slice(0, 80)}"`,
+      '',
+      `This reply has ${history.length} earlier message(s) as context and the same selection, attached once to the opening turn.`,
+      '',
+      `No recording exists for hash \`${hash.slice(0, 12)}\`.`,
+    ].join('\n');
+  }
   const summary = plan.parts
     .map((p, i) => (p.kind === 'image' ? `image ${p.width}×${p.height}` : partToText(p, i).split('\n').slice(1).join(' ').slice(0, 60)))
     .join('; ');

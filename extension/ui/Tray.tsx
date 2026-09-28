@@ -1,14 +1,7 @@
 import type { Part, Plan } from '@shared/payload';
 
-/** Numbered selection chips. Week 6 adds "Sent as" toggles and previews. */
-export function Tray({ plan }: { plan: Plan | null }) {
-  if (!plan) {
-    return (
-      <div className="tray empty">
-        Click the toolbar icon to pick a selection mode, or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> to draw a box.
-      </div>
-    );
-  }
+/** Numbered selection chips. Week 6 adds "Sent as" toggles. */
+export function Tray({ plan }: { plan: Plan }) {
   return (
     <div className="tray">
       {plan.parts.map((p, i) => (
