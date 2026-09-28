@@ -1,0 +1,15 @@
+# Week 9. Secrets are set with `wrangler secret put`, never committed:
+#   ANTHROPIC_API_KEY, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY,
+#   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET
+name = "selection-ai"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "development"
+# AI Gateway id; per-user rate limits are configured in the Cloudflare dashboard.
+AI_GATEWAY_ID = ""
+
+[env.production]
+vars = { ENVIRONMENT = "production" }

@@ -1,0 +1,38 @@
+{
+  "name": "selection-ai",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cross-browser extension: select text, a box or an element and ask Claude or ChatGPT about exactly that.",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter extension dev",
+    "dev:firefox": "pnpm --filter extension dev:firefox",
+    "build": "pnpm --filter extension build",
+    "build:firefox": "pnpm --filter extension build:firefox",
+    "zip": "pnpm --filter extension zip",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r typecheck",
+    "test": "vitest run",
+    "vitest": "vitest",
+    "playwright": "playwright",
+    "eval:run": "pnpm --filter eval exec tsx run.ts",
+    "eval:batch": "pnpm --filter eval exec tsx batch.ts",
+    "eval:score": "pnpm --filter eval exec tsx score.ts",
+    "eval:crops": "pnpm --filter eval exec tsx crops.ts",
+    "worker:dev": "pnpm --filter worker dev",
+    "build:e2e": "E2E=1 pnpm --filter extension build",
+    "test:e2e": "pnpm build:e2e && playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@types/node": "^22.0.0",
+    "http-server": "^14.1.1",
+    "jsdom": "^26.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^5.0.2",
+    "wxt": "^0.21.4"
+  }
+}

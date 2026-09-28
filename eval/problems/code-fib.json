@@ -1,0 +1,9 @@
+{
+  "id": "code-fib",
+  "subject": "programming",
+  "page": "tests/fixtures/pages/code.html",
+  "selector": "#problem",
+  "crop": "eval/problems/crops/code-fib.png",
+  "question": "What does this program print?",
+  "answer": { "numeric": 55, "tolerance": 0, "accept": ["55"] }
+}

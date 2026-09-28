@@ -1,0 +1,9 @@
+{
+  "id": "text-balance",
+  "subject": "chemistry",
+  "page": "tests/fixtures/pages/text.html",
+  "selector": "#problem",
+  "crop": "eval/problems/crops/text-balance.png",
+  "question": "What is the coefficient of O2 in the balanced equation?",
+  "answer": { "numeric": 3, "tolerance": 0, "accept": ["3"] }
+}

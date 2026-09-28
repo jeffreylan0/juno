@@ -1,0 +1,9 @@
+{
+  "id": "table-titration",
+  "subject": "chemistry",
+  "page": "tests/fixtures/pages/table.html",
+  "selector": "#problem",
+  "crop": "eval/problems/crops/table-titration.png",
+  "question": "What is the mean titre volume in mL?",
+  "answer": { "numeric": 24.1667, "tolerance": 0.02, "accept": ["24.17", "24.2 mL", "24.17 mL"] }
+}

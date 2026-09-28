@@ -1,0 +1,9 @@
+{
+  "id": "mathjax-kinematics",
+  "subject": "physics",
+  "page": "tests/fixtures/pages/mathjax.html",
+  "selector": "#problem",
+  "crop": "eval/problems/crops/mathjax-kinematics.png",
+  "question": "How high does the ball rise?",
+  "answer": { "numeric": 20, "tolerance": 0.05, "accept": ["20 m", "20 meters", "20\\ \\mathrm{m}", "20\\,\\text{m}"] }
+}

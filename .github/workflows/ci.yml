@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Build all browser targets
+        run: |
+          pnpm --filter extension build
+          pnpm --filter extension build:firefox
+          pnpm --filter extension build:edge
+      # The mock route costs nothing and its placeholder answer is deliberately
+      # wrong, so this checks that every problem ran, not that it was right.
+      # The paid batch eval and Gate A run weekly and before each gate.
+      - name: Eval on the mock route
+        run: |
+          pnpm eval:run --route mock
+          pnpm eval:score --no-errors
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      # E2E=1 adds a host permission the shipped build does not have; see wxt.config.ts.
+      - run: pnpm build:e2e
+      - run: xvfb-run -a pnpm exec playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/

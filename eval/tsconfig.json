@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@shared/*": ["../shared/*"],
+      "@/*": ["../extension/*"],
+      "#imports": ["./shims/imports.ts"]
+    }
+  },
+  "include": ["*.ts", "shims/*.ts", "../shared/*.ts", "../extension/lib/**/*.ts"],
+  "exclude": ["../extension/lib/storage.ts"]
+}
