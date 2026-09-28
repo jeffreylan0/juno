@@ -2,7 +2,6 @@
  * Drag to draw a box. Returns the viewport rectangle in CSS pixels.
  * Week 3 adds Option-drag to subtract regions; for now a single drag.
  */
-import type { ContentScriptContext } from '#imports';
 import type { Rect } from '@shared/payload';
 
 const MIN_SIZE = 8;
@@ -22,61 +21,62 @@ export function clampToViewport(r: Rect, vw: number, vh: number): Rect {
   return { x, y, width: right - x, height: bottom - y };
 }
 
+export interface BoxSelectorHandlers {
+  /** Any pointer movement, so the overlay can keep its hint visible. */
+  onActivity?: () => void;
+  /** The drag began, so the hint can get out of the way. */
+  onDragStart?: () => void;
+  /** A usable rectangle was drawn. */
+  onDone: (rect: Rect) => void;
+}
+
 export class BoxSelector {
+  private start: { x: number; y: number } | null = null;
+
   constructor(
     private root: HTMLElement,
     private box: HTMLElement,
-    private ctx: ContentScriptContext,
+    private handlers: BoxSelectorHandlers,
   ) {}
 
-  run(): Promise<Rect | null> {
-    return new Promise((resolve) => {
-      let start: { x: number; y: number } | null = null;
-      const off: (() => void)[] = [];
-      const finish = (r: Rect | null) => {
-        off.forEach((f) => f());
-        resolve(r);
-      };
-      const on = <K extends keyof HTMLElementEventMap>(
-        target: HTMLElement | Window,
-        type: K | 'keydown',
-        fn: (e: never) => void,
-      ) => {
-        const h = fn as EventListener;
-        target.addEventListener(type, h, { capture: true });
-        off.push(() => target.removeEventListener(type, h, { capture: true }));
-      };
+  /** Wires listeners and returns the teardown. */
+  attach(): () => void {
+    const off: (() => void)[] = [];
+    const on = (type: string, fn: (e: never) => void) => {
+      const h = fn as EventListener;
+      this.root.addEventListener(type, h, { capture: true });
+      off.push(() => this.root.removeEventListener(type, h, { capture: true }));
+    };
 
-      on(this.root, 'pointerdown', (e: PointerEvent) => {
-        if (e.button !== 0) return;
-        e.preventDefault();
-        start = { x: e.clientX, y: e.clientY };
-        this.root.setPointerCapture(e.pointerId);
-        this.draw(normalizeRect(start.x, start.y, e.clientX, e.clientY));
-      });
-      on(this.root, 'pointermove', (e: PointerEvent) => {
-        if (!start) return;
-        this.draw(normalizeRect(start.x, start.y, e.clientX, e.clientY));
-      });
-      on(this.root, 'pointerup', (e: PointerEvent) => {
-        if (!start) return;
-        const r = clampToViewport(normalizeRect(start.x, start.y, e.clientX, e.clientY), innerWidth, innerHeight);
-        start = null;
-        if (r.width < MIN_SIZE || r.height < MIN_SIZE) {
-          this.box.style.display = 'none';
-          return; // too small: let the user try again
-        }
-        finish(r);
-      });
-      on(window, 'keydown', (e: KeyboardEvent) => {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          e.stopPropagation();
-          finish(null);
-        }
-      });
-      this.ctx.onInvalidated(() => finish(null));
+    on('pointerdown', (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      this.start = { x: e.clientX, y: e.clientY };
+      this.root.setPointerCapture(e.pointerId);
+      this.handlers.onDragStart?.();
+      this.draw(normalizeRect(this.start.x, this.start.y, e.clientX, e.clientY));
     });
+
+    on('pointermove', (e: PointerEvent) => {
+      this.handlers.onActivity?.();
+      if (!this.start) return;
+      this.draw(normalizeRect(this.start.x, this.start.y, e.clientX, e.clientY));
+    });
+
+    on('pointerup', (e: PointerEvent) => {
+      if (!this.start) return;
+      const r = clampToViewport(normalizeRect(this.start.x, this.start.y, e.clientX, e.clientY), innerWidth, innerHeight);
+      this.start = null;
+      if (r.width < MIN_SIZE || r.height < MIN_SIZE) {
+        // Too small to be deliberate: reset and let the user try again.
+        this.box.style.display = 'none';
+        this.handlers.onActivity?.();
+        return;
+      }
+      this.handlers.onDone(r);
+    });
+
+    return () => off.forEach((f) => f());
   }
 
   private draw(r: Rect): void {

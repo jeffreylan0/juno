@@ -4,7 +4,7 @@
  * worker. Build with `pnpm build:e2e` first — that build carries a host
  * permission the shipped one does not (see wxt.config.ts).
  */
-import { test as base, chromium, type BrowserContext, type Worker } from '@playwright/test';
+import { test as base, chromium, type BrowserContext, type Page, type Worker } from '@playwright/test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -63,4 +63,26 @@ export async function openPanel(context: BrowserContext, extensionId: string) {
   const panel = await context.newPage();
   await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
   return panel;
+}
+
+/**
+ * Opens popup.html the way the toolbar does. A real popup is not a tab, so the
+ * page under test has to be the active one before the popup mounts — otherwise
+ * the background arms the selection in the popup's own tab.
+ */
+export async function openPopup(context: BrowserContext, extensionId: string, active: Page) {
+  const popup = await context.newPage();
+  await popup.goto('about:blank');
+  await active.bringToFront();
+  await popup.goto(`chrome-extension://${extensionId}/popup.html`);
+  return popup;
+}
+
+/** Clicks by dispatching a DOM event, which works in a background tab. */
+export async function clickIn(page: Page, selector: string): Promise<void> {
+  await page.evaluate((s: string) => {
+    const el = document.querySelector<HTMLElement>(s);
+    if (!el) throw new Error(`no element for ${s}`);
+    el.click();
+  }, selector);
 }

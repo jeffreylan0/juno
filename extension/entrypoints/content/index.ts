@@ -1,12 +1,11 @@
 /**
  * Content script. Injected on toolbar click or shortcut (activeTab), never on
  * every page. Mounts the overlay on demand, answers pings so the background
- * does not inject twice, and tracks modifier keys for the selectors.
+ * does not inject twice, and re-arms cleanly when the popup switches mode.
  */
-import type { StartSelectionMsg, SelectionDoneMsg } from '@/lib/messages';
-import { Overlay } from './overlay';
-import { selectText } from './select-text';
+import type { SelectionDoneMsg, StartSelectionMsg } from '@/lib/messages';
 import { textInRect } from '@/extract/visible';
+import { Overlay } from './overlay';
 
 declare global {
   interface Window {
@@ -26,35 +25,45 @@ export default defineContentScript({
     const overlay = new Overlay(ctx);
 
     browser.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
-      const msg = raw as { type?: string };
+      const msg = raw as { type?: string; kind?: string };
       if (msg?.type === 'ping') {
         sendResponse('pong');
         return;
       }
+      if (msg?.type === 'selection:abort') {
+        overlay.abort();
+        return;
+      }
       if (msg?.type === 'selection:start') {
-        void handleStart(msg as StartSelectionMsg);
+        void handleStart(raw as StartSelectionMsg);
       }
     });
 
     async function handleStart(msg: StartSelectionMsg): Promise<void> {
+      // Switching mode from the popup re-arms; drop whatever is running first.
+      overlay.abort();
       const page = { url: location.href, title: document.title };
       const devicePixelRatio = window.devicePixelRatio || 1;
+
       if (msg.kind === 'text') {
-        const sel = selectText();
-        if (!sel) {
-          // Nothing selected: fall back to drawing a box.
-          return handleStart({ type: 'selection:start', kind: 'box' });
-        }
-        const done: SelectionDoneMsg = { type: 'selection:done', kind: 'text', devicePixelRatio, page, ...sel };
+        const sel = await overlay.selectText();
+        if (!sel) return void browser.runtime.sendMessage({ type: 'selection:cancel' });
+        const done: SelectionDoneMsg = {
+          type: 'selection:done',
+          kind: 'text',
+          rect: sel.rect,
+          text: sel.text,
+          html: sel.html,
+          devicePixelRatio,
+          page,
+        };
         await browser.runtime.sendMessage(done);
         return;
       }
+
       if (msg.kind === 'box') {
         const rect = await overlay.selectBox();
-        if (!rect) {
-          await browser.runtime.sendMessage({ type: 'selection:cancel' });
-          return;
-        }
+        if (!rect) return void browser.runtime.sendMessage({ type: 'selection:cancel' });
         // Overlay is gone; wait two frames so the capture does not include it.
         await nextPaint();
         // Visible DOM text inside the box rides along so the planner can prefer
@@ -69,6 +78,7 @@ export default defineContentScript({
         await browser.runtime.sendMessage(done);
         return;
       }
+
       // 'element' arrives in week 4 (select-element.ts).
       await browser.runtime.sendMessage({ type: 'selection:cancel' });
     }

@@ -5,7 +5,7 @@ export function Tray({ plan }: { plan: Plan | null }) {
   if (!plan) {
     return (
       <div className="tray empty">
-        Click the toolbar icon or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> to draw a box on the page.
+        Click the toolbar icon to pick a selection mode, or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> to draw a box.
       </div>
     );
   }

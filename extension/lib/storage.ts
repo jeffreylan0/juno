@@ -4,11 +4,13 @@
  * keeps the store well under Safari's 5 MB cap.
  */
 import { storage } from '#imports';
-import type { ModelRef, Provider } from '@shared/payload';
+import type { ModelRef, Provider, SelectionKind } from '@shared/payload';
 
 export interface Settings {
   provider: Provider;
   defaultMode: 'explain' | 'hint' | 'check';
+  /** Which selection mode the toolbar popup arms on open. */
+  defaultSelectionKind: SelectionKind;
   /** Preferred vendor for the router's model table. */
   vendor: 'anthropic' | 'openai';
   /** Explicit model override; empty means "let the router choose". */
@@ -23,6 +25,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   provider: (import.meta.env.WXT_PROVIDER as Provider | undefined) ?? 'mock',
   defaultMode: 'explain',
+  defaultSelectionKind: 'box',
   vendor: 'anthropic',
   modelOverride: null,
   blockedSites: [],

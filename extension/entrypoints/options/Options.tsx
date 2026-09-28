@@ -92,6 +92,21 @@ export function Options() {
       </section>
 
       <section>
+        <h2>Selection</h2>
+        <p className="help">Which mode the toolbar popup arms as soon as it opens.</p>
+        <label>
+          Default selection mode
+          <select
+            value={settings.defaultSelectionKind}
+            onChange={(e) => setSettings({ ...settings, defaultSelectionKind: e.target.value as Settings['defaultSelectionKind'] })}
+          >
+            <option value="box">Box — drag around anything</option>
+            <option value="text">Text — select text on the page</option>
+          </select>
+        </label>
+      </section>
+
+      <section>
         <h2>Your API keys</h2>
         <p className="help">Stored only in this browser profile. Set a monthly spend cap in each provider console.</p>
         <label>

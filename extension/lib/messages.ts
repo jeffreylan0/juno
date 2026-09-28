@@ -1,11 +1,17 @@
 /**
- * Typed messages between the content script, the background and the panel.
- * Every message carries a `type`; request/response pairs go through
+ * Typed messages between the content script, the background, the popup and the
+ * panel. Every message carries a `type`; request/response pairs go through
  * `sendMessage`, streams go through a runtime Port named PORT_ASK.
  */
 import type { AskChunk, AskRequest, Mode, Plan, Rect, SelectionKind } from '@shared/payload';
 
 export const PORT_ASK = 'selection-ai:ask';
+
+/** Popup → background: inject the content script and arm a selection. */
+export interface SelectionArmMsg {
+  type: 'selection:arm';
+  kind: SelectionKind;
+}
 
 /** Background → content: start an interactive selection. */
 export interface StartSelectionMsg {
@@ -13,19 +19,25 @@ export interface StartSelectionMsg {
   kind: SelectionKind;
 }
 
-/** Content → background: the user finished a box or element selection. */
+/** Popup → background → content: tear down an armed selection (Esc). */
+export interface SelectionAbortMsg {
+  type: 'selection:abort';
+}
+
+/** Content → background: the user finished a selection. */
 export interface SelectionDoneMsg {
   type: 'selection:done';
   kind: SelectionKind;
   rect: Rect;
   devicePixelRatio: number;
-  /** Text recovered from the DOM inside the selection (text/element kinds). */
+  /** Text recovered from the DOM inside the selection. */
   text?: string;
   html?: string;
   label?: string;
   page: { url: string; title: string };
 }
 
+/** Content → background: the user cancelled. */
 export interface SelectionCancelMsg {
   type: 'selection:cancel';
 }
@@ -36,7 +48,7 @@ export interface PlanReadyMsg {
   plan: Plan;
 }
 
-/** Panel → background: fetch the current pending plan (panel may open late). */
+/** Panel or popup → background: fetch the current pending plan. */
 export interface PlanGetMsg {
   type: 'plan:get';
 }
@@ -45,6 +57,16 @@ export interface PlanGetMsg {
 export interface PlanSetModeMsg {
   type: 'plan:setMode';
   mode: Mode;
+}
+
+/** Popup → background: open the answer panel from a real user gesture. */
+export interface PanelOpenMsg {
+  type: 'panel:open';
+}
+
+/** Panel → background: the panel is alive, so nothing needs to prompt for it. */
+export interface PanelReadyMsg {
+  type: 'panel:ready';
 }
 
 /** Panel → background over the ask port. */
@@ -59,12 +81,16 @@ export type AskPortIn = AskStartMsg | AskAbortMsg;
 export type AskPortOut = AskChunk;
 
 export type RuntimeMessage =
+  | SelectionArmMsg
   | StartSelectionMsg
+  | SelectionAbortMsg
   | SelectionDoneMsg
   | SelectionCancelMsg
   | PlanReadyMsg
   | PlanGetMsg
-  | PlanSetModeMsg;
+  | PlanSetModeMsg
+  | PanelOpenMsg
+  | PanelReadyMsg;
 
 export function isRuntimeMessage(x: unknown): x is RuntimeMessage {
   return !!x && typeof x === 'object' && typeof (x as { type?: unknown }).type === 'string';

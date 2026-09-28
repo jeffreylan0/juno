@@ -35,6 +35,8 @@ export function Panel() {
 
   // Load settings and any plan that arrived before the panel opened.
   useEffect(() => {
+    // Clears the toolbar badge the background sets when it could not open us.
+    void browser.runtime.sendMessage({ type: 'panel:ready' });
     void getSettings().then((s) => {
       setSettings(s);
       setMode(s.defaultMode);
