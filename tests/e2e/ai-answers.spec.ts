@@ -8,6 +8,7 @@ import type { Page, Route, Worker } from '@playwright/test';
 import { FIXTURE_ORIGIN, boxAndAsk, expect, openPanel, setSettings, startSelection, tabIdFor, test } from './fixtures';
 
 const ANTHROPIC = 'https://api.anthropic.com/v1/**';
+const MESSAGES = 'https://api.anthropic.com/v1/messages';
 
 function sse(events: unknown[]): string {
   return events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
@@ -23,6 +24,16 @@ const ANSWER = sse([
 
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' };
 
+// The panel checks the chosen AI is reachable by listing its models (free).
+// A test that cares about that check routes it itself; the rest see a key
+// that works.
+test.beforeEach(async ({ context }) => {
+  await context.route('https://api.anthropic.com/v1/models**', async (route: Route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
+    await route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify({ data: [] }) });
+  });
+});
+
 async function useKey(sw: Worker): Promise<void> {
   await setSettings(sw, { provider: 'byok', vendor: 'anthropic' });
   await sw.evaluate(async () => chrome.storage.local.set({ keys: { anthropic: 'sk-ant-test', openai: '', session: '' } }));
@@ -37,7 +48,7 @@ async function selectProblem(page: Page, sw: Worker, panel: Page, url: string): 
 
 test('with a key, the answer streams from Claude and renders its maths', async ({ context, extensionId, serviceWorker }) => {
   const requests: { url: string; headers: Record<string, string>; body: Record<string, unknown> }[] = [];
-  await context.route(ANTHROPIC, async (route: Route) => {
+  await context.route(MESSAGES, async (route: Route) => {
     const req = route.request();
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
     requests.push({ url: req.url(), headers: req.headers(), body: req.postDataJSON() as Record<string, unknown> });
@@ -48,9 +59,10 @@ test('with a key, the answer streams from Claude and renders its maths', async (
   const page = await context.newPage();
   const url = `${FIXTURE_ORIGIN}/katex.html`;
   await page.goto(url);
-  const panel = await openPanel(context, extensionId, await tabIdFor(serviceWorker, url));
+  const panel = await openPanel(context, extensionId);
   await expect(panel.getByTestId('model-picker')).toHaveValue('anthropic:auto');
-  await expect(panel.getByTestId('mock-note')).toHaveCount(0);
+  // Connected: no placeholder notice, nothing to warn about.
+  await expect(panel.getByTestId('notice')).toHaveCount(0);
   await selectProblem(page, serviceWorker, panel, url);
 
   await panel.locator('.macros .macro', { hasText: 'Explain' }).click();
@@ -81,7 +93,7 @@ test('a rejected key says so and offers settings; an overload offers a retry tha
   serviceWorker,
 }) => {
   let respond: 'bad-key' | 'overloaded' | 'ok' = 'bad-key';
-  await context.route(ANTHROPIC, async (route: Route) => {
+  await context.route(MESSAGES, async (route: Route) => {
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
     if (respond === 'bad-key') {
       return route.fulfill({
@@ -105,7 +117,7 @@ test('a rejected key says so and offers settings; an overload offers a retry tha
   const url = `${FIXTURE_ORIGIN}/katex.html`;
   await page.goto(url);
   const tabId = await tabIdFor(serviceWorker, url);
-  const panel = await openPanel(context, extensionId, tabId);
+  const panel = await openPanel(context, extensionId);
   await selectProblem(page, serviceWorker, panel, url);
 
   await panel.locator('.composer textarea').fill('What is this?');
@@ -115,6 +127,8 @@ test('a rejected key says so and offers settings; an overload offers a retry tha
   await expect(error).toHaveAttribute('data-code', 'bad-key');
   await expect(error.getByRole('button', { name: 'Open settings' })).toBeVisible();
   await expect(error.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+  // The notice above the macros says so too, until an answer gets through.
+  await expect(panel.locator('[data-testid="notice"][data-kind="bad-key"]')).toContainText('Anthropic rejected your API key.');
 
   respond = 'overloaded';
   await panel.locator('.composer textarea').fill('Try once more.');
@@ -128,6 +142,7 @@ test('a rejected key says so and offers settings; an overload offers a retry tha
   // The failed question is asked afresh; its error is gone, the answer is in.
   await expect(panel.locator('.turn.assistant').last()).toContainText('Answer: 1/3', { timeout: 15_000 });
   await expect(panel.locator('.turn.user').last()).toHaveText('Try once more.');
+  await expect(panel.getByTestId('notice')).toHaveCount(0);
   await expect(panel.locator('.turn.assistant .error')).toHaveCount(1);
 });
 
@@ -182,7 +197,7 @@ test('the settings page checks a key for free and switches answers to it', async
 
 test('the model picker beside the macros switches who answers, without a trip to settings', async ({ context, extensionId, serviceWorker }) => {
   const bodies: Record<string, unknown>[] = [];
-  await context.route(ANTHROPIC, async (route: Route) => {
+  await context.route(MESSAGES, async (route: Route) => {
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
     bodies.push(route.request().postDataJSON() as Record<string, unknown>);
     await route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'text/event-stream' }, body: ANSWER });
@@ -193,7 +208,7 @@ test('the model picker beside the macros switches who answers, without a trip to
   const page = await context.newPage();
   const url = `${FIXTURE_ORIGIN}/katex.html`;
   await page.goto(url);
-  const panel = await openPanel(context, extensionId, await tabIdFor(serviceWorker, url));
+  const panel = await openPanel(context, extensionId);
   const picker = panel.getByTestId('model-picker');
   // Nothing connected yet: placeholder answers.
   await expect(picker).toHaveValue('placeholder');
@@ -204,8 +219,9 @@ test('the model picker beside the macros switches who answers, without a trip to
   await expect(picker.locator('option[value="openai:gpt-6-sol"]')).toHaveText('GPT-6 Sol — add key');
   await expect(picker.locator('option[value="anthropic:auto"]')).toHaveText('Claude Auto');
 
+  await expect(panel.locator('[data-testid="notice"][data-kind="placeholder"]')).toBeVisible();
   await picker.selectOption('anthropic:claude-opus-5-5');
-  await expect(panel.getByTestId('mock-note')).toHaveCount(0);
+  await expect(panel.getByTestId('notice')).toHaveCount(0);
   await selectProblem(page, serviceWorker, panel, url);
   await panel.locator('.macros .macro', { hasText: 'Hint' }).click();
   await expect(panel.locator('.turn.assistant').first()).toContainText('Answer: 1/3', { timeout: 15_000 });

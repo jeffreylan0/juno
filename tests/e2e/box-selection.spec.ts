@@ -5,17 +5,23 @@
  * nothing.
  */
 import type { Page, Worker } from '@playwright/test';
-import { FIXTURE_ORIGIN, boxAndAsk, expect, openPanel, setSettings, startSelection, tabIdFor, test } from './fixtures';
+import {
+  FIXTURE_ORIGIN,
+  boxAndAsk,
+  closeSidePanels,
+  currentChat,
+  expect,
+  openPanel,
+  savedChats,
+  setSettings,
+  startSelection,
+  tabIdFor,
+  test,
+} from './fixtures';
 import type { Plan } from '../../shared/payload';
 
 const getPlan = async (panel: Page, tabId?: number) =>
   (await panel.evaluate(async (id) => chrome.runtime.sendMessage({ type: 'plan:get', tabId: id }), tabId)) as Plan | null;
-
-/** The stored conversation for a tab, read the way the panel reads it. */
-const getChat = async (panel: Page, tabId: number) =>
-  (await panel.evaluate(async (id) => (await chrome.storage.session.get(`chat:${id}`))[`chat:${id}`], tabId)) as
-    | { planId: string; turns: { role: string; text: string; streaming?: boolean; error?: string }[] }
-    | undefined;
 
 /** Draws a box around `selector` on `page`, asks, and waits for the plan. */
 async function boxAround(page: Page, panel: Page, selector: string, tabId?: number): Promise<Plan> {
@@ -57,7 +63,7 @@ test('the panel holds a conversation: a first answer, then a follow-up on the sa
 }) => {
   const page = await context.newPage();
   const { url, tabId } = await openFixture(page, serviceWorker, 'katex.html');
-  const panel = await openPanel(context, extensionId, tabId);
+  const panel = await openPanel(context, extensionId);
   await page.bringToFront();
   await startSelection(serviceWorker, 'box', url);
   await boxAround(page, panel, '#problem', tabId);
@@ -104,17 +110,20 @@ test('the panel holds a conversation: a first answer, then a follow-up on the sa
   await expect(answers.nth(1)).toContainText('Mock follow-up');
   await expect(answers.nth(1)).toContainText('What does the minus sign mean?');
 
-  // The background owns the thread, so it is all in storage, in order.
-  const chat = (await getChat(panel, tabId))!;
-  expect(chat.turns.map((t) => t.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
-  // The selection is shown once, at the top, however long the thread gets.
+  // The background owns the chat, so it is all in storage, in order.
+  const chat = (await currentChat(panel))!;
+  expect(chat.items.map((i) => i.kind)).toEqual(['selection', 'user', 'assistant', 'user', 'assistant']);
+  // The first question carried the selection; the follow-up carried nothing new.
+  expect(chat.items[1]!.selections).toEqual([chat.items[0]!.id]);
+  expect(chat.items[3]!.selections).toEqual([]);
+  // The selection is shown once, however long the chat gets.
   await expect(panel.getByTestId('selection')).toHaveCount(1);
 });
 
 test('a macro fills the box with its prompt and sends it', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
   const { url, tabId } = await openFixture(page, serviceWorker, 'text.html');
-  const panel = await openPanel(context, extensionId, tabId);
+  const panel = await openPanel(context, extensionId);
   await page.bringToFront();
   await startSelection(serviceWorker, 'box', url);
   await boxAround(page, panel, '#problem', tabId);
@@ -142,7 +151,7 @@ test('macros and the default prompt come from settings', async ({ context, exten
   });
   const page = await context.newPage();
   const { url, tabId } = await openFixture(page, serviceWorker, 'text.html');
-  const panel = await openPanel(context, extensionId, tabId);
+  const panel = await openPanel(context, extensionId);
   await page.bringToFront();
   await startSelection(serviceWorker, 'box', url);
   await boxAround(page, panel, '#problem', tabId);
@@ -153,64 +162,116 @@ test('macros and the default prompt come from settings', async ({ context, exten
   await expect(panel.locator('.turn.user').first()).toHaveText("Explain it like I'm five.");
 });
 
-test('the conversation survives the panel closing and reopening', async ({ context, extensionId, serviceWorker }) => {
+test('closing the panel ends the chat; it stays in the menu and opens again from there', async ({
+  context,
+  extensionId,
+  serviceWorker,
+}) => {
   const page = await context.newPage();
-  const { url, tabId } = await openFixture(page, serviceWorker, 'text.html');
-  let panel = await openPanel(context, extensionId, tabId);
+  const { url } = await openFixture(page, serviceWorker, 'text.html');
+  let panel = await openPanel(context, extensionId);
   await page.bringToFront();
   await startSelection(serviceWorker, 'box', url);
-  await boxAround(page, panel, '#problem', tabId);
+  await boxAround(page, panel, '#problem');
 
   await panel.locator('.macros .macro', { hasText: 'Explain' }).click();
   await expect(panel.locator('.turn.assistant').first()).toHaveAttribute('data-streaming', 'false', { timeout: 25_000 });
-  await panel.close();
+  // Named after the page the selection came from.
+  const title = await page.title();
+  await expect(panel.getByTestId('chat-title')).toHaveText(title);
 
-  panel = await openPanel(context, extensionId, tabId);
+  await closeSidePanels(serviceWorker);
+  await panel.close();
+  await expect.poll(async () => serviceWorker.evaluate(async () => Object.keys(await chrome.storage.session.get(null)).filter((k) => k.startsWith('current:')).length)).toBe(0);
+
+  // Opening the panel again starts a new, empty chat…
+  panel = await openPanel(context, extensionId);
+  await expect(panel.getByTestId('empty')).toBeVisible();
+  await expect(panel.getByTestId('chat-title')).toHaveText('New chat');
+  await expect(panel.locator('.turn')).toHaveCount(0);
+
+  // …and the old one is in the menu.
+  await panel.getByTestId('menu').click();
+  const rows = panel.getByTestId('chat-row');
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText(title);
+  await rows.first().locator('.chat-open').click();
+  await expect(panel.getByTestId('chat-menu')).toHaveCount(0);
   await expect(panel.locator('.turn.user')).toHaveCount(1);
   await expect(panel.locator('.turn.assistant')).toContainText('Mock answer');
+  expect((await savedChats(serviceWorker)).length).toBe(1);
 });
 
-test('each tab keeps its own selection and conversation', async ({ context, extensionId, serviceWorker }) => {
+test('selections from different pages go into the same chat, and one question carries them all', async ({
+  context,
+  extensionId,
+  serviceWorker,
+}) => {
   const a = await context.newPage();
   const b = await context.newPage();
   const first = await openFixture(a, serviceWorker, 'text.html');
   const second = await openFixture(b, serviceWorker, 'table.html');
-  const panelA = await openPanel(context, extensionId, first.tabId);
-  const panelB = await openPanel(context, extensionId, second.tabId);
+  const panel = await openPanel(context, extensionId);
 
   await a.bringToFront();
   await startSelection(serviceWorker, 'box', first.url);
-  await boxAround(a, panelA, '#problem', first.tabId);
-
-  // The second tab has nothing yet, even though the first just got a selection.
-  await expect(panelB.locator('.empty')).toBeVisible();
-  expect(await getPlan(panelB, second.tabId)).toBeNull();
-
+  await boxAround(a, panel, '#problem', first.tabId);
   await b.bringToFront();
   await startSelection(serviceWorker, 'box', second.url);
-  await boxAround(b, panelB, 'table', second.tabId);
+  await boxAround(b, panel, 'table', second.tabId);
 
-  const planA = (await getPlan(panelA, first.tabId))!;
-  const planB = (await getPlan(panelB, second.tabId))!;
-  expect(planA.id).not.toBe(planB.id);
-  expect(planA.page.url).toBe(first.url);
-  expect(planB.page.url).toBe(second.url);
+  // Both in one chat, each naming its page; the chat is named after the first.
+  const cards = panel.getByTestId('selection');
+  await expect(cards).toHaveCount(2);
+  await expect(cards.nth(0).getByTestId('selection-page')).toHaveText(await a.title());
+  await expect(cards.nth(1).getByTestId('selection-page')).toHaveText(await b.title());
+  await expect(panel.getByTestId('chat-title')).toHaveText(await a.title());
+  await expect(panel.locator('.composer textarea')).toHaveAttribute('placeholder', 'Ask about these selections…');
+  // Not asked about yet, so either can still be taken back.
+  await expect(panel.getByTestId('selection-remove')).toHaveCount(2);
 
-  // Asking in one tab leaves the other's thread untouched.
-  await panelA.locator('.macros .macro', { hasText: 'Explain' }).click();
-  await expect(panelA.locator('.turn.assistant')).toHaveCount(1);
-  await expect(panelB.locator('.turn')).toHaveCount(0);
+  await panel.locator('.macros .macro', { hasText: 'Explain' }).click();
+  const answer = panel.locator('.turn.assistant').first();
+  await expect(answer).toHaveAttribute('data-streaming', 'false', { timeout: 25_000 });
+  // One question, both screenshots.
+  await expect(answer).toContainText('2 part(s)');
+  const chat = (await currentChat(panel))!;
+  expect(chat.items.map((i) => i.kind)).toEqual(['selection', 'selection', 'user', 'assistant']);
+  expect(chat.items[2]!.selections).toEqual([chat.items[0]!.id, chat.items[1]!.id]);
+  // Asked about, so they are part of the conversation now.
+  await expect(panel.getByTestId('selection-remove')).toHaveCount(0);
 
-  // Closing a tab forgets its thread.
-  await a.close();
-  await expect.poll(async () => getPlan(panelB, first.tabId)).toBeNull();
-  expect((await getPlan(panelB, second.tabId))?.id).toBe(planB.id);
+  // A third selection joins the same chat and goes with the next question alone.
+  await a.bringToFront();
+  await startSelection(serviceWorker, 'box', first.url);
+  await boxAround(a, panel, '#problem', first.tabId);
+  await expect(cards).toHaveCount(3);
+  await expect(panel.locator('.composer textarea')).toHaveAttribute('placeholder', 'Ask about the new selection…');
+  await panel.locator('.macros .macro', { hasText: 'Hint' }).click();
+  await expect(panel.locator('.turn.assistant').nth(1)).toContainText('1 part(s)', { timeout: 25_000 });
+  await expect(panel.locator('.turn.assistant').nth(1)).toContainText('plus 2 earlier selection(s)');
+});
+
+test('a selection can be taken back before it is asked about', async ({ context, extensionId, serviceWorker }) => {
+  const page = await context.newPage();
+  const { url } = await openFixture(page, serviceWorker, 'text.html');
+  const panel = await openPanel(context, extensionId);
+  await page.bringToFront();
+  await startSelection(serviceWorker, 'box', url);
+  await boxAround(page, panel, '#problem');
+  await expect(panel.getByTestId('selection')).toHaveCount(1);
+
+  await panel.getByTestId('selection-remove').click();
+  await expect(panel.getByTestId('selection')).toHaveCount(0);
+  await expect(panel.getByTestId('empty')).toBeVisible();
+  // An empty chat is not kept.
+  await expect.poll(async () => (await savedChats(serviceWorker)).length).toBe(0);
 });
 
 test('a text selection shows the text it captured', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
   const { url, tabId } = await openFixture(page, serviceWorker, 'text.html');
-  const panel = await openPanel(context, extensionId, tabId);
+  const panel = await openPanel(context, extensionId);
   await page.bringToFront();
   await startSelection(serviceWorker, 'text', url);
   await expect(page.locator('selection-ai-overlay')).toHaveCount(1);

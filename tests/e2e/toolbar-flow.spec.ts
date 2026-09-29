@@ -122,7 +122,7 @@ test('the tooltip takes over from the bar for the duration of the drag', async (
 test('the X ends the selection and closes the answer panel', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
   await armed(serviceWorker, page);
-  const panel = await openPanel(context, extensionId, await tabIdFor(serviceWorker, `${FIXTURE_ORIGIN}/text.html`));
+  const panel = await openPanel(context, extensionId);
   await expect(panel.locator('.panel')).toBeVisible();
   await page.bringToFront();
 
@@ -136,7 +136,7 @@ test('the X ends the selection and closes the answer panel', async ({ context, e
 test('Escape ends the selection but leaves the answer panel open', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
   await armed(serviceWorker, page);
-  const panel = await openPanel(context, extensionId, await tabIdFor(serviceWorker, `${FIXTURE_ORIGIN}/text.html`));
+  const panel = await openPanel(context, extensionId);
   await page.bringToFront();
 
   await page.keyboard.press('Escape');

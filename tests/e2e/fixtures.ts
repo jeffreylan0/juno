@@ -85,17 +85,53 @@ export async function startSelection(serviceWorker: Worker, kind: 'box' | 'text'
 }
 
 /**
- * Opens the panel page in a tab. The side panel proper is not reachable from
- * Playwright, and the page is identical, so this exercises the same code.
- * Messages to the background must come from here: a service worker never
- * receives its own runtime.sendMessage.
+ * Opens the panel page in a tab of the same window. The side panel proper is
+ * not reachable from Playwright, and the page is identical, so this exercises
+ * the same code: it connects to the background as a panel of this window, and
+ * shows (and adds to) that window's chat. Messages to the background must come
+ * from here: a service worker never receives its own runtime.sendMessage.
  */
-export async function openPanel(context: BrowserContext, extensionId: string, tabId?: number) {
+export async function openPanel(context: BrowserContext, extensionId: string) {
   const panel = await context.newPage();
-  // A panel opened as a tab would follow itself as "the active tab"; pinning
-  // it to the page under test shows that page's thread instead.
-  await panel.goto(`chrome-extension://${extensionId}/sidepanel.html${tabId !== undefined ? `?tabId=${tabId}` : ''}`);
+  await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
+  // Connected, with a chat to show (empty until something is selected).
+  await expect(panel.locator('.panel[data-chat]:not([data-chat=""])')).toHaveCount(1);
   return panel;
+}
+
+export interface StoredChat {
+  id: string;
+  title: string;
+  temporary?: boolean;
+  items: Array<{ kind: string; id: string; text?: string; selections?: string[]; streaming?: boolean; error?: string; plan?: { page: { url: string; title: string } } }>;
+}
+
+/** The chat this panel's window shows, read from storage as the panel reads it. */
+export async function currentChat(panel: Page): Promise<StoredChat | null> {
+  return (await panel.evaluate(async () => {
+    const w = await chrome.windows.getCurrent();
+    const cur = (await chrome.storage.session.get(`current:${w.id}`))[`current:${w.id}`] as { chatId: string } | undefined;
+    if (!cur) return null;
+    const key = `chat:${cur.chatId}`;
+    return (await chrome.storage.local.get(key))[key] ?? (await chrome.storage.session.get(key))[key] ?? null;
+  })) as StoredChat | null;
+}
+
+/** The saved chats, as the menu lists them. */
+export async function savedChats(sw: Worker): Promise<Array<{ id: string; title: string; updatedAt: number }>> {
+  return await sw.evaluate(async () => ((await chrome.storage.local.get('chatIndex')).chatIndex ?? []) as Array<{ id: string; title: string; updatedAt: number }>);
+}
+
+/**
+ * Closes Chrome's own side panel wherever it opened (a drag's gesture opens
+ * it, even in tests), so that closing the panel tab really closes every panel.
+ */
+export async function closeSidePanels(sw: Worker): Promise<void> {
+  await sw.evaluate(async () => {
+    const sp = chrome.sidePanel as unknown as { close?: (o: { windowId: number }) => Promise<void> };
+    for (const w of await chrome.windows.getAll()) await sp.close?.({ windowId: w.id! }).catch(() => {});
+  });
+  await expect.poll(() => sidePanelCount(sw)).toBe(0);
 }
 
 /** The tab id of the page showing `url`. */

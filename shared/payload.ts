@@ -128,14 +128,32 @@ export interface Plan {
   estimatedTokens: number;
 }
 
+/** One selection as sent to the model: what was selected, and from which page. */
+export interface Attachment {
+  kind: SelectionKind;
+  page: PageMeta;
+  parts: Part[];
+  /** Element selections: what was picked ("Table"). */
+  label?: string;
+}
+
 export interface ChatTurn {
   role: 'user' | 'assistant';
   text: string;
+  /** Selections that went with this question. A chat can hold many, from many pages. */
+  attachments?: Attachment[];
 }
 
 export interface AskRequest {
   plan: Plan;
-  /** Prior turns in this thread (text only; images are never re-sent). */
+  /**
+   * Selections attached to the question being asked now. When this is set
+   * (even to []), every turn carries its own selections and plan.parts is not
+   * used; the extension always sets it. When it is absent, plan.parts is the
+   * one selection of a single-selection conversation (the eval, older callers).
+   */
+  attachments?: Attachment[];
+  /** Prior turns in this conversation. */
   history?: ChatTurn[];
   model?: ModelRef;
 }
@@ -152,16 +170,24 @@ export type AskChunk =
   | { type: 'done'; usage?: Usage; model: ModelRef; cached: boolean }
   | { type: 'error'; message: string; code?: string };
 
-/** Returns the cache-relevant subset of a request in a stable key order. */
+/**
+ * Returns the cache-relevant subset of a request in a stable key order.
+ * Attachments only appear when a request has them, so single-selection
+ * requests (the eval's recordings) hash exactly as they always did.
+ */
 export function canonicalizeRequest(req: AskRequest): unknown {
   const { plan, history = [], model } = req;
+  const attachment = (a: Attachment) => ({ kind: a.kind, page: a.page.title, parts: a.parts.map(canonicalizePart) });
   return {
     mode: plan.mode,
     question: plan.question ?? '',
     parts: plan.parts.map(canonicalizePart),
-    history: history.map((h) => ({ role: h.role, text: h.text })),
+    history: history.map((h) =>
+      h.attachments?.length ? { role: h.role, text: h.text, attachments: h.attachments.map(attachment) } : { role: h.role, text: h.text },
+    ),
     model: model ? `${model.vendor}/${model.model}` : null,
     route: plan.route,
+    ...(req.attachments ? { attachments: req.attachments.map(attachment) } : {}),
   };
 }
 

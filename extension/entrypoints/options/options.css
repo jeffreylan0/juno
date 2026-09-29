@@ -69,6 +69,8 @@ button.primary, button.secondary { font: inherit; padding: 8px 14px; border-radi
 button.primary { border: 0; background: var(--accent); color: #fff; }
 button.secondary { border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
 button.primary:disabled, button.secondary:disabled { opacity: .5; cursor: default; }
+button.danger { font: inherit; padding: 8px 14px; border-radius: var(--radius); cursor: pointer; border: 0; background: #b91c1c; color: #fff; }
+.confirm-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
 .macro-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .macro-row { display: grid; grid-template-columns: 9.5em 1fr auto; gap: 8px; align-items: start; }

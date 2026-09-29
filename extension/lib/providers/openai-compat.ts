@@ -2,8 +2,8 @@
  * OpenAI-compatible chat message shape, used verbatim by OpenAI, Ollama and the
  * Worker, and converted by byok.ts for Anthropic.
  */
-import type { AskRequest, Plan } from '@shared/payload';
-import { selectionPrompt, systemPrompt } from '@shared/prompts';
+import type { AskRequest, Attachment, Mode, Plan } from '@shared/payload';
+import { attachmentsPrompt, defaultQuestion, selectionPrompt, systemPrompt } from '@shared/prompts';
 import { ensureVendorOk, vendorFetch, type VendorName } from './errors';
 import { ProviderError } from './types';
 
@@ -17,21 +17,32 @@ export interface ChatMessage {
 }
 
 /**
- * Builds a conversation. The selection is attached exactly once, to the
- * opening user turn, the way a chat app attaches a file to the first message:
+ * Builds a conversation. Each selection is attached exactly once, to the user
+ * turn it was asked with, the way a chat app attaches a file to a message:
  *
- *   system · user(selection + Q1) · assistant(A1) · user(Q2) · …
+ *   system · user(selection A + Q1) · assistant(A1) · user(Q2) · assistant(A2)
+ *          · user(selections B, C + Q3) · …
  *
- * Follow-ups are plain text. Re-attaching the selection to every turn would
- * resend the image each time, cost tokens for nothing, and leave the model
- * unsure whether a "new" selection had arrived.
+ * A chat can collect selections from several pages. Turns without one are
+ * plain text; nothing is re-attached, so the model never wonders whether a
+ * "new" selection arrived. (The whole conversation is resent each time, as
+ * every chat API requires; prompt caching makes the repeated part cheap.)
  */
 export function toChatMessages(req: AskRequest): ChatMessage[] {
   const { plan, history = [] } = req;
   const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt(plan.mode) }];
 
-  // History must open with the student's first question; anything else means
-  // there is no usable opening turn, so treat this as the start of a thread.
+  if (req.attachments !== undefined || history.some((t) => t.attachments?.length)) {
+    for (const turn of history) {
+      messages.push(turn.role === 'user' ? { role: 'user', content: userTurn(turn.attachments ?? [], turn.text, plan.mode, true) } : { role: 'assistant', content: turn.text });
+    }
+    messages.push({ role: 'user', content: userTurn(req.attachments ?? [], plan.question, plan.mode, history.length > 0) });
+    return messages;
+  }
+
+  // Single-selection form (the eval, older callers): plan.parts is the one
+  // selection, attached to the opening question. History must open with that
+  // question; anything else means there is no usable opening turn.
   const opensWithUser = history[0]?.role === 'user';
   if (!opensWithUser || history.length === 0) {
     messages.push({ role: 'user', content: openingTurn(plan, plan.question) });
@@ -43,6 +54,18 @@ export function toChatMessages(req: AskRequest): ChatMessage[] {
   for (const turn of rest) messages.push({ role: turn.role, content: turn.text });
   messages.push({ role: 'user', content: plan.question?.trim() || 'Go on.' });
   return messages;
+}
+
+/** A user turn: plain text, or its selections' text and images followed by the question. */
+function userTurn(attachments: Attachment[], question: string | undefined, mode: Mode, followUp: boolean): string | ContentPart[] {
+  if (!attachments.length) return question?.trim() || (followUp ? 'Go on.' : defaultQuestion(mode));
+  const content: ContentPart[] = [{ type: 'text', text: attachmentsPrompt(attachments, question, mode) }];
+  for (const a of attachments) {
+    for (const part of a.parts) {
+      if (part.kind === 'image') content.push({ type: 'image_url', image_url: { url: part.dataUrl, detail: 'high' } });
+    }
+  }
+  return content;
 }
 
 function openingTurn(plan: Plan, question: string | undefined): ContentPart[] {

@@ -2,9 +2,11 @@
  * Typed messages between the content script, the background, the reader and
  * the panel. Every message carries a `type` and goes through `sendMessage`.
  *
- * Conversations do not travel over messages at all: the background writes
- * each tab's thread to `storage.session` (see threads.ts) and the panel
- * renders from storage change events. Messages here are commands only.
+ * Chats do not travel over messages at all: the background writes them to
+ * storage (chats.ts) and the panel renders from storage change events.
+ * Messages here are commands only. The panel also holds a port open to the
+ * background (PanelPortMsg), which is how the background knows a panel is
+ * open and when it closes.
  */
 import type { Point, Rect, SelectionKind } from '@shared/payload';
 
@@ -61,31 +63,80 @@ export interface SelectionCancelMsg {
 }
 
 /**
- * Anything → background: the plan for a tab, or the most recent one when no
- * tab is given. Used by tests and diagnostics; the panel reads storage.
+ * Anything → background: the newest selection in any open chat (or from one
+ * tab), with its screenshots filled back in. Tests and diagnostics use it.
  */
 export interface PlanGetMsg {
   type: 'plan:get';
   tabId?: number;
 }
 
-/** Panel → background: ask a question in a tab's conversation. */
+/** Panel → background: ask a question in a chat. It carries every selection not yet asked about. */
 export interface ChatSendMsg {
   type: 'chat:send';
-  tabId: number;
+  chatId: string;
   question: string;
 }
 
 /** Panel → background: ask the last failed question again. */
 export interface ChatRetryMsg {
   type: 'chat:retry';
-  tabId: number;
+  chatId: string;
 }
 
-/** Panel → background: stop the answer streaming in a tab's conversation. */
+/** Panel → background: stop the answer streaming in a chat. */
 export interface ChatStopMsg {
   type: 'chat:stop';
-  tabId: number;
+  chatId: string;
+}
+
+/** Panel → background: start a new chat in this window ("New chat"). */
+export interface ChatNewMsg {
+  type: 'chat:new';
+  windowId: number;
+}
+
+/** Panel → background: the ghost — start (or leave) a temporary chat. */
+export interface ChatTemporaryMsg {
+  type: 'chat:temporary';
+  windowId: number;
+  on: boolean;
+}
+
+/** Panel → background: show a chat from the menu in this window. */
+export interface ChatOpenMsg {
+  type: 'chat:open';
+  windowId: number;
+  chatId: string;
+}
+
+export interface ChatRenameMsg {
+  type: 'chat:rename';
+  chatId: string;
+  title: string;
+}
+
+export interface ChatDeleteMsg {
+  type: 'chat:delete';
+  chatId: string;
+}
+
+/** Options → background: delete every saved chat and its screenshots. */
+export interface ChatsDeleteAllMsg {
+  type: 'chats:delete-all';
+}
+
+/** Panel → background: take back a selection no question has carried yet. */
+export interface ChatDropSelectionMsg {
+  type: 'chat:drop-selection';
+  chatId: string;
+  itemId: string;
+}
+
+/** Panel → background: check (or re-check) that the chosen AI is reachable. Replies with an AiStatus. */
+export interface AiCheckMsg {
+  type: 'ai:check';
+  force?: boolean;
 }
 
 /**
@@ -117,6 +168,19 @@ export interface PanelReadyMsg {
   type: 'panel:ready';
 }
 
+/** The port a panel keeps open to the background, named this. */
+export const PANEL_PORT = 'panel';
+
+/**
+ * Panel → background over the port. `hello` says which window the panel is
+ * in; after the worker restarts, the panel says hello again and `claim`s the
+ * chat it is showing. `ping` keeps the worker awake while a panel is open, so
+ * that closing the panel is always noticed.
+ */
+export type PanelPortMsg =
+  | { type: 'hello'; windowId: number; claim?: { chatId: string; temporary: boolean } }
+  | { type: 'ping' };
+
 /**
  * Reader → background on load. Registers the tab as one that runs the
  * selection flow itself, and the reply tells the reader its own tab id — an
@@ -147,6 +211,14 @@ export type RuntimeMessage =
   | ChatSendMsg
   | ChatStopMsg
   | ChatRetryMsg
+  | ChatNewMsg
+  | ChatTemporaryMsg
+  | ChatOpenMsg
+  | ChatRenameMsg
+  | ChatDeleteMsg
+  | ChatsDeleteAllMsg
+  | ChatDropSelectionMsg
+  | AiCheckMsg
   | KeysTestMsg
   | PanelOpenMsg
   | PanelCloseMsg

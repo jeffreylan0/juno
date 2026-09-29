@@ -1,4 +1,4 @@
-import type { Mode, Part, Plan } from './payload';
+import type { Attachment, Mode, Part, Plan } from './payload';
 
 /**
  * Mode system prompts plus the "What I read" instruction.
@@ -6,10 +6,11 @@ import type { Mode, Part, Plan } from './payload';
  */
 
 export const WHAT_I_READ_INSTRUCTION =
-  'In your first reply about a selection, start with exactly one line beginning "Read:" that restates, in at most 25 words, ' +
-  'what you received (the problem, expression, table or figure). Then a blank line, then your answer. ' +
+  'Whenever a message brings a new selection, start your reply with exactly one line beginning "Read:" that restates, in at most 25 words, ' +
+  'what you received (the problem, expression, table or figure; with several selections, all of them briefly). Then a blank line, then your answer. ' +
   'If part of the input is unreadable, say so in that line instead of guessing. ' +
-  'In follow-up replies in the same conversation, answer directly without the "Read:" line.';
+  'When a message brings no new selection, answer directly without the "Read:" line. ' +
+  'A conversation can collect selections from several pages; refer to them as "the first selection", "the table" and so on.';
 
 export const FORMAT_INSTRUCTION =
   'Write Markdown. Use $...$ for inline math and $$...$$ for display math (KaTeX). ' +
@@ -108,10 +109,32 @@ export function defaultQuestion(mode: Mode): string {
  * selection is sent once, here, and never repeated on follow-ups.
  */
 export function selectionPrompt(plan: Plan, question: string | undefined): string {
-  const parts = plan.parts.map(partToText).join('\n\n');
-  const q = question?.trim() || defaultQuestion(plan.mode);
-  const page = plan.page.title ? `Page: ${plan.page.title}\n` : '';
-  return `${page}Selected content:\n\n${parts}\n\nQuestion: ${q}`;
+  return attachmentsPrompt([{ kind: plan.selection.kind, page: plan.page, parts: plan.parts }], question, plan.mode);
+}
+
+const KIND_WORD: Record<Attachment['kind'], string> = { box: 'box', freeform: 'freeform shape', element: 'element', text: 'text' };
+
+/**
+ * The text of a user turn that brings selections. One selection reads as it
+ * always has; several are numbered, each with the page it came from. Parts
+ * are numbered across the whole message, in the order the images follow.
+ */
+export function attachmentsPrompt(attachments: Attachment[], question: string | undefined, mode: Mode): string {
+  const q = question?.trim() || defaultQuestion(mode);
+  if (attachments.length === 1) {
+    const [a] = attachments as [Attachment];
+    const parts = a.parts.map(partToText).join('\n\n');
+    const page = a.page.title ? `Page: ${a.page.title}\n` : '';
+    return `${page}Selected content:\n\n${parts}\n\nQuestion: ${q}`;
+  }
+  let n = 0;
+  const blocks = attachments.map((a, i) => {
+    const from = a.page.title ? ` from "${a.page.title}"` : '';
+    const what = a.label ? `${KIND_WORD[a.kind]}: ${a.label}` : KIND_WORD[a.kind];
+    const parts = a.parts.map((p) => partToText(p, n++)).join('\n\n');
+    return `Selection ${i + 1} (${what})${from}:\n${parts}`;
+  });
+  return `The student selected ${attachments.length} things:\n\n${blocks.join('\n\n')}\n\nQuestion: ${q}`;
 }
 
 /** The opening turn when there is no history yet: the plan carries the question. */

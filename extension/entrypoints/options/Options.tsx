@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { DEFAULT_MACROS, DEFAULT_PROMPT } from '@shared/prompts';
 import { BRAND } from '@/brand';
+import { MAX_SAVED_CHATS, listChats } from '@/lib/chats';
 import { MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
 import { openShortcutSettings, useShortcut } from '@/ui/useShortcut';
 import type { KeyModel, KeyTestResult } from '@/lib/providers/byok';
@@ -386,6 +387,8 @@ export function Options() {
         <textarea rows={4} value={blocked} onChange={(e) => setBlocked(e.target.value)} placeholder="exam.example.edu" />
       </section>
 
+      <ChatsSection />
+
       <footer>
         <button type="button" className="primary" data-testid="save" onClick={() => void persist(settings, keys)}>
           Save
@@ -393,6 +396,51 @@ export function Options() {
         {saved && <span className="saved">Saved</span>}
       </footer>
     </main>
+  );
+}
+
+/**
+ * Where chats live, and a way to clear them. Takes effect at once — it is not
+ * part of Save — and asks first, since it cannot be undone.
+ */
+function ChatsSection() {
+  const [count, setCount] = useState<number | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    const refresh = () => void listChats().then((l) => setCount(l.length));
+    refresh();
+    const onChanged = (changes: Record<string, unknown>, area: string) => area === 'local' && 'chatIndex' in changes && refresh();
+    browser.storage.onChanged.addListener(onChanged);
+    return () => browser.storage.onChanged.removeListener(onChanged);
+  }, []);
+  return (
+    <section data-testid="chats">
+      <h2>Chats</h2>
+      <p className="help">
+        Chats, and the screenshots in them, are saved on this computer only. The free plan keeps your {MAX_SAVED_CHATS} most
+        recent; starting another deletes the oldest. Temporary chats are never saved.
+      </p>
+      {confirming ? (
+        <div className="confirm-row">
+          <span>Delete all {count} saved chats? This cannot be undone.</span>
+          <button
+            type="button"
+            className="danger"
+            data-testid="confirm-delete-chats"
+            onClick={() => void browser.runtime.sendMessage({ type: 'chats:delete-all' }).then(() => setConfirming(false))}
+          >
+            Delete all
+          </button>
+          <button type="button" className="secondary" onClick={() => setConfirming(false)}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button type="button" className="secondary" data-testid="delete-chats" disabled={!count} onClick={() => setConfirming(true)}>
+          {count ? `Delete all chats (${count})` : 'No saved chats'}
+        </button>
+      )}
+    </section>
   );
 }
 

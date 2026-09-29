@@ -1,46 +1,87 @@
 /**
  * Background (MV3 service worker on Chrome/Edge, background script on Firefox).
- * Arms selections, captures the tab, runs the planner, and owns every tab's
- * conversation. Anything that holds keys or makes network calls lives here,
- * never in the content script.
+ * Arms selections, captures the tab, runs the planner, and owns every chat.
+ * Anything that holds keys or makes network calls lives here, never in the
+ * content script.
  *
  * Clicking the toolbar action arms a selection immediately. By default the
  * answer panel opens once a selection is made, so it never covers the page
  * while the student is still choosing what to select; a setting opens it on
  * the click instead.
  *
- * Each tab has its own thread in storage.session (lib/threads.ts). This file
- * is the only writer: it appends the student's turn, streams the answer into
- * the thread, and the panel renders whatever is stored for the tab it shows.
+ * Chats (lib/chats.ts) collect selections from any page in the window until
+ * the panel closes; which chat a window shows, and what opening and closing
+ * the panel does, is lib/current.ts. This file is the only writer, and it
+ * writes one change at a time (`serial`), so a selection landing while an
+ * answer streams is never overwritten by the stream's next write.
  */
-import type { AskRequest, SelectionKind } from '@shared/payload';
+import type { AskRequest, Attachment, ChatTurn, SelectionKind } from '@shared/payload';
 import { AreaCacheStore } from '@/lib/cache';
 import { captureRect, type CaptureResult } from '@/lib/capture';
-import { isRuntimeMessage, type RuntimeMessage, type SelectionDoneMsg, type StartSelectionMsg } from '@/lib/messages';
+import {
+  attachmentOf,
+  deleteAllChats,
+  deleteChat,
+  discardChat,
+  getChat,
+  hasUsableSelection,
+  historyOf,
+  isRemovable,
+  latestSelection,
+  listChats,
+  pendingSelections,
+  renameChat,
+  retitle,
+  saveChat,
+  settleStreaming,
+  sweepImages,
+  updateChat,
+  type AssistantItem,
+  type Chat,
+  type ChatItem,
+  type ChatSummary,
+  type SelectionItem,
+  type UserItem,
+} from '@/lib/chats';
+import {
+  addSelection,
+  allCurrent,
+  endUnclaimed,
+  onTemporaryDiscarded,
+  panelClosed,
+  panelOpened,
+  replaceGone,
+  setTemporary,
+  startChat,
+  switchTo,
+} from '@/lib/current';
+import { deletePartImages, hydrateParts, hydratePlan } from '@/lib/images';
+import {
+  PANEL_PORT,
+  isRuntimeMessage,
+  type PanelPortMsg,
+  type RuntimeMessage,
+  type SelectionDoneMsg,
+  type StartSelectionMsg,
+} from '@/lib/messages';
 import { buildPlan } from '@/lib/planner';
 import { callModel, type ProviderContext } from '@/lib/providers';
 import { testKey } from '@/lib/providers/byok';
+import { chooseRoute } from '@/lib/router';
+import { STATUS_KEY, STATUS_TTL_MS, checkStatus, statusFromAnswer, type AiStatus } from '@/lib/status';
 import {
   DEFAULT_SETTINGS,
   GATEWAY_URL,
+  answerChoiceOf,
   fallbackQuestion,
   getKeys,
   getSettings,
+  keysItem,
   lastKindItem,
   settingsItem,
   shouldAutoSend,
   type Settings,
 } from '@/lib/storage';
-import {
-  clearThread,
-  getThread,
-  historyOf,
-  parseKey,
-  saveChat,
-  startThread,
-  type Chat,
-  type Turn,
-} from '@/lib/threads';
 
 const CONTENT_SCRIPT = 'content-scripts/content.js';
 
@@ -62,21 +103,50 @@ let panelPending = false;
 let armedTabId: number | undefined;
 /** True once the panel has been opened for the current arming. */
 let panelOpenedForArm = false;
-/** One in-flight answer per tab, so a second question stops the first. */
-const streams = new Map<number, AbortController>();
-/**
- * Streams replaced by a newer question or selection. A stopped stream saves
- * what it has; a replaced one must not, or its last write would land on top
- * of the conversation that replaced it.
- */
-const superseded = new WeakSet<AbortController>();
+/** One answer at a time per chat. */
+const streams = new Map<string, AbortController>();
 
-function supersede(tabId: number): void {
-  const c = streams.get(tabId);
-  if (!c) return;
-  superseded.add(c);
-  c.abort();
-  streams.delete(tabId);
+function stopStream(chatId: string): void {
+  streams.get(chatId)?.abort();
+  streams.delete(chatId);
+}
+
+/**
+ * Every chat write goes through here, one after another. A streaming answer,
+ * a selection arriving and the panel closing all read and rewrite the same
+ * chat; in sequence, none of them undoes another.
+ */
+let tail: Promise<unknown> = Promise.resolve();
+function serial<T>(task: () => Promise<T>): Promise<T> {
+  const run = tail.then(task, task);
+  tail = run.catch((err) => console.warn('[selection-ai] chat write failed', err));
+  return run;
+}
+
+/**
+ * Answers a message once the work is done, whether it worked or not, so the
+ * sender is never left waiting. Returns true: the listener's "reply later".
+ */
+function reply(work: Promise<unknown>, sendResponse: (value: unknown) => void): true {
+  work.then(
+    (value) => sendResponse(value ?? true),
+    (err) => {
+      console.warn('[selection-ai] command failed', err);
+      sendResponse(null);
+    },
+  );
+  return true;
+}
+
+/** Open panels, per window. Usually one; tests open the panel page as a tab too. */
+const panels = new Map<number, Set<chrome.runtime.Port>>();
+const panelOpenIn = (windowId: number) => (panels.get(windowId)?.size ?? 0) > 0;
+
+/** The free plan's limit dropped a chat: tell the panels, once. */
+async function noteDropped(dropped: ChatSummary[]): Promise<void> {
+  if (!dropped.length) return;
+  for (const c of dropped) stopStream(c.id);
+  await browser.storage.session.set({ lastDropped: { titles: dropped.map((c) => c.title || 'Untitled chat'), at: Date.now() } });
 }
 
 /**
@@ -91,7 +161,55 @@ export default defineBackground(() => {
   // Inside main, not at module level: WXT evaluates entrypoint modules in Node
   // at build time, where there is no browser to read from.
   void getSettings().then((s) => (settings = s));
-  settingsItem.watch(() => void getSettings().then((s) => (settings = s)));
+  settingsItem.watch(() =>
+    void getSettings().then((s) => {
+      const before = `${answerChoiceOf(settings)} ${settings.localBaseUrl}`;
+      settings = s;
+      // Picking another model: check the new choice right away.
+      if (panels.size && before !== `${answerChoiceOf(s)} ${s.localBaseUrl}`) void aiStatus(true);
+    }),
+  );
+  keysItem.watch(() => void (panels.size && aiStatus(true)));
+
+  // A panel that closed while the worker was not running, a temporary chat
+  // left behind, screenshots nobody points at: tidied once, after any panel
+  // that is still open has had a moment to reconnect.
+  // A temporary chat's answer is not worth finishing (or paying for) once the
+  // chat is gone, however it went: panel closed, New chat, the ghost, another chat opened.
+  onTemporaryDiscarded(stopStream);
+  void serial(settleStreaming);
+  setTimeout(() => void serial(async () => {
+    await endUnclaimed(panelOpenIn);
+    await sweepImages((await allCurrent()).map(([, c]) => c.chatId));
+  }), 3_000);
+
+  browser.runtime.onConnect.addListener((port) => {
+    if (port.name !== PANEL_PORT) return;
+    let windowId: number | undefined;
+    port.onMessage.addListener((raw: unknown) => {
+      const msg = raw as PanelPortMsg;
+      if (msg?.type !== 'hello' || windowId !== undefined) return; // pings only keep us awake
+      windowId = msg.windowId;
+      const open = panels.get(windowId) ?? new Set();
+      const first = open.size === 0;
+      open.add(port);
+      panels.set(windowId, open);
+      setPanelPending(false);
+      void serial(() => panelOpened(msg.windowId, { first, claim: msg.claim })).then(
+        () => port.postMessage({ type: 'ready' }),
+        () => port.postMessage({ type: 'ready' }),
+      );
+    });
+    port.onDisconnect.addListener(() => {
+      if (windowId === undefined) return;
+      const open = panels.get(windowId);
+      open?.delete(port);
+      if (open?.size) return;
+      panels.delete(windowId);
+      const closed = windowId;
+      void serial(() => panelClosed(closed));
+    });
+  });
 
   browser.action.onClicked.addListener((tab) => {
     arm(tab?.id);
@@ -136,14 +254,45 @@ export default defineBackground(() => {
         void planFor(msg.tabId).then(sendResponse);
         return true;
       case 'chat:send':
-        void sendChat(msg.tabId, msg.question);
+        void sendChat(msg.chatId, msg.question);
         return;
       case 'chat:retry':
-        void retryChat(msg.tabId);
+        void retryChat(msg.chatId);
         return;
       case 'chat:stop':
-        streams.get(msg.tabId)?.abort();
+        streams.get(msg.chatId)?.abort();
         return;
+      case 'chat:new':
+        return reply(serial(() => startChat(msg.windowId, false)), sendResponse);
+      case 'chat:temporary':
+        return reply(serial(() => setTemporary(msg.windowId, msg.on)), sendResponse);
+      case 'chat:open':
+        return reply(serial(() => switchTo(msg.windowId, msg.chatId)), sendResponse);
+      case 'chat:rename':
+        return reply(serial(() => renameChat(msg.chatId, msg.title)), sendResponse);
+      case 'chat:delete':
+        stopStream(msg.chatId);
+        return reply(
+          serial(async () => {
+            await deleteChat(msg.chatId);
+            await replaceGone([msg.chatId]);
+          }),
+          sendResponse,
+        );
+      case 'chats:delete-all':
+        return reply(
+          serial(async () => {
+            const ids = (await listChats()).map((c) => c.id);
+            ids.forEach(stopStream);
+            await deleteAllChats();
+            await replaceGone(ids);
+          }),
+          sendResponse,
+        );
+      case 'chat:drop-selection':
+        return reply(serial(() => dropSelection(msg.chatId, msg.itemId)), sendResponse);
+      case 'ai:check':
+        return reply(aiStatus(!!msg.force), sendResponse);
       case 'keys:test':
         void testKey(globalThis.fetch.bind(globalThis), msg.vendor, msg.key).then(sendResponse);
         return true;
@@ -173,8 +322,12 @@ export default defineBackground(() => {
 
   browser.tabs.onRemoved.addListener((tabId) => {
     readerTabs.delete(tabId);
-    supersede(tabId);
-    void clearThread(tabId);
+  });
+
+  // A window closing takes its panel with it; the port usually says so first.
+  browser.windows.onRemoved.addListener((windowId) => {
+    if (panelOpenIn(windowId)) return;
+    void serial(() => panelClosed(windowId)).catch(() => {});
   });
 });
 
@@ -326,14 +479,15 @@ function safeHost(url: string | undefined): string | null {
 
 async function handleSelectionDone(msg: SelectionDoneMsg, tab: chrome.tabs.Tab | undefined): Promise<void> {
   const tabId = tab?.id;
-  if (tabId === undefined) return;
+  const windowId = tab?.windowId;
+  if (tabId === undefined || windowId === undefined) return;
   const current = await getSettings();
 
   let capture: CaptureResult | undefined;
   let notice: string | undefined;
   if (msg.kind !== 'text') {
     try {
-      capture = await captureWithRetry(tab?.windowId, msg);
+      capture = await captureWithRetry(windowId, msg);
     } catch (err) {
       console.warn('[selection-ai] capture failed', err);
       // A box is only its screenshot now, so without one there is nothing
@@ -342,13 +496,25 @@ async function handleSelectionDone(msg: SelectionDoneMsg, tab: chrome.tabs.Tab |
     }
   }
   const plan = buildPlan({ selection: msg, mode: 'ask', capture });
-  // A new selection starts a new conversation; an answer still streaming for
-  // the old one is dropped rather than written into the new one.
-  supersede(tabId);
-  await startThread(tabId, plan, notice);
+  // The selection joins the window's chat, whatever page it came from; an
+  // answer still streaming there carries on. Whether a panel is open is read
+  // now, not when the write gets its turn: a panel whose hello lands in
+  // between must still take this selection's chat over.
+  const panelOpen = panelOpenIn(windowId);
+  let added: Awaited<ReturnType<typeof addSelection>>;
+  try {
+    added = await serial(() => addSelection(windowId, { panelOpen, plan, notice, tabId }));
+  } catch (err) {
+    console.warn('[selection-ai] could not keep the selection', err);
+    return;
+  }
+  const { chat, dropped } = added;
+  await noteDropped(dropped);
 
   if (panelPending) await promptForPanel(tabId);
-  if (!notice && plan.parts.length > 0 && shouldAutoSend(current, msg.kind)) void sendChat(tabId, fallbackQuestion(current));
+  const usable = !notice && plan.parts.length > 0;
+  // Auto-send waits its turn: an answer already streaming is not cut off.
+  if (usable && shouldAutoSend(current, msg.kind) && !streams.has(chat.id)) void sendChat(chat.id, fallbackQuestion(current));
 }
 
 /**
@@ -365,116 +531,205 @@ async function captureWithRetry(windowId: number | undefined, msg: SelectionDone
   }
 }
 
-/** The plan for a tab, or the most recently selected one when none is given. */
+/**
+ * The newest selection in the chats open right now — from one tab when a tab
+ * is given — with its screenshots filled back in. For tests and diagnostics.
+ */
 async function planFor(tabId: number | undefined) {
-  if (tabId !== undefined) return (await getThread(tabId)).plan;
-  const all = await browser.storage.session.get(null);
-  const newest = Object.entries(all)
-    .map(([k, v]) => ({ key: parseKey(k), chat: v as Chat }))
-    .filter((e) => e.key?.kind === 'chat')
-    .sort((a, b) => (b.chat.updatedAt ?? 0) - (a.chat.updatedAt ?? 0))[0];
-  return newest?.key ? (await getThread(newest.key.tabId)).plan : null;
+  const chats = await Promise.all((await allCurrent()).map(([, c]) => getChat(c.chatId)));
+  const newest = chats
+    .flatMap((c) => c?.items ?? [])
+    .filter((i): i is SelectionItem => i.kind === 'selection' && (tabId === undefined || i.tabId === tabId))
+    .sort((a, b) => b.at - a.at)[0];
+  return newest ? await hydratePlan(newest.plan) : null;
+}
+
+async function withPixels(a: Attachment): Promise<Attachment> {
+  return { ...a, parts: await hydrateParts(a.parts) };
 }
 
 /**
- * Asks a question in a tab's conversation. The selection is attached once, to
- * the opening turn (see toChatMessages); follow-ups send only text and history.
- * The answer is streamed into the thread, so it survives the panel closing and
- * reappears when the student comes back to the tab.
+ * Asks a question in a chat. It carries every selection made since the last
+ * answered question (select, select, ask sends both); earlier questions go
+ * along as history, each with the selections it carried. The answer streams
+ * into the chat, so it survives the panel closing and shows in the menu.
  */
-async function sendChat(tabId: number, question: string): Promise<void> {
-  supersede(tabId);
-  const { plan, chat } = await getThread(tabId);
-  if (!plan || plan.parts.length === 0) return;
-
-  const base: Chat =
-    chat && chat.planId === plan.id
-      ? { ...chat, turns: chat.turns.map(settle) }
-      : { planId: plan.id, mode: plan.mode, turns: [], updatedAt: Date.now() };
-  const history = historyOf(base.turns);
-  const q = question.trim() || fallbackQuestion(settings);
-  const user: Turn = { id: crypto.randomUUID(), role: 'user', text: q };
-  const answer: Turn = { id: crypto.randomUUID(), role: 'assistant', text: '', streaming: true };
-  const thread: Chat = { ...base, turns: [...base.turns, user, answer] };
-  await saveChat(tabId, thread);
-
+async function sendChat(chatId: string, question: string): Promise<void> {
+  if (streams.has(chatId)) return; // one answer at a time; the panel shows Stop meanwhile
   const controller = new AbortController();
-  streams.set(tabId, controller);
-  const request: AskRequest = { plan: { ...plan, question: q }, history };
+  streams.set(chatId, controller);
 
-  let dirty = false;
-  const flush = async () => {
-    dirty = false;
-    if (superseded.has(controller)) return;
-    await saveChat(tabId, thread);
-  };
-  const timer = setInterval(() => void (dirty && flush()), STREAM_SAVE_MS);
+  let answerId = '';
+  let text = '';
+  const finish = (done: Partial<AssistantItem>, opts = { touch: false, index: false }) =>
+    serial(() =>
+      updateChat(
+        chatId,
+        (c) => ({ ...c, items: c.items.map((i) => (i.id === answerId && i.kind === 'assistant' ? { ...i, text, ...done } : i)) }),
+        opts,
+      ),
+    );
 
   try {
-    const [current, keys] = await Promise.all([getSettings(), getKeys()]);
-    const ctx: ProviderContext = {
-      fetch: globalThis.fetch.bind(globalThis),
-      keys,
-      settings: { ...current, gatewayUrl: GATEWAY_URL },
-      cache: new AreaCacheStore(browser.storage.local),
-      signal: controller.signal,
+    const setup = await serial(async () => {
+      const chat = await getChat(chatId);
+      if (!chat || !hasUsableSelection(chat)) return null;
+      const settled: Chat = { ...chat, items: chat.items.map(settle) };
+      const pending = pendingSelections(settled);
+      const q = question.trim() || fallbackQuestion(settings);
+      const user: UserItem = { kind: 'user', id: crypto.randomUUID(), at: Date.now(), text: q, selections: pending.map((s) => s.id) };
+      const answer: AssistantItem = { kind: 'assistant', id: crypto.randomUUID(), at: Date.now(), text: '', streaming: true };
+      const saved = await saveChat({ ...settled, items: [...settled.items, user, answer] });
+      await noteDropped(saved.dropped);
+      return { chat: settled, pending, q, answerId: answer.id };
+    });
+    if (!setup) return;
+    answerId = setup.answerId;
+
+    const attachments = await Promise.all(setup.pending.map((s) => withPixels(attachmentOf(s))));
+    const history: ChatTurn[] = await Promise.all(
+      historyOf(setup.chat).map(async (t) => (t.attachments ? { ...t, attachments: await Promise.all(t.attachments.map(withPixels)) } : t)),
+    );
+    const latest = setup.pending.at(-1) ?? latestSelection(setup.chat)!;
+    // Anything with a screenshot anywhere in the chat goes to the large model.
+    const everything = [...history.flatMap((t) => t.attachments ?? []), ...attachments].flatMap((a) => a.parts);
+    const route = chooseRoute({ parts: everything, mode: 'ask', question: setup.q });
+    const request: AskRequest = {
+      plan: { ...latest.plan, parts: attachments.flatMap((a) => a.parts), question: setup.q, route },
+      attachments,
+      history,
     };
-    for await (const chunk of callModel(request, plan.route, ctx, {
-      provider: current.provider,
-      vendor: current.vendor,
-      model: current.modelOverride,
-    })) {
-      if (chunk.type === 'delta') {
-        answer.text += chunk.text;
-        dirty = true;
-      } else if (chunk.type === 'done') {
-        answer.streaming = false;
-        answer.usage = chunk.usage;
-        answer.model = chunk.model;
-        answer.cached = chunk.cached;
-      } else {
-        answer.streaming = false;
-        // A stop keeps whatever arrived; only an empty stop needs saying.
-        if (chunk.code === 'aborted') {
-          if (!answer.text.trim()) answer.error = 'Stopped before an answer arrived.';
+
+    let dirty = false;
+    const timer = setInterval(() => {
+      if (!dirty) return;
+      dirty = false;
+      void finish({ streaming: true });
+    }, STREAM_SAVE_MS);
+
+    const done: Partial<AssistantItem> = { streaming: false };
+    const [current, keys] = await Promise.all([getSettings(), getKeys()]);
+    try {
+      const ctx: ProviderContext = {
+        fetch: globalThis.fetch.bind(globalThis),
+        keys,
+        settings: { ...current, gatewayUrl: GATEWAY_URL },
+        cache: new AreaCacheStore(browser.storage.local),
+        signal: controller.signal,
+      };
+      for await (const chunk of callModel(request, route, ctx, {
+        provider: current.provider,
+        vendor: current.vendor,
+        model: current.modelOverride,
+      })) {
+        if (chunk.type === 'delta') {
+          text += chunk.text;
+          dirty = true;
+        } else if (chunk.type === 'done') {
+          Object.assign(done, { usage: chunk.usage, model: chunk.model, cached: chunk.cached });
+          void recordStatus(current, { ok: true });
+        } else if (chunk.code === 'aborted') {
+          // A stop keeps whatever arrived; only an empty stop needs saying.
+          if (!text.trim()) done.error = 'Stopped before an answer arrived.';
         } else {
-          answer.error = chunk.message;
-          answer.errorCode = chunk.code;
+          done.error = chunk.message;
+          done.errorCode = chunk.code;
+          void recordStatus(current, { ok: false, code: chunk.code, message: chunk.message });
         }
       }
+    } catch (err) {
+      done.error = (err as Error).message;
+    } finally {
+      clearInterval(timer);
     }
+    await finish(done, { touch: true, index: true });
   } catch (err) {
-    answer.streaming = false;
-    answer.error = (err as Error).message;
+    console.warn('[selection-ai] ask failed', err);
+    if (answerId) await finish({ streaming: false, error: (err as Error).message }, { touch: true, index: true });
   } finally {
-    clearInterval(timer);
-    answer.streaming = false;
-    if (streams.get(tabId) === controller) streams.delete(tabId);
-    await flush();
+    if (streams.get(chatId) === controller) streams.delete(chatId);
   }
 }
 
 /**
- * A turn left streaming by an answer that was replaced mid-flight. It keeps
+ * An answer left streaming when the worker was stopped mid-answer. It keeps
  * whatever text arrived, and is marked stopped so it stops showing a spinner
  * (and, if empty, drops out of the history sent to the model).
  */
-function settle(turn: Turn): Turn {
-  if (!turn.streaming) return turn;
-  return { ...turn, streaming: false, error: turn.text.trim() ? turn.error : 'Stopped before an answer arrived.' };
+function settle(item: ChatItem): ChatItem {
+  if (item.kind !== 'assistant' || !item.streaming) return item;
+  return { ...item, streaming: false, error: item.text.trim() ? item.error : 'Stopped before an answer arrived.' };
 }
 
 /**
  * Try again after a failed answer: the failed question and its error are
- * dropped and the question is asked afresh, so history stays clean.
+ * dropped and the question is asked afresh — with the same selections, since
+ * they were never answered.
  */
-async function retryChat(tabId: number): Promise<void> {
-  const { plan, chat } = await getThread(tabId);
-  if (!plan || !chat || chat.planId !== plan.id) return;
-  const turns = chat.turns;
-  const answer = turns[turns.length - 1];
-  const question = turns[turns.length - 2];
-  if (answer?.role !== 'assistant' || !answer.error || question?.role !== 'user') return;
-  await saveChat(tabId, { ...chat, turns: turns.slice(0, -2) });
-  await sendChat(tabId, question.text);
+async function retryChat(chatId: string): Promise<void> {
+  if (streams.has(chatId)) return;
+  const question = await serial(async () => {
+    const chat = await getChat(chatId);
+    const answer = chat?.items.at(-1);
+    const asked = chat?.items.at(-2);
+    if (!chat || answer?.kind !== 'assistant' || !answer.error || asked?.kind !== 'user') return null;
+    await saveChat({ ...chat, items: chat.items.slice(0, -2) }, { touch: false });
+    return asked.text;
+  });
+  if (question !== null) await sendChat(chatId, question);
+}
+
+/** A selection taken back before any question carried it. */
+async function dropSelection(chatId: string, itemId: string): Promise<void> {
+  const chat = await getChat(chatId);
+  const item = chat?.items.find((i): i is SelectionItem => i.kind === 'selection' && i.id === itemId);
+  if (!chat || !item || !isRemovable(chat, itemId)) return;
+  await deletePartImages(item.plan.parts);
+  const next = retitle({ ...chat, items: chat.items.filter((i) => i.id !== itemId) });
+  if (next.items.length) await saveChat(next, { touch: false });
+  else if (chat.temporary) await discardChat(chatId);
+  else await deleteChat(chatId); // an empty chat is not kept; the window stays on it, empty
+}
+
+/**
+ * The chosen AI's status, from a check at most a minute old unless `force`.
+ * One check at a time per choice and key: a panel opening in each of three
+ * windows asks once, and a check for an old choice or key is never passed off
+ * as one for the new.
+ */
+let checking: { key: string; run: Promise<AiStatus> } | null = null;
+async function aiStatus(force: boolean): Promise<AiStatus> {
+  const [current, keys] = await Promise.all([getSettings(), getKeys()]);
+  const choice = answerChoiceOf(current);
+  // In memory only; the key is part of it so a fixed key is checked afresh.
+  const key = `${choice}|${current.localBaseUrl}|${current.provider === 'byok' ? keys[current.vendor] : ''}`;
+  if (checking?.key === key) return await checking.run;
+  const stored = (await browser.storage.session.get(STATUS_KEY))[STATUS_KEY] as AiStatus | undefined;
+  if (!force && stored && stored.choice === choice && Date.now() - stored.checkedAt < STATUS_TTL_MS) return stored;
+
+  const before = checking?.run ?? Promise.resolve();
+  const run = before
+    .catch(() => undefined)
+    .then(async () => {
+      let status: AiStatus;
+      try {
+        status = await checkStatus(globalThis.fetch.bind(globalThis), current, keys);
+      } catch (err) {
+        status = { state: 'error', choice, who: '', message: (err as Error).message, checkedAt: Date.now() };
+      }
+      await browser.storage.session.set({ [STATUS_KEY]: status });
+      return status;
+    });
+  checking = { key, run };
+  const done = () => {
+    if (checking?.run === run) checking = null;
+  };
+  run.then(done, done);
+  return await run;
+}
+
+/** What an answer proved about the connection, if anything. */
+async function recordStatus(current: Settings, outcome: Parameters<typeof statusFromAnswer>[1]): Promise<void> {
+  const status = statusFromAnswer(current, outcome);
+  if (status) await browser.storage.session.set({ [STATUS_KEY]: status });
 }

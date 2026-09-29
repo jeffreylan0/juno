@@ -1,7 +1,6 @@
 /**
  * Settings and keys. Uses browser.storage.local via WXT's `storage` helper.
- * Conversations are not here: they live in storage.session (lib/threads.ts),
- * so no screenshot is ever written to disk.
+ * Chats are not here: see lib/chats.ts (and lib/images.ts for screenshots).
  */
 import { storage } from '#imports';
 import { DEFAULT_MACROS, DEFAULT_PROMPT, DEFAULT_PROMPTS, type Macro } from '@shared/prompts';

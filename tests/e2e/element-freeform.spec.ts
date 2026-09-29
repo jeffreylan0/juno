@@ -38,7 +38,7 @@ test('element: hover highlights the paragraph, ↑ widens, a click picks it and 
   const page = await context.newPage();
   await page.goto(URL);
   const tabId = await tabIdFor(serviceWorker, URL);
-  const panel = await openPanel(context, extensionId, tabId);
+  const panel = await openPanel(context, extensionId);
   await page.bringToFront();
   await startSelection(serviceWorker, 'element', URL);
   const host = page.locator(OVERLAY);
@@ -88,7 +88,7 @@ test('element: Enter picks from the keyboard, and Escape cancels', async ({ cont
   const page = await context.newPage();
   await page.goto(URL);
   const tabId = await tabIdFor(serviceWorker, URL);
-  const panel = await openPanel(context, extensionId, tabId);
+  const panel = await openPanel(context, extensionId);
   await page.bringToFront();
 
   await startSelection(serviceWorker, 'element', URL);
@@ -109,7 +109,7 @@ test('freeform: a drawn loop sends its bounding box with the outside blanked', a
   const page = await context.newPage();
   await page.goto(URL);
   const tabId = await tabIdFor(serviceWorker, URL);
-  const panel = await openPanel(context, extensionId, tabId);
+  const panel = await openPanel(context, extensionId);
   await page.bringToFront();
   await startSelection(serviceWorker, 'freeform', URL);
   await expect(page.locator(`${OVERLAY} .chip[data-kind="freeform"]`)).toHaveAttribute('aria-pressed', 'true');
@@ -154,11 +154,10 @@ test('freeform: a drawn loop sends its bounding box with the outside blanked', a
   await expect(panel.locator('.selection-outline path')).toHaveAttribute('d', /^M/);
 });
 
-test('every screenshot preview keeps its own shape: no stretching, no white bars', async ({ context, extensionId, serviceWorker }) => {
+test('every screenshot preview keeps its own shape and sits on the panel background', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
   await page.goto(URL);
-  const tabId = await tabIdFor(serviceWorker, URL);
-  const panel = await openPanel(context, extensionId, tabId);
+  const panel = await openPanel(context, extensionId);
   await panel.setViewportSize({ width: 360, height: 700 });
   await page.bringToFront();
   await startSelection(serviceWorker, 'element', URL);
@@ -167,14 +166,19 @@ test('every screenshot preview keeps its own shape: no stretching, no white bars
   await expect(panel.getByTestId('selection-frame')).toBeVisible({ timeout: 15_000 });
 
   const img = panel.locator('.selection-image');
+  await expect(img).toHaveJSProperty('complete', true);
   const { natural, shown } = await img.evaluate((el: HTMLImageElement) => ({
     natural: el.naturalWidth / el.naturalHeight,
     shown: el.getBoundingClientRect().width / el.getBoundingClientRect().height,
   }));
   expect(Math.abs(natural - shown)).toBeLessThan(0.02);
-  // The frame shows around the image rather than the image filling it.
-  const frame = (await panel.getByTestId('selection-frame').boundingBox())!;
-  const shot = (await img.boundingBox())!;
-  expect(shot.x).toBeGreaterThan(frame.x + 4);
-  expect(shot.y).toBeGreaterThan(frame.y + 4);
+  // Nothing around the shot but the panel itself: no card fill, no frame,
+  // no checkerboard — the space around a selection is the panel's background.
+  const fills = await panel.evaluate(() =>
+    ['.selection', '.selection-frame', '.selection-shot'].map((sel) => {
+      const cs = getComputedStyle(document.querySelector(sel)!);
+      return { bg: cs.backgroundColor, image: cs.backgroundImage, border: cs.borderTopWidth };
+    }),
+  );
+  for (const f of fills) expect(f).toEqual({ bg: 'rgba(0, 0, 0, 0)', image: 'none', border: '0px' });
 });

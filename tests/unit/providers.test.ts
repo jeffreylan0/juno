@@ -91,7 +91,7 @@ describe('message shape', () => {
     );
     const roles = body.messages.map((m) => m.role);
     expect(roles).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
-    expect(body.system).toContain('follow-up');
+    expect(body.system).toContain('no new selection');
   });
 
   it('converts to the Anthropic body with system split out and images first', () => {
@@ -100,6 +100,74 @@ describe('message shape', () => {
     expect(body.messages).toHaveLength(1);
     const blocks = body.messages[0]!.content as { type: string }[];
     expect(blocks.map((b) => b.type)).toEqual(['image', 'text']);
+  });
+});
+
+describe('chats with selections from several pages', () => {
+  const shot = (n: number) => ({ kind: 'image' as const, dataUrl: `data:image/png;base64,${'A'.repeat(n)}`, width: 2, height: 2, reason: 'user' as const });
+  const textbook = { kind: 'box' as const, page: { url: 'https://a.test/', title: 'Textbook' }, parts: [shot(4)] };
+  const paper = { kind: 'text' as const, page: { url: 'https://b.test/', title: 'Paper' }, parts: [{ kind: 'text' as const, text: 'F = ma' }] };
+
+  it('sends every new selection with the question, each named by its page', () => {
+    const msgs = toChatMessages({ plan: { ...plan(), question: 'Compare these.' }, attachments: [textbook, paper], history: [] });
+    expect(msgs.map((m) => m.role)).toEqual(['system', 'user']);
+    const content = msgs[1]!.content as { type: string; text?: string }[];
+    expect(content.map((c) => c.type)).toEqual(['text', 'image_url']);
+    expect(content[0]!.text).toContain('The student selected 2 things');
+    expect(content[0]!.text).toContain('from "Textbook"');
+    expect(content[0]!.text).toContain('from "Paper"');
+    expect(content[0]!.text).toContain('F = ma');
+    expect(content[0]!.text).toContain('Question: Compare these.');
+  });
+
+  it('keeps each earlier selection with the question that carried it, and a follow-up with none is plain text', () => {
+    const msgs = toChatMessages({
+      plan: { ...plan(), question: 'And now?' },
+      attachments: [],
+      history: [
+        { role: 'user', text: 'Explain', attachments: [textbook] },
+        { role: 'assistant', text: 'Read: a box. It shows…' },
+        { role: 'user', text: 'What about this?', attachments: [paper] },
+        { role: 'assistant', text: 'Read: F = ma. …' },
+      ],
+    });
+    expect(msgs.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user', 'assistant', 'user']);
+    expect((msgs[1]!.content as { type: string }[]).map((c) => c.type)).toEqual(['text', 'image_url']);
+    expect((msgs[3]!.content as { type: string; text?: string }[])[0]!.text).toContain('F = ma');
+    expect(msgs[5]!.content).toBe('And now?');
+    const images = msgs.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((c) => c.type === 'image_url');
+    expect(images).toHaveLength(1);
+    // Anthropic still gets strictly alternating roles.
+    expect(toAnthropicBody(msgs, 'claude-sonnet-5-5').messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
+  });
+
+  it('hashes differently when the selections differ, so a replay never answers the wrong ones', async () => {
+    const base = { plan: plan(), history: [] };
+    const one = await hashRequest({ ...base, attachments: [textbook] });
+    const two = await hashRequest({ ...base, attachments: [textbook, paper] });
+    expect(one).not.toBe(two);
+    // A request without attachments hashes as it always did (recorded evals stay valid).
+    expect(await hashRequest({ plan: plan() })).toBe(await hashRequest({ plan: plan() }));
+  });
+
+  it('the mock answer counts the new selections and the earlier ones', async () => {
+    const { text } = await collect(
+      callModel(
+        {
+          plan: { ...plan(), question: 'More?' },
+          attachments: [paper],
+          history: [
+            { role: 'user', text: 'Explain', attachments: [textbook] },
+            { role: 'assistant', text: 'A' },
+          ],
+        },
+        'large',
+        ctx(),
+        { provider: 'mock', vendor: 'anthropic' },
+      ),
+    );
+    expect(text).toContain('Read: 1 part(s)');
+    expect(text).toContain('plus 1 earlier selection(s)');
   });
 });
 
