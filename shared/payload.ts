@@ -78,15 +78,28 @@ export interface Rect {
   height: number;
 }
 
-export type SelectionKind = 'text' | 'box' | 'element';
+/**
+ * box: a dragged rectangle. text: a text selection. element: one page element,
+ * picked by hovering. freeform: any closed shape drawn around something; the
+ * crop is its bounding box with everything outside the outline blanked.
+ */
+export type SelectionKind = 'text' | 'box' | 'element' | 'freeform';
+
+/** A point in viewport CSS pixels. */
+export interface Point {
+  x: number;
+  y: number;
+}
 
 export interface SelectionMeta {
   kind: SelectionKind;
   /** Viewport rect of the selection in CSS pixels. */
   rect: Rect;
   devicePixelRatio: number;
-  /** For element selections: a short CSS-like descriptor for the tray chip. */
+  /** For element selections: what was picked, in words ("Table", "Equation"). */
   label?: string;
+  /** The element ran past the edge of the screen, so only the visible part was captured. */
+  clipped?: boolean;
 }
 
 export interface PageMeta {

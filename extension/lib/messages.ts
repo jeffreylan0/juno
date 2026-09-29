@@ -6,7 +6,7 @@
  * each tab's thread to `storage.session` (see threads.ts) and the panel
  * renders from storage change events. Messages here are commands only.
  */
-import type { Rect, SelectionKind } from '@shared/payload';
+import type { Point, Rect, SelectionKind } from '@shared/payload';
 
 /** Any extension page → background: inject the content script and arm a selection. */
 export interface SelectionArmMsg {
@@ -41,10 +41,15 @@ export interface SelectionDoneMsg {
   kind: SelectionKind;
   rect: Rect;
   devicePixelRatio: number;
-  /** Text recovered from the DOM inside the selection. */
+  /** The selected text (text selections only; boxes and elements send pixels). */
   text?: string;
   html?: string;
+  /** Element selections: what was picked, in words. */
   label?: string;
+  /** Element selections: part of it was off screen and could not be captured. */
+  clipped?: boolean;
+  /** Freeform selections: the outline, in viewport CSS pixels. */
+  path?: Point[];
   page: { url: string; title: string };
 }
 

@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, SETTINGS_VERSION, migrateSettings, sanitizeMacros, shouldAutoSend, type Settings } from '@/lib/storage';
+import {
+  DEFAULT_SETTINGS,
+  SETTINGS_VERSION,
+  answerChoiceOf,
+  fallbackQuestion,
+  migrateSettings,
+  sanitizeMacros,
+  shouldAutoSend,
+  withAnswerChoice,
+  type Settings,
+} from '@/lib/storage';
 import { DEFAULT_MACROS, DEFAULT_PROMPT } from '@shared/prompts';
 
 const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, ...over });
@@ -13,10 +23,10 @@ describe('settings defaults', () => {
     expect(DEFAULT_SETTINGS.sendBehavior).toBe('prefill');
   });
 
-  it('ships a short default prompt and the Explain, Hint and Check macros', () => {
-    expect(DEFAULT_SETTINGS.defaultPrompt).toBe(DEFAULT_PROMPT);
-    // It sits in the question box, so it has to fit on a line.
-    expect(DEFAULT_PROMPT.length).toBeLessThanOrEqual(40);
+  it('starts the question box empty and ships the Explain, Hint and Check macros', () => {
+    // The macros do the asking; the box waits for the student.
+    expect(DEFAULT_PROMPT).toBe('');
+    expect(DEFAULT_SETTINGS.defaultPrompt).toBe('');
     expect(DEFAULT_SETTINGS.macros.map((m) => m.name)).toEqual(['Explain', 'Hint', 'Check']);
     for (const m of DEFAULT_SETTINGS.macros) expect(m.prompt.length).toBeGreaterThan(10);
     // The hint macro carries its own "do not give it away" instruction now.
@@ -57,6 +67,15 @@ describe('migrateSettings', () => {
     expect('defaultMode' in s).toBe(false);
   });
 
+  it('empties the box for anyone who still had the old prefilled prompt, but keeps their own', () => {
+    expect(migrateSettings({ version: 2, defaultPrompt: 'Explain this step by step.' }).defaultPrompt).toBe('');
+    expect(migrateSettings({ version: 2, defaultPrompt: 'Solve it.' }).defaultPrompt).toBe('Solve it.');
+  });
+
+  it('drops the hosted-plan URL, which is a build setting now', () => {
+    expect('gatewayUrl' in migrateSettings({ version: 2, gatewayUrl: 'https://x' })).toBe(false);
+  });
+
   it('respects a later choice to turn adjusting back on', () => {
     expect(migrateSettings({ version: SETTINGS_VERSION, adjustBox: true }).adjustBox).toBe(true);
   });
@@ -91,10 +110,29 @@ describe('shouldAutoSend', () => {
     expect(shouldAutoSend(s, 'text')).toBe(true);
   });
 
-  it('sends only screenshots on auto-box', () => {
+  it('sends only screenshots on auto-box: box, freeform and element, not text', () => {
     const s = settings({ sendBehavior: 'auto-box' });
     expect(shouldAutoSend(s, 'box')).toBe(true);
+    expect(shouldAutoSend(s, 'freeform')).toBe(true);
+    expect(shouldAutoSend(s, 'element')).toBe(true);
     expect(shouldAutoSend(s, 'text')).toBe(false);
-    expect(shouldAutoSend(s, 'element')).toBe(false);
+  });
+});
+
+describe('answer choice', () => {
+  it('is one decision over provider, vendor and model', () => {
+    expect(answerChoiceOf(DEFAULT_SETTINGS)).toBe('placeholder');
+    const sonnet = withAnswerChoice(DEFAULT_SETTINGS, 'anthropic:claude-sonnet-5-5');
+    expect([sonnet.provider, sonnet.vendor, sonnet.modelOverride]).toEqual(['byok', 'anthropic', { vendor: 'anthropic', model: 'claude-sonnet-5-5' }]);
+    expect(answerChoiceOf(sonnet)).toBe('anthropic:claude-sonnet-5-5');
+    const auto = withAnswerChoice(sonnet, 'openai:auto');
+    expect([auto.provider, auto.vendor, auto.modelOverride]).toEqual(['byok', 'openai', null]);
+    expect(answerChoiceOf(withAnswerChoice(auto, 'local'))).toBe('local');
+  });
+
+  it('falls back to the first macro when there is no default prompt', () => {
+    expect(fallbackQuestion(DEFAULT_SETTINGS)).toBe(DEFAULT_SETTINGS.macros[0]!.prompt);
+    expect(fallbackQuestion({ defaultPrompt: 'Solve it.', macros: [] })).toBe('Solve it.');
+    expect(fallbackQuestion({ defaultPrompt: '', macros: [] })).toBe('Explain this.');
   });
 });

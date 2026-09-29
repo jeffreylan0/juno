@@ -24,7 +24,8 @@
     "eval:crops": "pnpm --filter eval exec tsx crops.ts",
     "worker:dev": "pnpm --filter worker dev",
     "build:e2e": "E2E=1 pnpm --filter extension build",
-    "test:e2e": "pnpm build:e2e && playwright test"
+    "test:e2e": "pnpm build:e2e && playwright test",
+    "brand:icons": "node scripts/brand-icons.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",

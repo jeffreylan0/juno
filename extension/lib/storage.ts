@@ -6,6 +6,7 @@
 import { storage } from '#imports';
 import { DEFAULT_MACROS, DEFAULT_PROMPT, DEFAULT_PROMPTS, type Macro } from '@shared/prompts';
 import type { ModelRef, Provider, SelectionKind } from '@shared/payload';
+import { MAJOR_MODELS } from './router';
 
 export type { Macro } from '@shared/prompts';
 
@@ -14,7 +15,7 @@ export type { Macro } from '@shared/prompts';
  * - `prefill`: the default prompt goes in the box, editable, and nothing is
  *   sent until the student asks. No surprise spend. The default.
  * - `auto`: the ask goes out immediately with the default prompt.
- * - `auto-box`: box selections go out immediately; text and element wait.
+ * - `auto-box`: screenshots (box, freeform, element) go out immediately; text waits.
  */
 export type SendBehavior = 'prefill' | 'auto' | 'auto-box';
 
@@ -28,7 +29,13 @@ export type SendBehavior = 'prefill' | 'auto' | 'auto-box';
 export type PanelOpen = 'on-selection' | 'on-click';
 
 /** Bumped when a default changes in a way stored settings must pick up. */
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
+
+/**
+ * Where hosted plans are served from. A build setting, not a student one: it
+ * comes from WXT_GATEWAY_URL at build time.
+ */
+export const GATEWAY_URL = (import.meta.env.WXT_GATEWAY_URL as string | undefined) ?? 'http://localhost:8787';
 
 export interface Settings {
   version: number;
@@ -59,7 +66,6 @@ export interface Settings {
   blockedSites: string[];
   localBaseUrl: string;
   localModel: string;
-  gatewayUrl: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -77,7 +83,6 @@ export const DEFAULT_SETTINGS: Settings = {
   blockedSites: [],
   localBaseUrl: 'http://localhost:11434/v1',
   localModel: 'qwen2.5vl:7b',
-  gatewayUrl: (import.meta.env.WXT_GATEWAY_URL as string | undefined) ?? 'http://localhost:8787',
 };
 
 export interface Keys {
@@ -107,6 +112,9 @@ export async function getSettings(): Promise<Settings> {
  * v2: boxes send on release (adjusting is opt-in), and the per-mode prompts
  * (Explain/Hint/Check) became editable macros. A customised old prompt is
  * carried into the macro of the same name rather than lost.
+ * v3: the question box starts empty (the macros do the asking), unless the
+ * student had written their own default prompt; the hosted-plan URL stopped
+ * being a setting.
  */
 export function migrateSettings(stored: unknown): Settings {
   const s = (stored && typeof stored === 'object' ? stored : {}) as Partial<Settings> & {
@@ -124,12 +132,55 @@ export function migrateSettings(stored: unknown): Settings {
       });
     }
   }
+  if ((s.version ?? 1) < 3) {
+    if (s.defaultPrompt === undefined || s.defaultPrompt === V2_DEFAULT_PROMPT) merged.defaultPrompt = '';
+  }
   merged.macros = sanitizeMacros(merged.macros);
   merged.version = SETTINGS_VERSION;
-  delete (merged as Partial<typeof s>).prompts;
-  delete (merged as Partial<typeof s>).defaultMode;
+  const loose = merged as Partial<typeof s> & { gatewayUrl?: string };
+  delete loose.prompts;
+  delete loose.defaultMode;
+  delete loose.gatewayUrl;
   return merged;
 }
+
+/** What the box used to be prefilled with; replaced only if left unchanged. */
+const V2_DEFAULT_PROMPT = 'Explain this step by step.';
+
+/**
+ * Who answers, as one choice. Stored as three fields (provider, vendor and an
+ * optional model) because the providers need them apart, but the student
+ * only ever makes one decision, in the panel's model picker or in settings.
+ */
+export type AnswerChoice = 'placeholder' | 'local' | 'hosted' | `${'anthropic' | 'openai'}:${string}`;
+
+export function answerChoiceOf(s: Pick<Settings, 'provider' | 'vendor' | 'modelOverride'>): AnswerChoice {
+  switch (s.provider) {
+    case 'mock':
+      return 'placeholder';
+    case 'local':
+      return 'local';
+    case 'gateway':
+      return 'hosted';
+    case 'byok':
+      return `${s.vendor}:${s.modelOverride?.vendor === s.vendor ? s.modelOverride.model : 'auto'}`;
+  }
+}
+
+export function withAnswerChoice(s: Settings, choice: AnswerChoice): Settings {
+  if (choice === 'placeholder') return { ...s, provider: 'mock' };
+  if (choice === 'local') return { ...s, provider: 'local' };
+  if (choice === 'hosted') return { ...s, provider: 'gateway' };
+  const [vendor, model] = choice.split(':') as ['anthropic' | 'openai', string];
+  return { ...s, provider: 'byok', vendor, modelOverride: model === 'auto' || !model ? null : { vendor, model } };
+}
+
+/** The first thing to ask when nothing was typed: the default prompt, else the first macro. */
+export function fallbackQuestion(s: Pick<Settings, 'defaultPrompt' | 'macros'>): string {
+  return s.defaultPrompt.trim() || s.macros[0]?.prompt.trim() || 'Explain this.';
+}
+
+export { MAJOR_MODELS };
 
 /** Drops malformed entries and gives every macro a unique id. */
 export function sanitizeMacros(macros: unknown): Macro[] {
@@ -159,6 +210,6 @@ export async function getKeys(): Promise<Keys> {
 /** Whether a selection of this kind should be sent without waiting for the student. */
 export function shouldAutoSend(settings: Settings, kind: SelectionKind): boolean {
   if (settings.sendBehavior === 'auto') return true;
-  if (settings.sendBehavior === 'auto-box') return kind === 'box';
+  if (settings.sendBehavior === 'auto-box') return kind !== 'text';
   return false;
 }

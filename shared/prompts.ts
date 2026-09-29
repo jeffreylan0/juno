@@ -85,8 +85,11 @@ export interface Macro {
   prompt: string;
 }
 
-/** Short on purpose: it sits in the box when a selection lands and should fit on one line. */
-export const DEFAULT_PROMPT = DEFAULT_PROMPTS.ask;
+/**
+ * What sits in the question box when a selection lands: nothing. The macros
+ * do the asking; a student who wants a standing prompt can set one.
+ */
+export const DEFAULT_PROMPT = '';
 
 export const DEFAULT_MACROS: Macro[] = [
   { id: 'explain', name: 'Explain', prompt: 'Explain this step by step.' },

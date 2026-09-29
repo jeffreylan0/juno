@@ -1,24 +1,17 @@
 /**
- * What was selected, pinned to the top of the conversation: a Box shows its
- * screenshot, Text shows the text itself. It is exactly what the model
- * receives — nothing extra is read off the page.
+ * What was selected, pinned to the top of the conversation: Box, Freeform and
+ * Element show their screenshot, Text shows the text itself. It is exactly
+ * what the model receives — nothing extra is read off the page.
  *
  * No token counts or routing details here; those are for a super-user view
  * once plans and pricing settle (Settings.showUsage).
  */
 import { useState } from 'react';
-import type { Part, Plan, SelectionKind } from '@shared/payload';
+import type { Part, Plan } from '@shared/payload';
+import { KIND_ICON, KIND_LABEL } from '@/lib/kinds';
 
 /** Lines of captured text shown before "Show all". */
 const COLLAPSED_LINES = 14;
-
-const KIND_LABEL: Record<SelectionKind, string> = { box: 'Box', text: 'Text', element: 'Element' };
-
-const KIND_ICON: Record<SelectionKind, string> = {
-  box: '<rect x="3" y="5" width="18" height="14" rx="2" stroke-dasharray="3 2.4"/>',
-  text: '<path d="M5 6.5V5h14v1.5"/><path d="M12 5v14"/><path d="M9 19h6"/>',
-  element: '<path d="M4 4h16v6H4z"/><path d="M4 14h7v6H4z"/><path d="M14 14h6v6h-6z"/>',
-};
 
 export function SelectionCard({ plan, notice }: { plan: Plan; notice?: string }) {
   const kind = plan.selection.kind;
@@ -27,12 +20,18 @@ export function SelectionCard({ plan, notice }: { plan: Plan; notice?: string })
       <div className="selection-head">
         <svg viewBox="0 0 24 24" aria-hidden="true" dangerouslySetInnerHTML={{ __html: KIND_ICON[kind] }} />
         <span data-testid="selection-kind">{KIND_LABEL[kind]}</span>
+        {kind === 'element' && plan.selection.label && <span className="selection-sub">· {plan.selection.label}</span>}
       </div>
       {plan.parts.length > 0 && (
         <div className="selection-body">
           {plan.parts.map((part, i) => (
             <PartPreview key={i} part={part} />
           ))}
+        </div>
+      )}
+      {plan.selection.clipped && (
+        <div className="selection-note" data-testid="selection-clipped">
+          Only the part on screen was captured. For all of it, zoom out or select it in pieces.
         </div>
       )}
       {notice && (

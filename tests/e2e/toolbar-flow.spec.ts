@@ -55,11 +55,9 @@ test('one toolbar click arms a box selection with the bar in place', async ({ co
 
   const bar = page.locator(BAR);
   await expect(bar.locator('.chip[data-kind="box"]')).toHaveAttribute('aria-pressed', 'true');
-  await expect(bar.locator('.chip[data-kind="text"]')).toBeEnabled();
-  await expect(bar.locator('.chip[data-kind="element"]')).toBeDisabled();
-  // Element selection is the next feature; the chip says so rather than
-  // looking broken.
-  await expect(bar.locator('.chip[data-kind="element"]')).toHaveAttribute('title', 'Element selection — coming next');
+  // Every mode is on offer, in the bar's order.
+  await expect(bar.locator('.chip')).toHaveText(['Box', 'Freeform', 'Element', 'Text']);
+  for (const kind of ['freeform', 'element', 'text']) await expect(bar.locator(`.chip[data-kind="${kind}"]`)).toBeEnabled();
   await expect(bar.locator('.close')).toBeVisible();
   await expect(bar.locator('.ask')).toBeHidden();
   await expect(bar.locator('.gear')).toBeVisible();
@@ -197,7 +195,9 @@ test('the gear expands the bar upwards, between the controls and the notices', a
 
   await bar.locator('.gear').click();
   await expect(settings).toHaveClass(/open/);
-  await expect(settings.locator('select')).toHaveCount(5);
+  // Only how selecting works; who answers is picked in the panel.
+  await expect(settings.locator('select')).toHaveCount(3);
+  await expect(settings).not.toContainText('Answered by');
   await expect(settings).toContainText('After drawing a box');
   await expect(settings).toContainText('Open the answer panel');
   await settled(page, BAR);
@@ -391,4 +391,15 @@ test('set to open on click, the panel is asked for at arm time, and again if ref
   // The drag is a real gesture, so the retry lands and the badge clears.
   await expect.poll(badge, { timeout: 10_000 }).toBe('');
   await expect.poll(async () => sidePanelCount(serviceWorker), { timeout: 10_000 }).toBe(1);
+});
+
+test('the main shortcut is the icon\'s own shortcut, Alt+Shift+S', async ({ serviceWorker }) => {
+  const commands = await serviceWorker.evaluate(async () => chrome.commands.getAll());
+  const main = commands.find((c) => c.name === '_execute_action');
+  expect(main?.shortcut).toBe('Alt+Shift+S');
+  // Every mode can have a shortcut of its own, unbound until the student
+  // picks one: every default we could ship collides with some browser.
+  const names = commands.map((c) => c.name).sort();
+  expect(names).toEqual(['_execute_action', 'select-box', 'select-element', 'select-freeform', 'select-text']);
+  for (const c of commands.filter((c) => c.name !== '_execute_action')) expect(c.shortcut, c.name).toBe('');
 });

@@ -17,6 +17,7 @@ import {
   type PDFDocumentProxy,
   type PDFPageProxy,
 } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { BRAND } from '@/brand';
 import { SelectionController } from '@/lib/selection-controller';
 import type { StartSelectionMsg } from '@/lib/messages';
 import 'pdfjs-dist/web/pdf_viewer.css';
@@ -65,10 +66,12 @@ function fileParam(): string | null {
 }
 
 async function main(): Promise<void> {
+  const brand = document.querySelector('.brand');
+  if (brand) brand.textContent = `${BRAND.shortName} reader`;
   const url = fileParam();
   if (!url) return status('No file to open. This page is opened for you from a PDF.', true);
   els.file.textContent = decodeURIComponent(url.split('/').pop() ?? url);
-  document.title = `${els.file.textContent} — Selection AI reader`;
+  document.title = `${els.file.textContent} — ${BRAND.shortName} reader`;
 
   status('Opening…');
   try {
@@ -101,7 +104,7 @@ function failed(url: string, err: Error): void {
   if (fileUrl) {
     status(
       'Chrome blocks extensions from reading local files until you allow it. Open <code>chrome://extensions</code>, ' +
-        'find Selection AI, and turn on <b>Allow access to file URLs</b>, then reload this page.' +
+        `find ${escapeHtml(BRAND.name)}, and turn on <b>Allow access to file URLs</b>, then reload this page.` +
         `<br><br><small>${escapeHtml(err.message)}</small>`,
       true,
     );

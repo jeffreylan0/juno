@@ -5,7 +5,7 @@
  * service workers and Firefox background scripts).
  */
 import { browser } from 'wxt/browser';
-import type { Rect } from '@shared/payload';
+import type { Point, Rect } from '@shared/payload';
 
 export interface PixelRect {
   x: number;
@@ -47,8 +47,24 @@ async function dataUrlToBitmap(dataUrl: string): Promise<ImageBitmap> {
   return createImageBitmap(blob);
 }
 
-/** Crops a data-URL screenshot to `rect` (CSS px) at `dpr`; returns PNG data URL. */
-export async function cropDataUrl(dataUrl: string, rect: Rect, dpr: number): Promise<CaptureResult> {
+/**
+ * Maps a freeform outline from viewport CSS pixels into the output canvas:
+ * scale to device pixels, shift to the crop's origin, then scale to the
+ * (possibly downsized) output. Pure, so it is unit-tested on its own.
+ */
+export function pathToCrop(path: Point[], dpr: number, src: PixelRect, out: { width: number; height: number }): Point[] {
+  const sx = out.width / src.width;
+  const sy = out.height / src.height;
+  return path.map((p) => ({ x: (p.x * dpr - src.x) * sx, y: (p.y * dpr - src.y) * sy }));
+}
+
+/**
+ * Crops a data-URL screenshot to `rect` (CSS px) at `dpr`; returns PNG data URL.
+ * With a freeform `path`, everything outside the outline is painted white, so
+ * only what the student drew around reaches the model. White rather than
+ * transparent: some models render transparency as black.
+ */
+export async function cropDataUrl(dataUrl: string, rect: Rect, dpr: number, path?: Point[]): Promise<CaptureResult> {
   const bitmap = await dataUrlToBitmap(dataUrl);
   try {
     const src = toDeviceRect(rect, dpr, bitmap);
@@ -57,6 +73,16 @@ export async function cropDataUrl(dataUrl: string, rect: Rect, dpr: number): Pro
     const canvas = new OffscreenCanvas(out.width, out.height);
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('OffscreenCanvas 2d context unavailable');
+    if (path && path.length >= 3) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, out.width, out.height);
+      const pts = pathToCrop(path, dpr, src, out);
+      ctx.beginPath();
+      ctx.moveTo(pts[0]!.x, pts[0]!.y);
+      for (const p of pts.slice(1)) ctx.lineTo(p.x, p.y);
+      ctx.closePath();
+      ctx.clip();
+    }
     ctx.drawImage(bitmap, src.x, src.y, src.width, src.height, 0, 0, out.width, out.height);
     const blob = await canvas.convertToBlob({ type: 'image/png' });
     return { dataUrl: await blobToDataUrl(blob), width: out.width, height: out.height };
@@ -76,7 +102,7 @@ export async function blobToDataUrl(blob: Blob): Promise<string> {
 }
 
 /** Captures the active tab in `windowId` and crops it. Requires activeTab. */
-export async function captureRect(windowId: number | undefined, rect: Rect, dpr: number): Promise<CaptureResult> {
+export async function captureRect(windowId: number | undefined, rect: Rect, dpr: number, path?: Point[]): Promise<CaptureResult> {
   const full = await browser.tabs.captureVisibleTab(windowId as number, { format: 'png' });
-  return cropDataUrl(full, rect, dpr);
+  return cropDataUrl(full, rect, dpr, path);
 }

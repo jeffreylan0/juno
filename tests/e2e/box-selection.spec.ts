@@ -63,7 +63,7 @@ test('the panel holds a conversation: a first answer, then a follow-up on the sa
   await boxAround(page, panel, '#problem', tabId);
 
   // The selection sits at the top of the panel, labelled by kind, with no
-  // token counts; the short default prompt waits in a big question box.
+  // token counts; the big question box starts empty, ready to type into.
   const card = panel.getByTestId('selection');
   await expect(card).toBeVisible();
   await expect(panel.getByTestId('selection-kind')).toHaveText('Box');
@@ -71,12 +71,16 @@ test('the panel holds a conversation: a first answer, then a follow-up on the sa
   await expect(card).not.toContainText(/attached/i);
   await expect(panel.locator('.selection-image')).toBeVisible();
   const box = panel.locator('.composer textarea');
-  await expect(box).toHaveValue('Explain this step by step.');
+  await expect(box).toHaveValue('');
   // Focused and ready to type into (the panel tab is not the active one here,
   // so check the document's focus rather than the window's).
   expect(await box.evaluate((el) => document.activeElement === el)).toBe(true);
   const send = panel.locator('.composer .send');
   await expect(send).toHaveText(/Send/);
+  // Nothing to send until something is typed (or a macro is picked).
+  await expect(send).toBeDisabled();
+  await box.fill('Explain this step by step.');
+  await expect(send).toBeEnabled();
 
   // The selection is above the conversation, and the box is below it.
   const cardTop = (await card.boundingBox())!.y;
@@ -157,7 +161,7 @@ test('the conversation survives the panel closing and reopening', async ({ conte
   await startSelection(serviceWorker, 'box', url);
   await boxAround(page, panel, '#problem', tabId);
 
-  await panel.locator('.composer .send').click();
+  await panel.locator('.macros .macro', { hasText: 'Explain' }).click();
   await expect(panel.locator('.turn.assistant').first()).toHaveAttribute('data-streaming', 'false', { timeout: 25_000 });
   await panel.close();
 
@@ -193,7 +197,7 @@ test('each tab keeps its own selection and conversation', async ({ context, exte
   expect(planB.page.url).toBe(second.url);
 
   // Asking in one tab leaves the other's thread untouched.
-  await panelA.locator('.composer .send').click();
+  await panelA.locator('.macros .macro', { hasText: 'Explain' }).click();
   await expect(panelA.locator('.turn.assistant')).toHaveCount(1);
   await expect(panelB.locator('.turn')).toHaveCount(0);
 

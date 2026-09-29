@@ -10,7 +10,8 @@
   --user-bg: #f1f5f9;
   --error: #b91c1c;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-  font-size: 14px;
+  /* Chat text size. Everything else is relative to it. */
+  font-size: 15px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -31,8 +32,8 @@ body { background: var(--bg); color: var(--fg); }
 
 .panel { display: flex; flex-direction: column; height: 100%; }
 .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
-.model { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 75%; }
-.model:hover { color: var(--fg); }
+.top .brand { font-size: 13px; font-weight: 600; color: var(--muted); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .icon { display: flex; border: 0; background: transparent; color: var(--muted); padding: 4px; border-radius: 6px; cursor: pointer; }
 .icon:hover { color: var(--fg); background: var(--user-bg); }
 .icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
@@ -42,12 +43,14 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4p
 /* The selection, pinned to the top of the conversation: exactly what the model gets. */
 .selection { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--accent-bg); }
 .selection-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--accent); }
+.selection-sub { color: var(--muted); font-weight: 500; }
+.selection-note { font-size: 13px; color: var(--muted); }
 .selection-head svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .selection-body { display: flex; flex-direction: column; gap: 6px; }
 .selection-image { display: block; width: 100%; height: auto; max-height: 45vh; object-fit: contain; object-position: left top; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .selection-text {
   margin: 0; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--bg);
-  border-radius: 0 8px 8px 0; white-space: pre-wrap; line-height: 1.5; font-size: 14px; width: 100%;
+  border-radius: 0 8px 8px 0; white-space: pre-wrap; line-height: 1.55; font-size: 15px; width: 100%;
   display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
 }
 .selection-text.open { display: block; -webkit-line-clamp: unset !important; }
@@ -61,20 +64,20 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4p
 .turn.user { align-self: flex-end; background: var(--user-bg); border-radius: 14px 14px 3px 14px; padding: 8px 12px; max-width: 90%; }
 .turn.user .turn-text { white-space: pre-wrap; }
 .turn.assistant { max-width: 100%; }
-.usage { color: var(--muted); font-size: 11px; margin-top: 4px; }
+.usage { color: var(--muted); font-size: 12px; margin-top: 4px; }
 .error { color: var(--error); background: color-mix(in srgb, var(--error) 10%, transparent); padding: 8px 10px; border-radius: 8px; line-height: 1.45; }
 .error-actions { display: flex; gap: 8px; margin-top: 8px; }
 .error-actions button { font: inherit; font-size: 12px; border: 1px solid currentColor; background: transparent; color: inherit; border-radius: 7px; padding: 3px 10px; cursor: pointer; }
 
-.what-i-read { display: flex; gap: 8px; align-items: baseline; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--accent-bg); color: var(--fg); border-radius: 8px; padding: 4px 8px; margin-bottom: 8px; font: inherit; font-size: 12px; cursor: pointer; }
+.what-i-read { display: flex; gap: 8px; align-items: baseline; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--accent-bg); color: var(--fg); border-radius: 8px; padding: 5px 9px; margin-bottom: 8px; font: inherit; font-size: 13px; cursor: pointer; }
 .wir-label { color: var(--accent); font-weight: 600; flex: none; }
 .wir-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .what-i-read.open .wir-text { white-space: normal; }
 
-.markdown { line-height: 1.5; overflow-wrap: anywhere; }
+.markdown { line-height: 1.6; overflow-wrap: anywhere; }
 .markdown p { margin: 0 0 8px; }
 .markdown pre { background: var(--user-bg); padding: 8px 10px; border-radius: 8px; overflow-x: auto; }
-.markdown code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.markdown code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; }
 .markdown table { border-collapse: collapse; margin: 8px 0; }
 .markdown th, .markdown td { border: 1px solid var(--line); padding: 4px 8px; }
 .markdown .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
@@ -82,12 +85,25 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4p
 @keyframes blink { 50% { opacity: 0; } }
 
 /* The question area: answer macros, then a large, unmistakable box. */
-.ask { padding: 10px 12px 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; background: var(--bg); }
-.macros { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.ask { padding: 10px 10px 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; background: var(--bg); }
+.ask-row { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+/* Macros wrap rather than scroll, so none hides behind the model picker. */
+.macros { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; min-width: 0; }
+.model-picker { flex: none; max-width: 45%; position: relative; display: flex; }
+.model-picker-face {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; color: var(--fg); background-color: var(--bg);
+  border: 1px solid var(--line); border-radius: 999px; padding: 5px 24px 5px 10px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 9px center; background-size: 10px 10px;
+}
+.model-picker select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font: inherit; font-size: 13px; }
+.model-picker:hover .model-picker-face { border-color: var(--muted); }
+.model-picker:focus-within .model-picker-face { outline: 2px solid var(--accent); outline-offset: 1px; }
 .macro {
-  flex: none; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
+  flex: none; font: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer; white-space: nowrap;
   color: var(--accent); background: var(--accent-bg); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
-  border-radius: 999px; padding: 5px 13px;
+  border-radius: 999px; padding: 5px 10px;
 }
 .macro:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 18%, var(--bg)); }
 .macro:disabled { opacity: .45; cursor: default; }
@@ -101,7 +117,7 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4p
 .composer.off { opacity: .6; box-shadow: none; }
 .composer textarea {
   width: 100%; min-height: 4.5em; resize: none; border: 0; outline: 0; padding: 0; background: transparent;
-  font: inherit; font-size: 15px; line-height: 1.5; color: var(--fg);
+  font: inherit; font-size: 16px; line-height: 1.5; color: var(--fg);
 }
 .composer textarea::placeholder { color: var(--muted); }
 .composer-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -113,3 +129,6 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4p
 .send svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .send:disabled { opacity: .5; cursor: default; }
 .send.stop { background: var(--fg); color: var(--bg); }
+
+/* Narrow side panels: keep the hint to what matters most. */
+@media (max-width: 380px) { .composer-hint .extra { display: none; } }

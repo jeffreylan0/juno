@@ -34,12 +34,12 @@ describe('detectPdf', () => {
 });
 
 describe('availableModes', () => {
-  it('offers only a screenshot on a browser PDF viewer', () => {
-    expect(availableModes({ isPdf: true, url: 'file:///a.pdf', isFile: true })).toEqual(['box']);
+  it('offers only the screenshot modes on a browser PDF viewer', () => {
+    expect(availableModes({ isPdf: true, url: 'file:///a.pdf', isFile: true })).toEqual(['box', 'freeform']);
   });
 
-  it('offers box and text everywhere else', () => {
-    expect(availableModes({ isPdf: false, url: 'https://x', isFile: false })).toEqual(['box', 'text']);
+  it('offers every mode everywhere else', () => {
+    expect(availableModes({ isPdf: false, url: 'https://x', isFile: false })).toEqual(['box', 'text', 'element', 'freeform']);
   });
 });
 

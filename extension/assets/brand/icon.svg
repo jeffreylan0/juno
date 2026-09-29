@@ -1,0 +1,21 @@
+<!--
+  Placeholder mark: a selection frame with corner handles. Replace this file
+  with the final artwork (square, 128×128 viewBox works best) and run
+  `pnpm brand:icons` to regenerate extension/public/icon/*.png.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect x="4" y="4" width="120" height="120" rx="24" fill="#2563eb"/>
+  <rect x="30" y="30" width="68" height="68" fill="none" stroke="#fff" stroke-width="8"/>
+  <g fill="#fff">
+    <rect x="18" y="18" width="24" height="24" rx="4"/>
+    <rect x="86" y="18" width="24" height="24" rx="4"/>
+    <rect x="18" y="86" width="24" height="24" rx="4"/>
+    <rect x="86" y="86" width="24" height="24" rx="4"/>
+  </g>
+  <g fill="#2563eb">
+    <rect x="25" y="25" width="10" height="10" rx="1"/>
+    <rect x="93" y="25" width="10" height="10" rx="1"/>
+    <rect x="25" y="93" width="10" height="10" rx="1"/>
+    <rect x="93" y="93" width="10" height="10" rx="1"/>
+  </g>
+</svg>

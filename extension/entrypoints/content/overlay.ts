@@ -13,6 +13,8 @@
 import type { Rect, SelectionKind } from '@shared/payload';
 import { Bar, BAR_STYLE, type NoticeAction } from './bar';
 import { BoxSelector, HANDLES } from './select-box';
+import { ElementPicker, type PickedElement } from './select-element';
+import { LassoSelector, type Lasso } from './select-freeform';
 import { readSelection, type TextSelection } from './select-text';
 import { UI_ATTR, applyWheel, scrollTargetAt } from './scroll';
 
@@ -45,6 +47,24 @@ const STYLE = `
 .handle[data-h='s'] { left: 50%; top: 100%; }
 .handle[data-h='sw'] { left: 0; top: 100%; }
 .handle[data-h='w'] { left: 0; top: 50%; }
+.box.element {
+  border: 2px solid var(--sai-accent, #3b82f6); box-shadow: none; border-radius: 3px;
+  background: color-mix(in srgb, var(--sai-accent, #3b82f6) 10%, transparent);
+  transition: left 60ms ease, top 60ms ease, width 60ms ease, height 60ms ease;
+}
+.tag {
+  position: fixed; display: none; pointer-events: none; white-space: nowrap;
+  font: 600 11px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  color: #fff; background: var(--sai-accent, #3b82f6); padding: 4px 7px; border-radius: 5px;
+}
+.lasso { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; overflow: visible; }
+.lasso-scrim { fill: var(--sai-scrim, rgba(15, 23, 42, 0.35)); }
+.lasso-line {
+  fill: color-mix(in srgb, var(--sai-accent, #3b82f6) 8%, transparent);
+  stroke: var(--sai-accent, #3b82f6); stroke-width: 2; stroke-dasharray: 6 4;
+  stroke-linejoin: round; stroke-linecap: round;
+}
+@media (prefers-reduced-motion: reduce) { .box.element { transition: none; } }
 .tip {
   position: fixed; left: 0; top: 0; display: none; align-items: center; gap: 6px;
   font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
@@ -127,8 +147,10 @@ export class Overlay {
     const root = document.createElement('div');
     root.className = 'root';
 
+    // Box and freeform draw on a surface over the page; text and element
+    // selection need the page itself to receive the pointer.
     const backdrop = document.createElement('div');
-    backdrop.className = kind === 'box' ? 'backdrop interactive' : 'backdrop';
+    backdrop.className = kind === 'box' || kind === 'freeform' ? 'backdrop interactive' : 'backdrop';
 
     const box = document.createElement('div');
     box.className = 'box';
@@ -230,6 +252,58 @@ export class Overlay {
       );
       this.confirmCurrent = () => void selector.confirm();
       return selector.attach();
+    });
+  }
+
+  /**
+   * Hover highlights an element, a click (or Enter) picks it. The page keeps
+   * the pointer, so it scrolls and hovers normally; only the picking click is
+   * kept from reaching it.
+   */
+  async selectElement(modes: SelectionKind[]): Promise<PickedElement | null> {
+    const backdrop = this.mount('element', modes);
+    const box = backdrop.querySelector<HTMLElement>('.box')!;
+    box.classList.add('element');
+    const tag = document.createElement('div');
+    tag.className = 'tag';
+    tag.setAttribute('data-testid', 'element-tag');
+    backdrop.append(tag);
+    return await this.run((finish) => {
+      const picker = new ElementPicker(this.host!, {
+        isOurs: isOurUi,
+        onHighlight: (rect, label) => {
+          if (!rect) {
+            box.style.display = 'none';
+            tag.style.display = 'none';
+            return;
+          }
+          Object.assign(box.style, { display: 'block', left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+          tag.textContent = label;
+          tag.style.display = 'block';
+          // Above the element when there is room, otherwise just inside it.
+          const top = rect.y >= 24 ? rect.y - 22 : rect.y + 4;
+          tag.style.transform = `translate(${Math.max(4, rect.x)}px, ${Math.max(4, top)}px)`;
+          this.host?.setAttribute('data-highlight', label);
+        },
+        onPick: finish,
+      });
+      return picker.attach();
+    });
+  }
+
+  /** Draw any closed shape; resolves with its outline and bounding box. */
+  async selectFreeform(modes: SelectionKind[]): Promise<Lasso | null> {
+    const backdrop = this.mount('freeform', modes);
+    return await this.run((finish) => {
+      const lasso = new LassoSelector(backdrop, {
+        onDragStart: () => this.setState('drawing'),
+        onDragEnd: () => this.setState('armed'),
+        onMove: (x, y) => this.moveTip(x, y),
+        onClamped: (clamped) =>
+          this.bar?.setInstruction(clamped ? 'The selection stops at the edge of the screen' : ''),
+        onDone: finish,
+      });
+      return lasso.attach();
     });
   }
 

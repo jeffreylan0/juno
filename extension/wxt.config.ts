@@ -1,5 +1,6 @@
 import { defineConfig } from 'wxt';
 import { resolve } from 'node:path';
+import { BRAND, GECKO_ID } from './brand';
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -47,28 +48,37 @@ export default defineConfig({
   },
   manifest: ({ browser, manifestVersion }) => {
     const base = {
-      name: 'Selection AI',
-      short_name: 'Selection AI',
-      description:
-        'Select text, a box or a page element and ask Claude or ChatGPT about exactly that. Math, chemistry and physics render properly.',
+      // Name, description and titles live in brand.ts so a rename is one edit.
+      name: BRAND.name,
+      short_name: BRAND.shortName,
+      description: BRAND.description,
       // Permissions are kept to the store checklist: activeTab, scripting, storage, sidePanel.
       permissions: ['activeTab', 'scripting', 'storage', ...(browser === 'firefox' ? [] : ['sidePanel'])],
       host_permissions: [] as string[],
+      // Alt/Option+Shift+S is the one family free in Chrome, Edge and Firefox
+      // on both Windows and Mac (checked against each browser's published
+      // shortcut list); every Ctrl/Cmd+Shift letter is taken somewhere. It is
+      // bound to _execute_action, the browser's own "click the icon" command,
+      // so the shortcut behaves exactly like the icon: same user gesture, same
+      // activeTab grant, same panel opening. The per-mode commands have no
+      // default key; students can bind them. (Text used to ship Alt+Shift+A,
+      // but that is Chrome's own "focus inactive dialogs", so Chrome silently
+      // left it unassigned.)
       commands: {
-        'select-box': {
+        _execute_action: {
           suggested_key: { default: 'Alt+Shift+S', mac: 'Alt+Shift+S' },
-          description: 'Draw a box and ask about it',
+          description: `Start a selection, like clicking ${BRAND.iconName}`,
         },
-        'select-text': {
-          suggested_key: { default: 'Alt+Shift+A', mac: 'Alt+Shift+A' },
-          description: 'Ask about the current text selection',
-        },
+        'select-text': { description: 'Start a text selection' },
+        'select-box': { description: 'Start a box selection' },
+        'select-element': { description: 'Start an element selection' },
+        'select-freeform': { description: 'Start a freeform selection' },
       },
       // No default_popup: clicking the icon arms a selection straight away, so
       // the page is ready for input on the first click. Mode switching lives in
       // the overlay's hint.
       action: {
-        default_title: 'Selection AI — select and ask',
+        default_title: BRAND.actionTitle,
       },
       web_accessible_resources: [{ resources: ['reader.html'], matches: ['<all_urls>'] }],
     };
@@ -79,12 +89,12 @@ export default defineConfig({
         // Firefox reuses the sidepanel page as its sidebar.
         sidebar_action: {
           default_panel: 'sidepanel.html',
-          default_title: 'Selection AI',
+          default_title: BRAND.shortName,
           default_icon: 'icon/128.png',
         },
         browser_specific_settings: {
           gecko: {
-            id: 'selection-ai@amcpmn.org',
+            id: GECKO_ID,
             strict_min_version: '128.0',
           },
         },

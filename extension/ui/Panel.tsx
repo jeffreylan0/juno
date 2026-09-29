@@ -5,21 +5,24 @@
  * answer back into storage.
  *
  * Layout, top to bottom: the selection (exactly what the model gets), the
- * conversation, then the answer macros and a large question box. A fresh
- * selection puts the short default prompt in the box; Enter or Send asks it.
- * A macro fills the box with its own prompt and sends it straight away.
+ * conversation, then the answer macros with the model picker beside them, and
+ * a large question box. The box starts empty (or with the student's own
+ * default prompt); Enter or Send asks what is typed. A macro fills the box
+ * with its prompt and sends it straight away.
  *
  * Runs in the Chrome/Edge side panel, the Firefox sidebar, and (from week 12)
  * inside the Safari in-page overlay.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ModelRef, Plan } from '@shared/payload';
-import { MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
-import { getSettings, settingsItem, type Macro, type Settings } from '@/lib/storage';
+import { getKeys, getSettings, keysItem, settingsItem, type Keys, type Macro, type Settings } from '@/lib/storage';
+import { BRAND } from '@/brand';
 import { chatKey, getThread, selKey, type Chat, type Turn } from '@/lib/threads';
 import { isTransient, needsSettings } from '@/lib/providers/errors';
 import { Answer } from './Answer';
+import { ModelPicker } from './ModelPicker';
 import { SelectionCard } from './Selection';
+import { useShortcut } from './useShortcut';
 
 /** How long a macro's prompt shows in the box before it is sent. */
 const MACRO_FILL_MS = 140;
@@ -90,6 +93,8 @@ export function Panel() {
   const tabId = useCurrentTab();
   const { plan, chat } = useThread(tabId);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [keys, setKeys] = useState<Keys | null>(null);
+  const shortcut = useShortcut();
   /** Unsent drafts per tab, so switching tabs does not lose what you typed. */
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   /** Plans already prefilled, so a stored thread is not re-prefilled on every render. */
@@ -109,7 +114,9 @@ export function Panel() {
     // Clears the toolbar badge the background sets when it could not open us.
     void browser.runtime.sendMessage({ type: 'panel:ready' }).catch(() => {});
     void getSettings().then(setSettings);
+    void getKeys().then(setKeys);
     const unwatch = settingsItem.watch(() => void getSettings().then(setSettings));
+    const unwatchKeys = keysItem.watch(() => void getKeys().then(setKeys));
 
     // The bar's X closes everything. Chrome 141+ closes us with
     // sidePanel.close(); older browsers need the document to close itself.
@@ -124,6 +131,7 @@ export function Panel() {
     browser.runtime.onMessage.addListener(onMessage);
     return () => {
       unwatch();
+      unwatchKeys();
       browser.runtime.onMessage.removeListener(onMessage);
     };
   }, []);
@@ -136,9 +144,9 @@ export function Panel() {
     [tabId],
   );
 
-  // A fresh selection puts the short default prompt in the box, ready to send
-  // or overwrite. (Sending straight away, when settings ask for it, is the
-  // background's job.)
+  // A fresh selection clears the box to the default prompt (empty unless the
+  // student set one) and puts the cursor in it. (Sending straight away, when
+  // settings ask for it, is the background's job.)
   useEffect(() => {
     if (!plan || !settings || tabId === null || !askable) return;
     if (prefilled.current.has(plan.id) || started) return;
@@ -191,12 +199,17 @@ export function Panel() {
     if (tabId !== null) void browser.runtime.sendMessage({ type: 'chat:retry', tabId });
   }, [tabId]);
 
-  const placeholder = !plan ? 'Select something on the page first' : started ? 'Ask a follow-up…' : 'Ask about this selection…';
+  const placeholder = !plan
+    ? 'Select something on the page first'
+    : started
+      ? 'Ask a follow-up…'
+      : 'Ask about this selection…';
+  const canSend = askable && !!draft.trim();
 
   return (
     <div className="panel" data-tab={tabId ?? ''}>
       <header className="top">
-        <ModelChip settings={settings} />
+        <span className="brand">{BRAND.shortName}</span>
         <button type="button" className="icon" title="Settings" aria-label="Settings" onClick={() => browser.runtime.openOptionsPage()}>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="12" cy="12" r="3" />
@@ -217,8 +230,13 @@ export function Panel() {
       <div className="thread" ref={threadRef}>
         {!plan && (
           <div className="empty">
-            Nothing selected on this tab yet. Click the toolbar icon, or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>, then
-            select what you want to ask about.
+            Nothing selected on this tab yet. Click {BRAND.iconName}
+            {shortcut ? (
+              <>
+                {' '}or press <kbd>{shortcut}</kbd>
+              </>
+            ) : null}
+            , then select what you want to ask about.
           </div>
         )}
         {plan && <SelectionCard plan={plan} notice={notice} />}
@@ -242,9 +260,9 @@ export function Panel() {
       </div>
 
       <div className="ask">
-        {settings && settings.macros.length > 0 && (
+        <div className="ask-row">
           <div className="macros" role="toolbar" aria-label="Answer macros">
-            {settings.macros.map((m) => (
+            {settings?.macros.map((m) => (
               <button
                 key={m.id}
                 type="button"
@@ -257,12 +275,13 @@ export function Panel() {
               </button>
             ))}
           </div>
-        )}
+          {settings && <ModelPicker settings={settings} keys={keys} />}
+        </div>
         <form
           className={`composer${askable ? '' : ' off'}`}
           onSubmit={(e) => {
             e.preventDefault();
-            ask(draft);
+            if (canSend) ask(draft);
           }}
         >
           <textarea
@@ -276,20 +295,22 @@ export function Panel() {
               // Enter there picks a candidate, it is not "send".
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                ask(draft);
+                if (canSend) ask(draft);
               }
             }}
             rows={3}
             disabled={!askable}
           />
           <div className="composer-row">
-            <span className="composer-hint">Enter to send · Shift+Enter for a new line</span>
+            <span className="composer-hint">
+              Enter to send<span className="extra"> · Shift+Enter for a new line</span>
+            </span>
             {busy ? (
               <button type="button" className="send stop" onClick={stop}>
                 Stop
               </button>
             ) : (
-              <button type="submit" className="send" disabled={!askable}>
+              <button type="submit" className="send" disabled={!canSend}>
                 Send
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M12 19V5" />
@@ -334,30 +355,5 @@ function Usage({ model, usage, cached }: { model?: ModelRef; usage?: { inputToke
       {usage ? ` · ${usage.inputTokens}→${usage.outputTokens} tok` : ''}
       {usage?.costUsd !== undefined ? ` · $${usage.costUsd.toFixed(4)}` : ''}
     </div>
-  );
-}
-
-/** Who is answering, at a glance; a click opens settings to change it. */
-function ModelChip({ settings }: { settings: Settings | null }) {
-  if (!settings) return <span />;
-  const vendorName = settings.vendor === 'anthropic' ? 'Claude' : 'ChatGPT';
-  const label =
-    settings.provider === 'mock'
-      ? 'Mock answers'
-      : settings.provider === 'local'
-        ? `Local · ${settings.localModel}`
-        : settings.provider === 'gateway'
-          ? 'Hosted plan'
-          : settings.modelOverride
-            ? (MODEL_NAMES[settings.modelOverride.model] ?? settings.modelOverride.model)
-            : `${vendorName} · Auto`;
-  const title =
-    settings.provider === 'byok' && !settings.modelOverride
-      ? `${MODEL_NAMES[MODEL_TABLE[settings.vendor].small]} for text, ${MODEL_NAMES[MODEL_TABLE[settings.vendor].large]} for screenshots`
-      : 'Change in Settings';
-  return (
-    <button type="button" className="model" title={title} data-testid="model-chip" onClick={() => browser.runtime.openOptionsPage()}>
-      {label}
-    </button>
   );
 }

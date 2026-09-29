@@ -15,25 +15,31 @@ export const FIXTURE_ORIGIN = 'http://localhost:5174';
 export const test = base.extend<{ context: BrowserContext; extensionId: string; serviceWorker: Worker }>({
   // eslint-disable-next-line no-empty-pattern
   context: async ({}, use) => {
-    const userDataDir = mkdtempSync(join(tmpdir(), 'selection-ai-'));
-    const context = await chromium.launchPersistentContext(userDataDir, {
-      headless: true,
-      executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined,
-      args: [`--disable-extensions-except=${EXTENSION_PATH}`, `--load-extension=${EXTENSION_PATH}`],
-    });
-    await use(context);
-    await context.close();
+    // Now and then, under parallel load, Chromium starts the extension's
+    // worker before Playwright is attached and never reports it. A fresh
+    // launch fixes that; waiting longer does not.
+    for (let attempt = 1; ; attempt++) {
+      const userDataDir = mkdtempSync(join(tmpdir(), 'selection-ai-'));
+      const context = await chromium.launchPersistentContext(userDataDir, {
+        headless: true,
+        executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined,
+        args: [`--disable-extensions-except=${EXTENSION_PATH}`, `--load-extension=${EXTENSION_PATH}`],
+      });
+      if ((await findWorker(context, 10_000)) || attempt === 3) {
+        await use(context);
+        await context.close();
+        return;
+      }
+      await context.close();
+    }
   },
   serviceWorker: async ({ context }, use) => {
-    // Poll rather than waitForEvent: the event can fire between checking
-    // serviceWorkers() and starting to wait, and then it never comes.
-    const deadline = Date.now() + 20_000;
-    let sw: Worker | undefined;
-    while (!(sw = context.serviceWorkers()[0]) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    const sw = await findWorker(context, 10_000);
     if (!sw) throw new Error('the extension service worker never started');
     // Just after launch the worker exists before its globals and extension
     // bindings do (setTimeout and chrome.storage both come back undefined).
     // Tests that start by writing settings would race that.
+    const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
       const ready = await sw
         .evaluate(() => typeof setTimeout === 'function' && typeof chrome !== 'undefined' && !!chrome.storage?.local)
@@ -49,6 +55,17 @@ export const test = base.extend<{ context: BrowserContext; extensionId: string; 
 });
 
 export const expect = test.expect;
+
+/**
+ * The extension's worker, polled rather than awaited: the 'serviceworker'
+ * event can fire between checking serviceWorkers() and starting to wait.
+ */
+async function findWorker(context: BrowserContext, timeout: number): Promise<Worker | undefined> {
+  const deadline = Date.now() + timeout;
+  let sw: Worker | undefined;
+  while (!(sw = context.serviceWorkers()[0]) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+  return sw;
+}
 
 /**
  * Injects the content script into the tab showing `url` and starts a
@@ -96,7 +113,7 @@ export async function setSettings(sw: Worker, patch: Record<string, unknown>): P
     const { settings } = await chrome.storage.local.get('settings');
     // Current settings version (lib/storage.ts SETTINGS_VERSION): without it,
     // the migration treats these as old settings and resets changed defaults.
-    await chrome.storage.local.set({ settings: { ...(settings ?? {}), version: 2, ...p } });
+    await chrome.storage.local.set({ settings: { ...(settings ?? {}), version: 3, ...p } });
   }, patch);
   // The background caches settings; give its watcher a moment to catch up.
   await new Promise((r) => setTimeout(r, 150));

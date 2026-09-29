@@ -5,8 +5,10 @@
  * element selection cannot work — only a screenshot can.
  *
  * `reader.html` re-renders the same file with PDF.js and a real text layer,
- * which puts all three modes back on the table.
+ * which puts every mode back on the table.
  */
+
+import type { SelectionKind } from '@shared/payload';
 
 export interface PdfContext {
   /** True when the current document is a browser PDF viewer. */
@@ -33,10 +35,13 @@ export function detectPdf(doc: Document = document, href?: string): PdfContext {
   };
 }
 
-/** Modes that actually work on the current document. */
-export function availableModes(pdf: PdfContext): ('box' | 'text' | 'element')[] {
-  // Element selection lands in week 4; it is listed but disabled in the chips.
-  return pdf.isPdf ? ['box'] : ['box', 'text'];
+/**
+ * Modes that actually work on the current document. In the browser's PDF
+ * viewer only screenshot-based modes do: box and freeform. Text and element
+ * both need a DOM, which the plugin does not have.
+ */
+export function availableModes(pdf: PdfContext): SelectionKind[] {
+  return pdf.isPdf ? ['box', 'freeform'] : ['box', 'text', 'element', 'freeform'];
 }
 
 export function readerUrlFor(pdfUrl: string, runtimeUrl: (path: string) => string): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fitWithin, toDeviceRect } from '@/lib/capture';
+import { fitWithin, pathToCrop, toDeviceRect } from '@/lib/capture';
 
 describe('capture geometry', () => {
   it('scales CSS pixels by devicePixelRatio', () => {
@@ -24,5 +24,15 @@ describe('capture geometry', () => {
   it('downscales only when the longest edge exceeds the limit', () => {
     expect(fitWithin(800, 600)).toEqual({ width: 800, height: 600 });
     expect(fitWithin(3136, 1000, 1568)).toEqual({ width: 1568, height: 500 });
+  });
+});
+
+describe('freeform masking geometry', () => {
+  it('maps the outline into the crop, at device pixels and after downscaling', () => {
+    // A 100×50 CSS box at (10, 20) on a 2× screen → 200×100 device px, shown at half size.
+    const src = toDeviceRect({ x: 10, y: 20, width: 100, height: 50 }, 2, { width: 2000, height: 2000 });
+    const out = { width: 100, height: 50 };
+    const pts = pathToCrop([{ x: 10, y: 20 }, { x: 110, y: 20 }, { x: 60, y: 70 }], 2, src, out);
+    expect(pts).toEqual([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 50, y: 50 }]);
   });
 });

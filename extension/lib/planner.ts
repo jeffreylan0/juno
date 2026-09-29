@@ -2,13 +2,14 @@
  * Builds a Plan from a selection: exactly what the student selected, nothing
  * the extension read off the page on its own.
  *
- *   box     → the screenshot crop, and only the crop. Reading it (OCR, maths,
- *             tables) is the model's job; page text scraped from under the box
- *             came out garbled on real layouts and duplicated what the image
- *             already shows.
- *   text    → the selected text, and only the text.
- *   element → the element's text when it has some, otherwise its crop
- *             (element selection is the next feature; this is a placeholder).
+ *   box      → the screenshot crop, and only the crop. Reading it (OCR,
+ *              maths, tables) is the model's job; page text scraped from under
+ *              the box came out garbled on real layouts and duplicated what
+ *              the image already shows.
+ *   element  → the same: a crop snapped to the element's edges.
+ *   freeform → the crop of the shape's bounding box, with everything outside
+ *              the outline blanked before it leaves the browser (capture.ts).
+ *   text     → the selected text, and only the text.
  *
  * This departs from the plan's "cheapest exact form" planner for box
  * selections, by the product owner's call. The eval keeps a `planner` route
@@ -35,11 +36,11 @@ export function partsFor(input: PlanInput): Part[] {
 
   switch (selection.kind) {
     case 'box':
+    case 'element':
+    case 'freeform':
       return image('user');
     case 'text':
       return text ? [{ kind: 'text', text, source: 'selection' }] : [];
-    case 'element':
-      return text ? [{ kind: 'text', text, source: 'element' }] : image('fallback');
   }
 }
 
@@ -56,7 +57,8 @@ export function buildPlan(input: PlanInput, id = crypto.randomUUID()): Plan {
       kind: input.selection.kind,
       rect: input.selection.rect,
       devicePixelRatio: input.selection.devicePixelRatio,
-      label: input.selection.label,
+      ...(input.selection.label ? { label: input.selection.label } : {}),
+      ...(input.selection.clipped ? { clipped: true } : {}),
     },
     page: input.selection.page,
     route: chooseRoute(base),

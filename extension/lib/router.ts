@@ -14,6 +14,29 @@ export const MODEL_TABLE: Record<Exclude<Vendor, 'local' | 'mock'>, Record<Route
   openai: { small: 'gpt-6-luna', large: 'gpt-6-sol' },
 };
 
+/**
+ * The models offered in the panel's picker, cheapest first. Any other model a
+ * key can use is available in settings after a key check.
+ */
+export const MAJOR_MODELS: Record<'anthropic' | 'openai', string[]> = {
+  anthropic: ['claude-haiku-4-5-20251001', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1'],
+  openai: ['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra'],
+};
+
+/**
+ * Short names for the panel's picker, which shares a row with the macros in
+ * a side panel that can be ~340 px wide. The vendor is the option group.
+ */
+export const SHORT_NAMES: Record<string, string> = {
+  'claude-haiku-4-5-20251001': 'Haiku 4.5',
+  'claude-sonnet-5-5': 'Sonnet 5.5',
+  'claude-opus-5-5': 'Opus 5.5',
+  'claude-fable-5-1': 'Fable 5.1',
+  'gpt-6-luna': 'GPT-6 Luna',
+  'gpt-6-sol': 'GPT-6 Sol',
+  'gpt-6-astra': 'GPT-6 Astra',
+};
+
 /** Friendly names for the model table, used where the student sees a choice. */
 export const MODEL_NAMES: Record<string, string> = {
   'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',

@@ -49,11 +49,11 @@ test('with a key, the answer streams from Claude and renders its maths', async (
   const url = `${FIXTURE_ORIGIN}/katex.html`;
   await page.goto(url);
   const panel = await openPanel(context, extensionId, await tabIdFor(serviceWorker, url));
-  await expect(panel.getByTestId('model-chip')).toHaveText('Claude · Auto');
+  await expect(panel.getByTestId('model-picker')).toHaveValue('anthropic:auto');
   await expect(panel.getByTestId('mock-note')).toHaveCount(0);
   await selectProblem(page, serviceWorker, panel, url);
 
-  await panel.locator('.composer .send').click();
+  await panel.locator('.macros .macro', { hasText: 'Explain' }).click();
   const answer = panel.locator('.turn.assistant').first();
   await expect(answer).toHaveAttribute('data-streaming', 'false', { timeout: 15_000 });
   await expect(answer.locator('.what-i-read')).toContainText('the integral of x squared');
@@ -71,6 +71,7 @@ test('with a key, the answer streams from Claude and renders its maths', async (
   // The screenshot and the question, and nothing scraped from the page.
   expect(content.map((b) => b.type)).toEqual(['image', 'text']);
   expect(content[1]!.text).toContain('Question: Explain this step by step.');
+  expect(content[1]!.text).toContain('screenshot of the area the student selected');
   expect(content[1]!.text).not.toContain('Evaluate the integral');
 });
 
@@ -107,6 +108,7 @@ test('a rejected key says so and offers settings; an overload offers a retry tha
   const panel = await openPanel(context, extensionId, tabId);
   await selectProblem(page, serviceWorker, panel, url);
 
+  await panel.locator('.composer textarea').fill('What is this?');
   await panel.locator('.composer .send').click();
   const error = panel.locator('.turn.assistant .error');
   await expect(error).toContainText('Anthropic rejected the API key. Check it in Settings.');
@@ -176,4 +178,36 @@ test('the settings page checks a key for free and switches answers to it', async
       }),
     )
     .toEqual({ provider: 'byok', vendor: 'anthropic', key: 'sk-ant-good' });
+});
+
+test('the model picker beside the macros switches who answers, without a trip to settings', async ({ context, extensionId, serviceWorker }) => {
+  const bodies: Record<string, unknown>[] = [];
+  await context.route(ANTHROPIC, async (route: Route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
+    bodies.push(route.request().postDataJSON() as Record<string, unknown>);
+    await route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'text/event-stream' }, body: ANSWER });
+  });
+  // An Anthropic key but no OpenAI key.
+  await serviceWorker.evaluate(async () => chrome.storage.local.set({ keys: { anthropic: 'sk-ant-test', openai: '', session: '' } }));
+
+  const page = await context.newPage();
+  const url = `${FIXTURE_ORIGIN}/katex.html`;
+  await page.goto(url);
+  const panel = await openPanel(context, extensionId, await tabIdFor(serviceWorker, url));
+  const picker = panel.getByTestId('model-picker');
+  // Nothing connected yet: placeholder answers.
+  await expect(picker).toHaveValue('placeholder');
+  // Every major model is offered; ChatGPT's wait for a key.
+  await expect(picker.locator('option[value="anthropic:claude-opus-5-5"]')).toHaveJSProperty('disabled', false);
+  await expect(picker.locator('option[value="anthropic:claude-fable-5-1"]')).toHaveText('Fable 5.1');
+  await expect(picker.locator('option[value="openai:gpt-6-sol"]')).toHaveJSProperty('disabled', true);
+  await expect(picker.locator('option[value="openai:gpt-6-sol"]')).toHaveText('GPT-6 Sol — add key');
+  await expect(picker.locator('option[value="anthropic:auto"]')).toHaveText('Claude Auto');
+
+  await picker.selectOption('anthropic:claude-opus-5-5');
+  await expect(panel.getByTestId('mock-note')).toHaveCount(0);
+  await selectProblem(page, serviceWorker, panel, url);
+  await panel.locator('.macros .macro', { hasText: 'Hint' }).click();
+  await expect(panel.locator('.turn.assistant').first()).toContainText('Answer: 1/3', { timeout: 15_000 });
+  expect(bodies[0]!.model).toBe('claude-opus-5-5');
 });

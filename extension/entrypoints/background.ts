@@ -20,7 +20,16 @@ import { isRuntimeMessage, type RuntimeMessage, type SelectionDoneMsg, type Star
 import { buildPlan } from '@/lib/planner';
 import { callModel, type ProviderContext } from '@/lib/providers';
 import { testKey } from '@/lib/providers/byok';
-import { DEFAULT_SETTINGS, getKeys, getSettings, settingsItem, shouldAutoSend, type Settings } from '@/lib/storage';
+import {
+  DEFAULT_SETTINGS,
+  GATEWAY_URL,
+  fallbackQuestion,
+  getKeys,
+  getSettings,
+  settingsItem,
+  shouldAutoSend,
+  type Settings,
+} from '@/lib/storage';
 import {
   clearThread,
   getThread,
@@ -33,6 +42,13 @@ import {
 } from '@/lib/threads';
 
 const CONTENT_SCRIPT = 'content-scripts/content.js';
+
+const COMMAND_KINDS: Record<string, SelectionKind> = {
+  'select-box': 'box',
+  'select-text': 'text',
+  'select-element': 'element',
+  'select-freeform': 'freeform',
+};
 /** How often a streaming answer is written back to the thread. */
 const STREAM_SAVE_MS = 120;
 
@@ -81,8 +97,10 @@ export default defineBackground(() => {
     void startSelection(tab?.id, settings.defaultSelectionKind);
   });
 
+  // The main shortcut is bound to _execute_action, which arrives as
+  // action.onClicked above. These are the optional per-mode shortcuts.
   browser.commands.onCommand.addListener((command, tab) => {
-    const kind: SelectionKind | null = command === 'select-box' ? 'box' : command === 'select-text' ? 'text' : null;
+    const kind = COMMAND_KINDS[command];
     if (!kind) return;
     arm(tab?.id);
     void startSelection(tab?.id, kind);
@@ -312,7 +330,7 @@ async function handleSelectionDone(msg: SelectionDoneMsg, tab: chrome.tabs.Tab |
 
   let capture: CaptureResult | undefined;
   let notice: string | undefined;
-  if (msg.kind === 'box' || (msg.kind === 'element' && !msg.text)) {
+  if (msg.kind !== 'text') {
     try {
       capture = await captureWithRetry(tab?.windowId, msg);
     } catch (err) {
@@ -329,7 +347,7 @@ async function handleSelectionDone(msg: SelectionDoneMsg, tab: chrome.tabs.Tab |
   await startThread(tabId, plan, notice);
 
   if (panelPending) await promptForPanel(tabId);
-  if (!notice && plan.parts.length > 0 && shouldAutoSend(current, msg.kind)) void sendChat(tabId, current.defaultPrompt);
+  if (!notice && plan.parts.length > 0 && shouldAutoSend(current, msg.kind)) void sendChat(tabId, fallbackQuestion(current));
 }
 
 /**
@@ -338,11 +356,11 @@ async function handleSelectionDone(msg: SelectionDoneMsg, tab: chrome.tabs.Tab |
  */
 async function captureWithRetry(windowId: number | undefined, msg: SelectionDoneMsg): Promise<CaptureResult> {
   try {
-    return await captureRect(windowId, msg.rect, msg.devicePixelRatio);
+    return await captureRect(windowId, msg.rect, msg.devicePixelRatio, msg.path);
   } catch (err) {
     if (!/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(String((err as Error)?.message ?? err))) throw err;
     await new Promise((r) => setTimeout(r, 600));
-    return await captureRect(windowId, msg.rect, msg.devicePixelRatio);
+    return await captureRect(windowId, msg.rect, msg.devicePixelRatio, msg.path);
   }
 }
 
@@ -373,7 +391,7 @@ async function sendChat(tabId: number, question: string): Promise<void> {
       ? { ...chat, turns: chat.turns.map(settle) }
       : { planId: plan.id, mode: plan.mode, turns: [], updatedAt: Date.now() };
   const history = historyOf(base.turns);
-  const q = question.trim() || settings.defaultPrompt.trim() || 'Explain this.';
+  const q = question.trim() || fallbackQuestion(settings);
   const user: Turn = { id: crypto.randomUUID(), role: 'user', text: q };
   const answer: Turn = { id: crypto.randomUUID(), role: 'assistant', text: '', streaming: true };
   const thread: Chat = { ...base, turns: [...base.turns, user, answer] };
@@ -396,7 +414,7 @@ async function sendChat(tabId: number, question: string): Promise<void> {
     const ctx: ProviderContext = {
       fetch: globalThis.fetch.bind(globalThis),
       keys,
-      settings: current,
+      settings: { ...current, gatewayUrl: GATEWAY_URL },
       cache: new AreaCacheStore(browser.storage.local),
       signal: controller.signal,
     };

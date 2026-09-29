@@ -120,8 +120,34 @@ export class SelectionController {
       return;
     }
 
-    // 'element' arrives in week 4 (select-element.ts).
-    this.cancel();
+    if (kind === 'freeform') {
+      const armed = this.overlay.selectFreeform(this.modes);
+      if (this.pdf.isPdf) this.offerReader();
+      const lasso = await armed;
+      if (!lasso) return void (current() && this.cancel());
+      this.commit('freeform');
+      await nextPaint();
+      const done: SelectionDoneMsg = { type: 'selection:done', kind: 'freeform', rect: lasso.rect, path: lasso.path, devicePixelRatio, page };
+      await browser.runtime.sendMessage(done);
+      return;
+    }
+
+    // element
+    const picked = await this.overlay.selectElement(this.modes);
+    if (!picked) return void (current() && this.cancel());
+    // The picking click is the gesture that can open the panel.
+    this.commit('element');
+    await nextPaint();
+    const done: SelectionDoneMsg = {
+      type: 'selection:done',
+      kind: 'element',
+      rect: picked.rect,
+      label: picked.label,
+      clipped: picked.clipped,
+      devicePixelRatio,
+      page,
+    };
+    await browser.runtime.sendMessage(done);
   }
 
   private async adjustBox(): Promise<boolean> {

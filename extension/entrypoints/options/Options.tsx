@@ -8,7 +8,9 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { DEFAULT_MACROS, DEFAULT_PROMPT } from '@shared/prompts';
+import { BRAND } from '@/brand';
 import { MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
+import { openShortcutSettings, useShortcut } from '@/ui/useShortcut';
 import type { KeyModel, KeyTestResult } from '@/lib/providers/byok';
 import {
   DEFAULT_SETTINGS,
@@ -48,15 +50,15 @@ const PANEL: { id: PanelOpen; label: string; help: string }[] = [
   },
   {
     id: 'on-click',
-    label: 'When I click the toolbar icon',
+    label: `When I click ${BRAND.iconName}`,
     help: 'Opens at once, so the last answer is in view — but it narrows the page you are selecting from.',
   },
 ];
 
 const SEND: { id: SendBehavior; label: string; help: string }[] = [
   { id: 'prefill', label: 'Put the default prompt in the box and wait', help: 'Press Enter or a macro to ask. Nothing is spent until you do.' },
-  { id: 'auto', label: 'Ask the default prompt straight away', help: 'Fastest: select, read. Every selection is a paid call.' },
-  { id: 'auto-box', label: 'Ask straight away for boxes only', help: 'Screenshots go straight out; text selections wait for you.' },
+  { id: 'auto', label: 'Ask straight away', help: 'Fastest: select, read. Asks the default prompt, or the first macro if that is empty. Every selection is a paid call.' },
+  { id: 'auto-box', label: 'Ask straight away for screenshots only', help: 'Box, Freeform and Element go straight out; text selections wait for you.' },
 ];
 
 type TestState = { state: 'idle' } | { state: 'testing' } | KeyTestResult;
@@ -71,6 +73,7 @@ export function Options() {
   const [loaded, setLoaded] = useState(false);
   const [tests, setTests] = useState<Record<Vendor, TestState>>({ anthropic: { state: 'idle' }, openai: { state: 'idle' } });
   const [models, setModels] = useState<Partial<Record<Vendor, KeyModel[]>>>({});
+  const shortcut = useShortcut();
 
   useEffect(() => {
     void Promise.all([getSettings(), getKeys(), browser.storage.local.get('models')]).then(([s, k, m]) => {
@@ -162,10 +165,15 @@ export function Options() {
 
   return (
     <main className="options">
-      <h1>Selection AI</h1>
+      <h1>{BRAND.name}</h1>
       <p className="lede">
-        Click the toolbar icon and a selection starts right away. Switch between box and text from the chips on screen, or
-        press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> and <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>.
+        Click {BRAND.iconName}
+        {shortcut ? (
+          <>
+            {' '}or press <kbd>{shortcut}</kbd>
+          </>
+        ) : null}{' '}
+        and a selection starts right away. Switch between Box, Freeform, Element and Text from the chips on screen.
       </p>
 
       <section>
@@ -257,15 +265,29 @@ export function Options() {
       <section>
         <h2>Selecting</h2>
         <label>
-          What the toolbar icon starts
+          What {BRAND.iconName} starts
           <select
             value={settings.defaultSelectionKind}
             onChange={(e) => setSettings({ ...settings, defaultSelectionKind: e.target.value as Settings['defaultSelectionKind'] })}
           >
-            <option value="box">Box — drag around anything</option>
+            <option value="box">Box — drag a rectangle</option>
+            <option value="freeform">Freeform — draw any shape</option>
+            <option value="element">Element — pick a paragraph, table, figure…</option>
             <option value="text">Text — select text on the page</option>
           </select>
         </label>
+        <div className="field" data-testid="shortcuts">
+          <span className="field-label">Keyboard shortcuts</span>
+          <span className="key-row shortcut-row">
+            <span>
+              Start a selection: <kbd>{shortcut || 'not set'}</kbd>
+              <small className="muted"> · each mode can have its own too</small>
+            </span>
+            <button type="button" className="secondary" onClick={openShortcutSettings}>
+              Change…
+            </button>
+          </span>
+        </div>
         <label className="check">
           <input type="checkbox" checked={settings.adjustBox} onChange={(e) => setSettings({ ...settings, adjustBox: e.target.checked })} />
           <span>
@@ -288,8 +310,8 @@ export function Options() {
         </label>
         <p className="help">{PANEL.find((p) => p.id === settings.panelOpen)?.help} The red ✕ on the bar closes the panel too.</p>
         <p className="help">
-          On a PDF opened in the browser's own viewer, only box selection is possible. Selection AI offers to reopen the file
-          in its own reader, where all modes work.
+          On a PDF opened in the browser's own viewer, only Box and Freeform work. {BRAND.name} offers to reopen the file in its
+          own reader, where every mode works.
         </p>
       </section>
 
@@ -309,10 +331,13 @@ export function Options() {
             maxLength={120}
             data-testid="default-prompt"
             onChange={(e) => setSettings({ ...settings, defaultPrompt: e.target.value })}
-            placeholder={DEFAULT_PROMPT}
+            placeholder="Empty — the box starts blank"
           />
         </label>
-        <p className="help">Sits in the question box when a selection lands. Keep it short; one line reads best.</p>
+        <p className="help">
+          Optional. Put here what you ask most, and it will be waiting in the box when a selection lands. Empty by default:
+          the macros do the asking.
+        </p>
         <label>
           When a selection lands
           <select value={settings.sendBehavior} onChange={(e) => setSettings({ ...settings, sendBehavior: e.target.value as SendBehavior })}>

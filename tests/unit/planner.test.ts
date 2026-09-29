@@ -50,3 +50,19 @@ describe('planner: only the selection', () => {
     expect(plan.parts).toEqual([{ kind: 'text', text: 'F = ma', source: 'selection' }]);
   });
 });
+
+describe('planner: element and freeform', () => {
+  const capture = { dataUrl: 'data:image/png;base64,AA', width: 300, height: 120 };
+
+  it('sends an element as its screenshot, labelled, and flags a clipped one', () => {
+    const plan = buildPlan({ selection: { ...box, kind: 'element', label: 'Table', clipped: true }, mode: 'ask', capture });
+    expect(plan.parts.map((p) => p.kind)).toEqual(['image']);
+    expect(plan.selection).toMatchObject({ kind: 'element', label: 'Table', clipped: true });
+  });
+
+  it('sends a freeform shape as its (masked) screenshot', () => {
+    const plan = buildPlan({ selection: { ...box, kind: 'freeform', path: [{ x: 1, y: 1 }, { x: 9, y: 1 }, { x: 5, y: 9 }] }, mode: 'ask', capture });
+    expect(plan.parts.map((p) => p.kind)).toEqual(['image']);
+    expect(plan.route).toBe('large');
+  });
+});

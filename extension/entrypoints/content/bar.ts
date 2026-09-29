@@ -14,6 +14,8 @@
  */
 import type { SelectionKind } from '@shared/payload';
 import { getSettings, settingsItem, type PanelOpen, type SendBehavior, type Settings } from '@/lib/storage';
+import { BRAND } from '@/brand';
+import { KIND_ICON as ICONS, KIND_LABEL, KIND_ORDER } from '@/lib/kinds';
 import { UI_ATTR } from './scroll';
 
 export const BAR_STYLE = `
@@ -103,13 +105,8 @@ export const ADJUST_HINT = 'Drag the edges to adjust · Enter to ask';
 const MODE_HINT: Record<SelectionKind, string> = {
   box: 'Drag to select an area',
   text: 'Select text on the page',
-  element: 'Click an element to select it',
-};
-
-const ICONS: Record<SelectionKind, string> = {
-  box: '<rect x="3" y="5" width="18" height="14" rx="2" stroke-dasharray="3 2.4"/>',
-  text: '<path d="M5 6.5V5h14v1.5"/><path d="M12 5v14"/><path d="M9 19h6"/>',
-  element: '<path d="M4 4h16v6H4z"/><path d="M4 14h7v6H4z"/><path d="M14 14h6v6h-6z"/>',
+  element: 'Hover and click to pick · ↑ ↓ to widen or narrow',
+  freeform: 'Draw around what you want to ask about',
 };
 
 const GEAR =
@@ -245,7 +242,7 @@ export class Bar {
   private buildChips(): HTMLElement {
     const wrap = document.createElement('div');
     wrap.className = 'chips';
-    for (const kind of ['box', 'text', 'element'] as SelectionKind[]) {
+    for (const kind of KIND_ORDER) {
       const available = this.modes.includes(kind);
       const chip = document.createElement('button');
       chip.type = 'button';
@@ -280,9 +277,10 @@ export class Bar {
   }
 
   /**
-   * The quick settings. Deliberately the ones worth changing mid-task; keys,
-   * prompts and blocked sites live on the options page, both because they need
-   * more room and because this DOM belongs to the page.
+   * The quick settings: only how selecting works, since that is what the bar
+   * is for. Who answers is picked in the panel, next to the macros; keys,
+   * macros and blocked sites live on the settings page, both because they
+   * need more room and because this DOM belongs to the page.
    */
   private async buildSettings(): Promise<void> {
     const settings = await getSettings();
@@ -292,8 +290,16 @@ export class Bar {
     };
 
     this.settingsInner.append(
-      field('Selection mode', [['box', 'Box — drag around anything'], ['text', 'Text — select text on the page']], settings.defaultSelectionKind, (v) =>
-        void save({ defaultSelectionKind: v as SelectionKind }),
+      field(
+        'Selection mode',
+        [
+          ['box', 'Box — drag a rectangle'],
+          ['freeform', 'Freeform — draw any shape'],
+          ['element', 'Element — pick a paragraph, table, figure…'],
+          ['text', 'Text — select text on the page'],
+        ],
+        settings.defaultSelectionKind,
+        (v) => void save({ defaultSelectionKind: v as SelectionKind }),
       ),
       field(
         'After drawing a box',
@@ -308,31 +314,10 @@ export class Bar {
         'Open the answer panel',
         [
           ['on-selection', 'When a selection is made'],
-          ['on-click', 'When I click the toolbar icon'],
+          ['on-click', `When I click ${BRAND.iconName}`],
         ],
         settings.panelOpen,
         (v) => void save({ panelOpen: v as PanelOpen }),
-      ),
-      field(
-        'When a selection lands',
-        [
-          ['prefill', 'Fill the box and wait'],
-          ['auto', 'Send straight away'],
-          ['auto-box', 'Send box selections only'],
-        ],
-        settings.sendBehavior,
-        (v) => void save({ sendBehavior: v as SendBehavior }),
-      ),
-      field(
-        'Answered by',
-        [
-          ['mock', 'Mock — replay, no spend'],
-          ['local', 'Local — Ollama'],
-          ['byok', 'My own API key'],
-          ['gateway', 'Hosted plan'],
-        ],
-        settings.provider,
-        (v) => void save({ provider: v as Settings['provider'] }),
       ),
     );
 
@@ -364,12 +349,12 @@ function field(name: string, options: [string, string][], value: string, onChang
 }
 
 function unavailableTitle(kind: SelectionKind): string {
-  // Element selection is built next; say so rather than implying a fault.
-  if (kind === 'element') return 'Element selection — coming next';
+  // Only the browser's own PDF viewer takes modes away: it has no DOM to read.
+  if (kind === 'text' || kind === 'element') return `${label(kind)} selection needs the page's text; open this PDF in the reader`;
   return `${label(kind)} selection is not available here`;
 }
 
 function label(kind: SelectionKind): string {
-  return kind[0]!.toUpperCase() + kind.slice(1);
+  return KIND_LABEL[kind];
 }
 

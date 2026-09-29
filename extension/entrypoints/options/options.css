@@ -60,6 +60,7 @@ h3 { font-size: 13px; margin: 8px 0 0; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .key-row { display: flex; gap: 8px; }
 .key-row input { flex: 1; min-width: 0; }
+.shortcut-row { align-items: center; justify-content: space-between; }
 .help.ok { color: #15803d; }
 .help.bad { color: #b91c1c; }
 @media (prefers-color-scheme: dark) { .help.ok { color: #86efac; } .help.bad { color: #fca5a5; } }
@@ -81,3 +82,4 @@ button.primary:disabled, button.secondary:disabled { opacity: .5; cursor: defaul
 footer { margin-top: 24px; display: flex; align-items: center; gap: 12px; }
 footer button { padding: 9px 18px; }
 .saved { color: var(--muted); }
+.muted { color: var(--muted); }
