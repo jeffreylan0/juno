@@ -195,9 +195,11 @@ test('the gear expands the bar upwards, between the controls and the notices', a
 
   await bar.locator('.gear').click();
   await expect(settings).toHaveClass(/open/);
-  // Only how selecting works; who answers is picked in the panel.
-  await expect(settings.locator('select')).toHaveCount(3);
+  // Only how selecting works; who answers is picked in the panel, and the
+  // mode is whatever chip was used last, so neither is a setting here.
+  await expect(settings.locator('select')).toHaveCount(2);
   await expect(settings).not.toContainText('Answered by');
+  await expect(settings).not.toContainText('Selection mode');
   await expect(settings).toContainText('After drawing a box');
   await expect(settings).toContainText('Open the answer panel');
   await settled(page, BAR);
@@ -402,4 +404,20 @@ test('the main shortcut is the icon\'s own shortcut, Alt+Shift+S', async ({ serv
   const names = commands.map((c) => c.name).sort();
   expect(names).toEqual(['_execute_action', 'select-box', 'select-element', 'select-freeform', 'select-text']);
   for (const c of commands.filter((c) => c.name !== '_execute_action')) expect(c.shortcut, c.name).toBe('');
+});
+
+test('the icon starts the mode last picked from the chips', async ({ context, serviceWorker }) => {
+  const page = await context.newPage();
+  await armed(serviceWorker, page);
+  await expect(page.locator(`${BAR} .chip[data-kind="box"]`)).toHaveAttribute('aria-pressed', 'true');
+
+  await page.locator(`${BAR} .chip[data-kind="element"]`).click();
+  await expect(page.locator(`${BAR} .chip[data-kind="element"]`)).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('Escape');
+  await expect(page.locator(OVERLAY)).toHaveCount(0);
+
+  // Next time, the icon picks up where the student left off.
+  await expect.poll(async () => serviceWorker.evaluate(async () => (await chrome.storage.local.get('lastSelectionKind')).lastSelectionKind)).toBe('element');
+  await clickToolbar(serviceWorker, `${FIXTURE_ORIGIN}/text.html`);
+  await expect(page.locator(`${BAR} .chip[data-kind="element"]`)).toHaveAttribute('aria-pressed', 'true', { timeout: 10_000 });
 });

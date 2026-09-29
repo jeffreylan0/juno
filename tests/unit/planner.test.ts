@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPlan } from '@/lib/planner';
+import { buildPlan, normaliseOutline } from '@/lib/planner';
 import type { SelectionDoneMsg } from '@/lib/messages';
 
 const box: SelectionDoneMsg = {
@@ -64,5 +64,24 @@ describe('planner: element and freeform', () => {
     const plan = buildPlan({ selection: { ...box, kind: 'freeform', path: [{ x: 1, y: 1 }, { x: 9, y: 1 }, { x: 5, y: 9 }] }, mode: 'ask', capture });
     expect(plan.parts.map((p) => p.kind)).toEqual(['image']);
     expect(plan.route).toBe('large');
+  });
+});
+
+describe('freeform outline for the panel', () => {
+  it('is stored relative to the selection, 0 to 1, clamped', () => {
+    const rect = { x: 100, y: 50, width: 200, height: 100 };
+    expect(normaliseOutline([{ x: 100, y: 50 }, { x: 300, y: 100 }, { x: 200, y: 160 }], rect)).toEqual([
+      { x: 0, y: 0 },
+      { x: 1, y: 0.5 },
+      { x: 0.5, y: 1 },
+    ]);
+  });
+
+  it('rides along with a freeform plan only', () => {
+    const capture = { dataUrl: 'data:image/png;base64,AA', width: 10, height: 10 };
+    const path = [{ x: 10, y: 10 }, { x: 210, y: 10 }, { x: 110, y: 110 }];
+    const free = buildPlan({ selection: { ...box, kind: 'freeform', rect: { x: 10, y: 10, width: 200, height: 100 }, path }, mode: 'ask', capture });
+    expect(free.selection.outline).toHaveLength(3);
+    expect(buildPlan({ selection: { ...box, path }, mode: 'ask', capture }).selection.outline).toBeUndefined();
   });
 });

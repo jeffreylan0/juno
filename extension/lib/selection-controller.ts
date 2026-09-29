@@ -10,7 +10,7 @@ import { Overlay, type OverlayHost } from '@/entrypoints/content/overlay';
 import { showToast } from '@/entrypoints/content/toast';
 import { availableModes, detectPdf, readerUrlFor, type PdfContext } from './pdf-detect';
 import type { SelectionCancelMsg, SelectionCommittedMsg, SelectionDoneMsg } from './messages';
-import { getSettings } from './storage';
+import { getSettings, lastKindItem } from './storage';
 
 export interface SelectionControllerOptions {
   /** Invalidation hook; the content script has one, the reader does not. */
@@ -33,7 +33,11 @@ export class SelectionController {
     this.pdf = detectPdf(doc);
     this.modes = availableModes(this.pdf);
     this.overlay = new Overlay(opts.host ?? { onInvalidated: () => {} }, {
-      onModeChange: (kind) => void this.start(kind),
+      onModeChange: (kind) => {
+        // The icon starts wherever the student left off next time.
+        void lastKindItem.setValue(kind).catch(() => {});
+        void this.start(kind);
+      },
       onClose: () => (this.closing = true),
     });
   }

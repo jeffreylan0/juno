@@ -291,17 +291,6 @@ export class Bar {
 
     this.settingsInner.append(
       field(
-        'Selection mode',
-        [
-          ['box', 'Box — drag a rectangle'],
-          ['freeform', 'Freeform — draw any shape'],
-          ['element', 'Element — pick a paragraph, table, figure…'],
-          ['text', 'Text — select text on the page'],
-        ],
-        settings.defaultSelectionKind,
-        (v) => void save({ defaultSelectionKind: v as SelectionKind }),
-      ),
-      field(
         'After drawing a box',
         [
           ['send', 'Send it as soon as I let go'],

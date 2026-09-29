@@ -15,7 +15,7 @@
  * selections, by the product owner's call. The eval keeps a `planner` route
  * (eval/lib.ts) so the text-extraction idea can still be measured for Gate A.
  */
-import { estimateTokens, type Mode, type Part, type Plan } from '@shared/payload';
+import { estimateTokens, type Mode, type Part, type Plan, type Point, type Rect } from '@shared/payload';
 import type { SelectionDoneMsg } from './messages';
 import { chooseRoute } from './router';
 import type { CaptureResult } from './capture';
@@ -44,6 +44,14 @@ export function partsFor(input: PlanInput): Part[] {
   }
 }
 
+/** A freeform outline relative to its bounding rect, 0..1, to four decimals. */
+export function normaliseOutline(path: Point[], rect: Rect): Point[] {
+  const w = rect.width || 1;
+  const h = rect.height || 1;
+  const r = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 1e4) / 1e4;
+  return path.map((p) => ({ x: r((p.x - rect.x) / w), y: r((p.y - rect.y) / h) }));
+}
+
 export function buildPlan(input: PlanInput, id = crypto.randomUUID()): Plan {
   const parts = partsFor(input);
   const base = { parts, mode: input.mode, question: input.question };
@@ -59,6 +67,9 @@ export function buildPlan(input: PlanInput, id = crypto.randomUUID()): Plan {
       devicePixelRatio: input.selection.devicePixelRatio,
       ...(input.selection.label ? { label: input.selection.label } : {}),
       ...(input.selection.clipped ? { clipped: true } : {}),
+      ...(input.selection.kind === 'freeform' && input.selection.path?.length
+        ? { outline: normaliseOutline(input.selection.path, input.selection.rect) }
+        : {}),
     },
     page: input.selection.page,
     route: chooseRoute(base),

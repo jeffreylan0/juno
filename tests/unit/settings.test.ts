@@ -16,7 +16,8 @@ const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTI
 
 describe('settings defaults', () => {
   it('arms a box that goes to the panel on release, costs nothing, and waits before sending', () => {
-    expect(DEFAULT_SETTINGS.defaultSelectionKind).toBe('box');
+    // Which mode the icon starts is not a setting: it is the last one used.
+    expect('defaultSelectionKind' in DEFAULT_SETTINGS).toBe(false);
     expect(DEFAULT_SETTINGS.adjustBox).toBe(false);
     expect(DEFAULT_SETTINGS.panelOpen).toBe('on-selection');
     expect(DEFAULT_SETTINGS.provider).toBe('mock');

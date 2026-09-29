@@ -135,14 +135,6 @@ export function Options() {
 
   const setMacro = (i: number, patch: Partial<Macro>) =>
     setSettings((s) => ({ ...s, macros: s.macros.map((m, j) => (j === i ? { ...m, ...patch } : m)) }));
-  const moveMacro = (i: number, by: number) =>
-    setSettings((s) => {
-      const macros = [...s.macros];
-      const j = i + by;
-      if (j < 0 || j >= macros.length) return s;
-      [macros[i], macros[j]] = [macros[j]!, macros[i]!];
-      return { ...s, macros };
-    });
   const removeMacro = (i: number) => setSettings((s) => ({ ...s, macros: s.macros.filter((_, j) => j !== i) }));
   const addMacro = () =>
     setSettings((s) => ({ ...s, macros: [...s.macros, { id: `macro-${Date.now().toString(36)}`, name: '', prompt: '' }] }));
@@ -173,7 +165,8 @@ export function Options() {
             {' '}or press <kbd>{shortcut}</kbd>
           </>
         ) : null}{' '}
-        and a selection starts right away. Switch between Box, Freeform, Element and Text from the chips on screen.
+        and a selection starts right away, in the mode you used last. Switch between Box, Freeform, Element and Text
+        from the chips on screen.
       </p>
 
       <section>
@@ -264,18 +257,6 @@ export function Options() {
 
       <section>
         <h2>Selecting</h2>
-        <label>
-          What {BRAND.iconName} starts
-          <select
-            value={settings.defaultSelectionKind}
-            onChange={(e) => setSettings({ ...settings, defaultSelectionKind: e.target.value as Settings['defaultSelectionKind'] })}
-          >
-            <option value="box">Box — drag a rectangle</option>
-            <option value="freeform">Freeform — draw any shape</option>
-            <option value="element">Element — pick a paragraph, table, figure…</option>
-            <option value="text">Text — select text on the page</option>
-          </select>
-        </label>
         <div className="field" data-testid="shortcuts">
           <span className="field-label">Keyboard shortcuts</span>
           <span className="key-row shortcut-row">
@@ -372,19 +353,6 @@ export function Options() {
                 onChange={(e) => setMacro(i, { prompt: e.target.value })}
               />
               <span className="macro-tools">
-                <button type="button" className="tool" title="Move up" aria-label="Move up" disabled={i === 0} onClick={() => moveMacro(i, -1)}>
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  className="tool"
-                  title="Move down"
-                  aria-label="Move down"
-                  disabled={i === settings.macros.length - 1}
-                  onClick={() => moveMacro(i, 1)}
-                >
-                  ↓
-                </button>
                 <button type="button" className="tool" title="Remove" aria-label="Remove" onClick={() => removeMacro(i)}>
                   ✕
                 </button>

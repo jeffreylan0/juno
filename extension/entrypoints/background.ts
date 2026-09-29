@@ -26,6 +26,7 @@ import {
   fallbackQuestion,
   getKeys,
   getSettings,
+  lastKindItem,
   settingsItem,
   shouldAutoSend,
   type Settings,
@@ -94,7 +95,7 @@ export default defineBackground(() => {
 
   browser.action.onClicked.addListener((tab) => {
     arm(tab?.id);
-    void startSelection(tab?.id, settings.defaultSelectionKind);
+    void lastKindItem.getValue().then((kind) => startSelection(tab?.id, kind));
   });
 
   // The main shortcut is bound to _execute_action, which arrives as

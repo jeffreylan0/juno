@@ -40,8 +40,6 @@ export const GATEWAY_URL = (import.meta.env.WXT_GATEWAY_URL as string | undefine
 export interface Settings {
   version: number;
   provider: Provider;
-  /** Which selection mode the toolbar arms on click. */
-  defaultSelectionKind: SelectionKind;
   /** Preferred vendor for the router's model table. */
   vendor: 'anthropic' | 'openai';
   /** Explicit model override; empty means "let the router choose". */
@@ -71,7 +69,6 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   version: SETTINGS_VERSION,
   provider: (import.meta.env.WXT_PROVIDER as Provider | undefined) ?? 'mock',
-  defaultSelectionKind: 'box',
   vendor: 'anthropic',
   modelOverride: null,
   defaultPrompt: DEFAULT_PROMPT,
@@ -95,6 +92,13 @@ export interface Keys {
 export const settingsItem = storage.defineItem<Settings>('local:settings', {
   fallback: DEFAULT_SETTINGS,
 });
+
+/**
+ * The selection mode last picked from the bar's chips. Not a setting: the
+ * shortcut icon simply starts where the student left off, the way screenshot
+ * tools remember their last mode. Box until a chip says otherwise.
+ */
+export const lastKindItem = storage.defineItem<SelectionKind>('local:lastSelectionKind', { fallback: 'box' });
 
 export const keysItem = storage.defineItem<Keys>('local:keys', {
   fallback: { anthropic: '', openai: '', session: '' },
@@ -141,6 +145,8 @@ export function migrateSettings(stored: unknown): Settings {
   delete loose.prompts;
   delete loose.defaultMode;
   delete loose.gatewayUrl;
+  // No longer a setting; the bar remembers the last mode used (lastKindItem).
+  delete (loose as { defaultSelectionKind?: unknown }).defaultSelectionKind;
   return merged;
 }
 

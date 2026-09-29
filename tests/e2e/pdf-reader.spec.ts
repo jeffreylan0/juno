@@ -25,11 +25,8 @@ async function armInReader(sw: Worker, reader: Page, kind: 'box' | 'text'): Prom
     return reply?.tabId;
   });
   expect(tabId, 'the reader never registered with the background').toBeDefined();
-  // The toolbar arms whichever mode settings say, so set it the way a student would.
-  await reader.evaluate(async (k: string) => {
-    const { settings = {} } = (await chrome.storage.local.get('settings')) as { settings?: Record<string, unknown> };
-    await chrome.storage.local.set({ settings: { ...settings, defaultSelectionKind: k } });
-  }, kind);
+  // The icon arms the mode last picked from the chips, so pick it the way a student would have.
+  await reader.evaluate(async (k: string) => chrome.storage.local.set({ lastSelectionKind: k }), kind);
   await sw.evaluate(async (id: number) => {
     // @ts-expect-error test-only dispatch; Chrome has no API to click the icon.
     chrome.action.onClicked.dispatch({ id });
