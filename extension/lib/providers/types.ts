@@ -23,10 +23,34 @@ export interface ProviderDriver {
   stream(req: AskRequest, model: ModelRef, ctx: ProviderContext): AsyncGenerator<string, StreamResult, void>;
 }
 
+/**
+ * What went wrong, as a category the panel can act on (see errors.ts):
+ * Settings for key, credit and model problems; Try again for transient ones.
+ */
+export type ProviderErrorCode =
+  | 'no-key'
+  | 'bad-key'
+  | 'no-credit'
+  | 'permission'
+  | 'model'
+  | 'too-large'
+  | 'rate-limit'
+  | 'overloaded'
+  | 'http'
+  | 'network'
+  | 'aborted'
+  | 'unsupported'
+  | 'empty';
+
 export class ProviderError extends Error {
+  /** The vendor's request id, for a support ticket. */
+  requestId?: string;
+  /** The vendor's own message, kept for diagnostics. */
+  detail?: string;
+
   constructor(
     message: string,
-    public code: 'no-key' | 'http' | 'network' | 'aborted' | 'unsupported' | 'empty',
+    public code: ProviderErrorCode,
     public status?: number,
   ) {
     super(message);

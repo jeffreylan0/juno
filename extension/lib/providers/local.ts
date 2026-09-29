@@ -14,7 +14,8 @@ export const localDriver: ProviderDriver = {
     const usage = yield* streamOpenAIChat(
       ctx.fetch,
       `${base}/chat/completions`,
-      { 'x-vendor': 'local' },
+      'the local server',
+      {},
       { model: modelId, messages: toChatMessages(req), temperature: 0.2 },
       ctx.signal,
     );

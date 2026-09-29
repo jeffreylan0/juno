@@ -13,7 +13,6 @@
  * extension page the page cannot reach.
  */
 import type { SelectionKind } from '@shared/payload';
-import { MODES, type Mode } from '@shared/payload';
 import { getSettings, settingsItem, type PanelOpen, type SendBehavior, type Settings } from '@/lib/storage';
 import { UI_ATTR } from './scroll';
 
@@ -299,8 +298,8 @@ export class Bar {
       field(
         'After drawing a box',
         [
-          ['adjust', 'Let me adjust it, then ask'],
-          ['send', 'Ask as soon as I let go'],
+          ['send', 'Send it as soon as I let go'],
+          ['adjust', 'Let me adjust it first'],
         ],
         settings.adjustBox ? 'adjust' : 'send',
         (v) => void save({ adjustBox: v === 'adjust' }),
@@ -314,7 +313,6 @@ export class Bar {
         settings.panelOpen,
         (v) => void save({ panelOpen: v as PanelOpen }),
       ),
-      field('Ask mode', MODES.map((m) => [m, modeLabel(m)] as [string, string]), settings.defaultMode, (v) => void save({ defaultMode: v as Mode })),
       field(
         'When a selection lands',
         [
@@ -341,7 +339,7 @@ export class Bar {
     const more = document.createElement('button');
     more.type = 'button';
     more.className = 'more';
-    more.textContent = 'All settings, keys and prompts';
+    more.textContent = 'All settings, keys and macros';
     more.addEventListener('click', () => void browser.runtime.sendMessage({ type: 'options:open' }).catch(() => {}));
     this.settingsInner.append(more);
   }
@@ -375,6 +373,3 @@ function label(kind: SelectionKind): string {
   return kind[0]!.toUpperCase() + kind.slice(1);
 }
 
-function modeLabel(mode: Mode): string {
-  return mode[0]!.toUpperCase() + mode.slice(1);
-}

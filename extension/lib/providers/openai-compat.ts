@@ -4,6 +4,7 @@
  */
 import type { AskRequest, Plan } from '@shared/payload';
 import { selectionPrompt, systemPrompt } from '@shared/prompts';
+import { ensureVendorOk, vendorFetch, type VendorName } from './errors';
 import { ProviderError } from './types';
 
 export type ContentPart =
@@ -80,39 +81,38 @@ export async function* sseData(res: Response): AsyncGenerator<string, void, void
   }
 }
 
-export async function ensureOk(res: Response, vendor: string): Promise<void> {
-  if (res.ok) return;
-  let detail = '';
-  try {
-    detail = (await res.text()).slice(0, 300);
-  } catch {
-    /* ignore */
-  }
-  throw new ProviderError(`${vendor} returned HTTP ${res.status}${detail ? `: ${detail}` : ''}`, 'http', res.status);
-}
-
 interface OpenAIChunk {
-  choices?: { delta?: { content?: string | null } }[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+  choices?: { delta?: { content?: string | null; refusal?: string | null }; finish_reason?: string | null }[];
+  usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | null;
+  error?: { message?: string; type?: string; code?: string };
 }
 
-/** Streams an OpenAI-style chat.completions response. */
+/**
+ * Streams an OpenAI-style chat.completions response.
+ *
+ * `vendor` names the server in error messages only. It is deliberately not a
+ * request header: any non-standard header makes the browser send a CORS
+ * preflight, and a vendor that does not list it would fail every call.
+ */
 export async function* streamOpenAIChat(
   fetchImpl: typeof fetch,
   url: string,
+  vendor: VendorName,
   headers: Record<string, string>,
   body: Record<string, unknown>,
   signal?: AbortSignal,
-): AsyncGenerator<string, { inputTokens: number; outputTokens: number }, void> {
-  const res = await fetchImpl(url, {
+): AsyncGenerator<string, { inputTokens: number; outputTokens: number; cacheRead?: number }, void> {
+  const res = await vendorFetch(fetchImpl, vendor, url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify({ ...body, stream: true, stream_options: { include_usage: true } }),
     signal,
   });
-  await ensureOk(res, headers['x-vendor'] ?? url);
+  await ensureVendorOk(res, vendor, typeof body.model === 'string' ? body.model : undefined);
   let inputTokens = 0;
   let outputTokens = 0;
+  let cacheRead: number | undefined;
+  let sawText = false;
   for await (const data of sseData(res)) {
     if (data === '[DONE]') break;
     let chunk: OpenAIChunk;
@@ -121,12 +121,19 @@ export async function* streamOpenAIChat(
     } catch {
       continue;
     }
-    const delta = chunk.choices?.[0]?.delta?.content;
-    if (delta) yield delta;
+    if (chunk.error) throw new ProviderError(`${vendor} stopped partway: ${chunk.error.message ?? 'unknown error'}. Try again.`, 'http');
+    const delta = chunk.choices?.[0]?.delta;
+    const text = delta?.content || delta?.refusal;
+    if (text) {
+      sawText = true;
+      yield text;
+    }
     if (chunk.usage) {
       inputTokens = chunk.usage.prompt_tokens ?? inputTokens;
       outputTokens = chunk.usage.completion_tokens ?? outputTokens;
+      cacheRead = chunk.usage.prompt_tokens_details?.cached_tokens ?? cacheRead;
     }
   }
-  return { inputTokens, outputTokens };
+  if (!sawText) throw new ProviderError(`${vendor} sent back an empty answer. Try again.`, 'empty');
+  return { inputTokens, outputTokens, cacheRead };
 }

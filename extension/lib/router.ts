@@ -5,24 +5,58 @@
  */
 import type { ModelRef, Part, Plan, Route, Vendor } from '@shared/payload';
 
+/**
+ * Current models, checked against the vendors' model pages on 2026-09-28.
+ * Every one of them reads images, which box selections need.
+ */
 export const MODEL_TABLE: Record<Exclude<Vendor, 'local' | 'mock'>, Record<Route, string>> = {
-  anthropic: { small: 'claude-haiku-4-5-20251001', large: 'claude-sonnet-5' },
+  anthropic: { small: 'claude-haiku-4-5-20251001', large: 'claude-sonnet-5-5' },
   openai: { small: 'gpt-6-luna', large: 'gpt-6-sol' },
 };
 
-/** USD per million tokens (input, output); public list prices, September 2026. */
-export const PRICES: Record<string, { input: number; output: number }> = {
-  'claude-haiku-4-5-20251001': { input: 1, output: 5 },
-  'claude-sonnet-5': { input: 2, output: 10 },
-  'claude-opus-5-5': { input: 4, output: 20 },
-  'gpt-6-luna': { input: 0.1, output: 0.5 },
-  'gpt-6-sol': { input: 2, output: 10 },
+/** Friendly names for the model table, used where the student sees a choice. */
+export const MODEL_NAMES: Record<string, string> = {
+  'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+  'claude-sonnet-5-5': 'Claude Sonnet 5.5',
+  'claude-opus-5-5': 'Claude Opus 5.5',
+  'claude-fable-5-1': 'Claude Fable 5.1',
+  'gpt-6-luna': 'GPT-6 Luna',
+  'gpt-6-sol': 'GPT-6 Sol',
+  'gpt-6-astra': 'GPT-6 Astra',
 };
 
-export function estimateCostUsd(model: string, inputTokens: number, outputTokens: number): number | undefined {
+/**
+ * USD per million tokens; public list prices, September 2026. `cacheRead` is
+ * the multiplier on input for prompt-cache hits (Anthropic writes cost 1.25×).
+ */
+export const PRICES: Record<string, { input: number; output: number; cacheRead?: number }> = {
+  'claude-haiku-4-5-20251001': { input: 1, output: 5, cacheRead: 0.1 },
+  'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.1 },
+  'claude-sonnet-5': { input: 2, output: 10, cacheRead: 0.1 },
+  'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.05 },
+  'claude-fable-5-1': { input: 10, output: 50, cacheRead: 0.1 },
+  'gpt-6-luna': { input: 0.1, output: 0.5, cacheRead: 0.1 },
+  'gpt-6-sol': { input: 2, output: 10, cacheRead: 0.1 },
+  'gpt-6-astra': { input: 10, output: 50, cacheRead: 0.1 },
+};
+
+/** Anthropic charges 1.25× input for a five-minute cache write. */
+const CACHE_WRITE = 1.25;
+
+export function estimateCostUsd(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  cache: { read?: number; write?: number } = {},
+): number | undefined {
   const p = PRICES[model];
   if (!p) return undefined;
-  return (inputTokens * p.input + outputTokens * p.output) / 1e6;
+  const read = cache.read ?? 0;
+  const write = cache.write ?? 0;
+  // `inputTokens` is the total; the cached share is billed at its own rate.
+  const plain = Math.max(0, inputTokens - read - write);
+  const input = plain * p.input + read * p.input * (p.cacheRead ?? 1) + write * p.input * CACHE_WRITE;
+  return (input + outputTokens * p.output) / 1e6;
 }
 
 const LONG_TEXT_CHARS = 1500;

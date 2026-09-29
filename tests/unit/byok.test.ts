@@ -1,0 +1,245 @@
+/**
+ * Real-AI answers with the student's own key: request shape, prompt caching,
+ * streaming usage, and — most of all — errors a student can act on.
+ */
+import { describe, expect, it } from 'vitest';
+import { MemoryCacheStore } from '@/lib/cache';
+import { callModel, type ProviderContext } from '@/lib/providers';
+import { testKey, toAnthropicBody, ANTHROPIC_URL, OPENAI_URL } from '@/lib/providers/byok';
+import { describeHttpError, isTransient, needsSettings } from '@/lib/providers/errors';
+import { toChatMessages } from '@/lib/providers/openai-compat';
+import type { AskChunk, Plan } from '@shared/payload';
+
+function plan(over: Partial<Plan> = {}): Plan {
+  return {
+    id: 'p',
+    createdAt: 0,
+    mode: 'ask',
+    question: 'Explain this step by step.',
+    parts: [{ kind: 'image', dataUrl: 'data:image/png;base64,AAAA', width: 2, height: 2, reason: 'user' }],
+    selection: { kind: 'box', rect: { x: 0, y: 0, width: 1, height: 1 }, devicePixelRatio: 1 },
+    page: { url: 'u', title: 't' },
+    route: 'large',
+    estimatedTokens: 10,
+    ...over,
+  };
+}
+
+function sse(events: { event?: string; data: unknown }[]): Response {
+  const body = events.map((e) => `${e.event ? `event: ${e.event}\n` : ''}data: ${typeof e.data === 'string' ? e.data : JSON.stringify(e.data)}\n\n`).join('');
+  return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+}
+
+function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
+}
+
+interface Call {
+  url: string;
+  init: RequestInit;
+}
+
+function ctx(respond: (call: Call) => Response | Promise<Response>, calls: Call[] = []): ProviderContext {
+  return {
+    fetch: (async (url: string, init: RequestInit) => {
+      const call = { url, init };
+      calls.push(call);
+      return respond(call);
+    }) as unknown as typeof fetch,
+    keys: { anthropic: 'sk-ant-test', openai: 'sk-test', session: '' },
+    settings: { localBaseUrl: '', localModel: '', gatewayUrl: '' },
+    cache: new MemoryCacheStore(),
+  };
+}
+
+async function collect(gen: AsyncIterable<AskChunk>) {
+  const chunks: AskChunk[] = [];
+  for await (const c of gen) chunks.push(c);
+  return {
+    text: chunks.filter((c) => c.type === 'delta').map((c) => (c as { text: string }).text).join(''),
+    done: chunks.find((c) => c.type === 'done') as Extract<AskChunk, { type: 'done' }> | undefined,
+    error: chunks.find((c) => c.type === 'error') as Extract<AskChunk, { type: 'error' }> | undefined,
+  };
+}
+
+const anthropicStream = (text: string, usage = { input_tokens: 20, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }) =>
+  sse([
+    { event: 'message_start', data: { type: 'message_start', message: { usage: { ...usage, output_tokens: 1 } } } },
+    { event: 'content_block_delta', data: { type: 'content_block_delta', delta: { type: 'text_delta', text } } },
+    { event: 'message_delta', data: { type: 'message_delta', usage: { output_tokens: 30 } } },
+    { event: 'message_stop', data: { type: 'message_stop' } },
+  ]);
+
+describe('Anthropic requests', () => {
+  it('sends only the headers Anthropic documents, and the current large model for screenshots', async () => {
+    const calls: Call[] = [];
+    const c = ctx(() => anthropicStream('Read: a box\n\nAnswer: 4'), calls);
+    const { text, done } = await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'anthropic' }));
+    expect(text).toContain('Answer: 4');
+    expect(calls[0]!.url).toBe(ANTHROPIC_URL);
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(Object.keys(headers).sort()).toEqual(
+      ['anthropic-dangerous-direct-browser-access', 'anthropic-version', 'content-type', 'x-api-key'].sort(),
+    );
+    const body = JSON.parse(String(calls[0]!.init.body)) as { model: string; max_tokens: number };
+    expect(body.model).toBe('claude-sonnet-5-5');
+    expect(body.max_tokens).toBe(4096);
+    expect(done?.model).toEqual({ vendor: 'anthropic', model: 'claude-sonnet-5-5' });
+  });
+
+  it('marks the last user message for prompt caching, so follow-ups reuse the screenshot', () => {
+    const opening = toAnthropicBody(toChatMessages({ plan: plan() }), 'claude-sonnet-5-5');
+    const first = opening.messages[0]!.content as { type: string; cache_control?: unknown }[];
+    expect(first.map((b) => b.type)).toEqual(['image', 'text']);
+    expect(first[1]!.cache_control).toEqual({ type: 'ephemeral' });
+
+    const followUp = toAnthropicBody(
+      toChatMessages({
+        plan: plan({ question: 'Why?' }),
+        history: [
+          { role: 'user', text: 'Explain this step by step.' },
+          { role: 'assistant', text: 'Read: …' },
+        ],
+      }),
+      'claude-sonnet-5-5',
+    );
+    const last = followUp.messages[followUp.messages.length - 1]!.content as { text: string; cache_control?: unknown }[];
+    expect(last).toEqual([{ type: 'text', text: 'Why?', cache_control: { type: 'ephemeral' } }]);
+    // Exactly one breakpoint per request; the vendor allows four.
+    expect(JSON.stringify(followUp).match(/cache_control/g)).toHaveLength(1);
+  });
+
+  it('counts cached input and prices it at the cache rate', async () => {
+    const c = ctx(() => anthropicStream('ok', { input_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 1000 }));
+    const { done } = await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'anthropic' }));
+    expect(done?.usage?.inputTokens).toBe(1010);
+    // 10 plain at $2/M, 1000 cached at a tenth of that, 30 out at $10/M.
+    expect(done?.usage?.costUsd).toBeCloseTo((10 * 2 + 1000 * 0.2 + 30 * 10) / 1e6);
+  });
+
+  it('turns a mid-stream overload into a retryable error', async () => {
+    const c = ctx(() =>
+      sse([
+        { event: 'message_start', data: { type: 'message_start', message: { usage: { input_tokens: 5 } } } },
+        { event: 'error', data: { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } } },
+      ]),
+    );
+    const { error } = await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'anthropic' }));
+    expect(error?.code).toBe('overloaded');
+    expect(isTransient(error?.code)).toBe(true);
+  });
+
+  it('treats a stream with no text as a failure, not an empty answer', async () => {
+    const c = ctx(() => sse([{ data: { type: 'message_start', message: { usage: {} } } }, { data: { type: 'message_stop' } }]));
+    const { error } = await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'anthropic' }));
+    expect(error?.code).toBe('empty');
+  });
+});
+
+describe('OpenAI requests', () => {
+  it('sends no custom headers, which would trigger a CORS preflight OpenAI may refuse', async () => {
+    const calls: Call[] = [];
+    const c = ctx(() => sse([{ data: { choices: [{ delta: { content: 'hi' } }] } }, { data: '[DONE]' }]), calls);
+    await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'openai' }));
+    expect(calls[0]!.url).toBe(OPENAI_URL);
+    expect(Object.keys(calls[0]!.init.headers as Record<string, string>).sort()).toEqual(['authorization', 'content-type']);
+    const body = JSON.parse(String(calls[0]!.init.body)) as { model: string; max_completion_tokens: number };
+    expect(body.model).toBe('gpt-6-sol');
+    expect(body.max_completion_tokens).toBe(4096);
+  });
+
+  it('says "out of credit" for insufficient_quota rather than "rate limited"', async () => {
+    const c = ctx(() => json(429, { error: { message: 'You exceeded your current quota', type: 'insufficient_quota', code: 'insufficient_quota' } }));
+    const { error } = await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'openai' }));
+    expect(error?.code).toBe('no-credit');
+    expect(error?.message).toMatch(/out of credit/);
+    expect(needsSettings(error?.code)).toBe(true);
+  });
+});
+
+describe('describeHttpError', () => {
+  const cases: [number, unknown, string, RegExp][] = [
+    [401, { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }, 'bad-key', /rejected the API key/],
+    [400, { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low to access the Anthropic API.' } }, 'no-credit', /out of credit/],
+    [404, { type: 'error', error: { type: 'not_found_error', message: 'model: claude-x' } }, 'model', /no model "claude-x"/],
+    [413, { type: 'error', error: { type: 'request_too_large', message: 'too big' } }, 'too-large', /smaller box/],
+    [429, { type: 'error', error: { type: 'rate_limit_error', message: 'slow down' } }, 'rate-limit', /in 12 s/],
+    [529, { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }, 'overloaded', /overloaded/],
+    [500, { type: 'error', error: { type: 'api_error', message: 'boom' } }, 'http', /server error \(500\)/],
+    [400, { type: 'error', error: { type: 'invalid_request_error', message: 'messages: roles must alternate' } }, 'http', /roles must alternate/],
+  ];
+  it.each(cases)('HTTP %i → a sentence and a code the panel can act on', (status, body, code, message) => {
+    const e = describeHttpError('Anthropic', status, JSON.stringify(body), { model: 'claude-x', retryAfter: '12' });
+    expect(e.code).toBe(code);
+    expect(e.message).toMatch(message);
+  });
+
+  it('keeps the request id for a support ticket', () => {
+    const e = describeHttpError('Anthropic', 500, JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'x' }, request_id: 'req_1' }));
+    expect(e.requestId).toBe('req_1');
+  });
+
+  it('copes with a body that is not JSON', () => {
+    expect(describeHttpError('OpenAI', 502, '<html>Bad gateway</html>').code).toBe('http');
+  });
+});
+
+describe('network failures', () => {
+  it('say what to check instead of "Failed to fetch"', async () => {
+    const c = ctx(() => {
+      throw new TypeError('Failed to fetch');
+    });
+    const { error } = await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'anthropic' }));
+    expect(error?.code).toBe('network');
+    expect(error?.message).toMatch(/Could not reach Anthropic/);
+    expect(error?.message).toContain('api.anthropic.com');
+  });
+});
+
+describe('testKey', () => {
+  it('lists Anthropic models without spending a token', async () => {
+    const calls: Call[] = [];
+    const fetchImpl = ctx(
+      () =>
+        json(200, {
+          data: [
+            { id: 'claude-haiku-4-5-20251001', display_name: 'Claude Haiku 4.5', capabilities: { image_input: { supported: true } } },
+            { id: 'claude-text-only', display_name: 'Text Only', capabilities: { image_input: { supported: false } } },
+          ],
+        }),
+      calls,
+    ).fetch;
+    const r = await testKey(fetchImpl, 'anthropic', '  sk-ant-x  ');
+    expect(calls[0]!.url).toContain('/v1/models');
+    expect((calls[0]!.init.headers as Record<string, string>)['x-api-key']).toBe('sk-ant-x');
+    expect(calls[0]!.init.method ?? 'GET').toBe('GET');
+    expect(r).toEqual({
+      ok: true,
+      models: [
+        { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', vision: true },
+        { id: 'claude-text-only', name: 'Text Only', vision: false },
+      ],
+    });
+  });
+
+  it('keeps only OpenAI chat models', async () => {
+    const fetchImpl = ctx(() =>
+      json(200, { data: [{ id: 'gpt-6-sol' }, { id: 'text-embedding-3-large' }, { id: 'gpt-4o-mini-tts' }, { id: 'o4-mini' }, { id: 'dall-e-3' }] }),
+    ).fetch;
+    const r = await testKey(fetchImpl, 'openai', 'sk-x');
+    expect(r.ok && r.models.map((m) => m.id)).toEqual(['gpt-6-sol', 'o4-mini']);
+  });
+
+  it('reports a rejected key in words', async () => {
+    const fetchImpl = ctx(() => json(401, { error: { message: 'Incorrect API key provided', type: 'invalid_request_error', code: 'invalid_api_key' } })).fetch;
+    const r = await testKey(fetchImpl, 'openai', 'sk-bad');
+    expect(r).toEqual({ ok: false, error: 'OpenAI rejected the API key. Check it in Settings.', code: 'bad-key' });
+  });
+
+  it('asks for a key before calling anyone', async () => {
+    const calls: Call[] = [];
+    const r = await testKey(ctx(() => json(200, {}), calls).fetch, 'anthropic', '   ');
+    expect(r.ok).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+});

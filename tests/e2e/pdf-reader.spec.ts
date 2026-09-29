@@ -80,7 +80,7 @@ test('text selection in the reader sends the real characters, not a picture', as
   expect(plan.route).toBe('small');
 });
 
-test('a box selection in the reader carries the page text alongside the crop', async ({ context, extensionId, serviceWorker }) => {
+test('a box selection in the reader sends its crop, like anywhere else', async ({ context, extensionId, serviceWorker }) => {
   const reader = await openReader(context, extensionId);
   const panel = await openPanel(context, extensionId);
   await reader.bringToFront();
@@ -94,16 +94,11 @@ test('a box selection in the reader carries the page text alongside the crop', a
   await reader.mouse.down();
   await reader.mouse.move(box.x + box.width + 10, box.y + box.height + 10, { steps: 10 });
   await reader.mouse.up();
-  // The drawn box waits to be adjusted; Enter asks.
-  await expect(reader.locator(OVERLAY)).toHaveAttribute('data-state', 'adjusting');
-  await reader.keyboard.press('Enter');
 
   await expect.poll(async () => (await getPlan(panel))?.parts.length ?? 0, { timeout: 15_000 }).toBeGreaterThan(0);
   const plan = (await getPlan(panel))!;
-  const kinds = plan.parts.map((p) => p.kind);
-  // This is the win over the browser's viewer, where only 'image' is possible.
-  expect(kinds).toContain('text');
-  expect(kinds).toContain('image');
+  // A box is its screenshot; the reader's win is text selection (above).
+  expect(plan.parts.map((p) => p.kind)).toEqual(['image']);
 });
 
 test('the reader scrolls while a selection is armed, though its scroller is not the window', async ({ context, extensionId, serviceWorker }) => {

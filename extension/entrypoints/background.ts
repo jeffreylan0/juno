@@ -13,13 +13,13 @@
  * is the only writer: it appends the student's turn, streams the answer into
  * the thread, and the panel renders whatever is stored for the tab it shows.
  */
-import type { AskRequest, Mode, SelectionKind } from '@shared/payload';
-import { defaultQuestion } from '@shared/prompts';
+import type { AskRequest, SelectionKind } from '@shared/payload';
 import { AreaCacheStore } from '@/lib/cache';
-import { captureRect } from '@/lib/capture';
+import { captureRect, type CaptureResult } from '@/lib/capture';
 import { isRuntimeMessage, type RuntimeMessage, type SelectionDoneMsg, type StartSelectionMsg } from '@/lib/messages';
 import { buildPlan } from '@/lib/planner';
 import { callModel, type ProviderContext } from '@/lib/providers';
+import { testKey } from '@/lib/providers/byok';
 import { DEFAULT_SETTINGS, getKeys, getSettings, settingsItem, shouldAutoSend, type Settings } from '@/lib/storage';
 import {
   clearThread,
@@ -27,7 +27,6 @@ import {
   historyOf,
   parseKey,
   saveChat,
-  setThreadMode,
   startThread,
   type Chat,
   type Turn,
@@ -118,14 +117,17 @@ export default defineBackground(() => {
         void planFor(msg.tabId).then(sendResponse);
         return true;
       case 'chat:send':
-        void sendChat(msg.tabId, msg.question, msg.mode);
+        void sendChat(msg.tabId, msg.question);
+        return;
+      case 'chat:retry':
+        void retryChat(msg.tabId);
         return;
       case 'chat:stop':
         streams.get(msg.tabId)?.abort();
         return;
-      case 'chat:mode':
-        void setThreadMode(msg.tabId, msg.mode);
-        return;
+      case 'keys:test':
+        void testKey(globalThis.fetch.bind(globalThis), msg.vendor, msg.key).then(sendResponse);
+        return true;
       case 'panel:open':
         // Sent from a click on the page's toast, which carries a real gesture.
         void openPanel(sender.tab?.id);
@@ -307,27 +309,41 @@ async function handleSelectionDone(msg: SelectionDoneMsg, tab: chrome.tabs.Tab |
   const tabId = tab?.id;
   if (tabId === undefined) return;
   const current = await getSettings();
-  // A new selection in the same tab keeps whatever mode the student had
-  // switched that conversation to.
-  const previous = await getThread(tabId);
-  const mode: Mode = previous.chat?.mode ?? current.defaultMode;
 
-  let capture;
+  let capture: CaptureResult | undefined;
+  let notice: string | undefined;
   if (msg.kind === 'box' || (msg.kind === 'element' && !msg.text)) {
     try {
-      capture = await captureRect(tab?.windowId, msg.rect, msg.devicePixelRatio);
+      capture = await captureWithRetry(tab?.windowId, msg);
     } catch (err) {
       console.warn('[selection-ai] capture failed', err);
+      // A box is only its screenshot now, so without one there is nothing
+      // to send. Say so, rather than quietly asking about nothing.
+      notice = "Couldn't take a screenshot of that area. Select it again; if it keeps failing, reload the page.";
     }
   }
-  const plan = buildPlan({ selection: msg, mode, capture });
+  const plan = buildPlan({ selection: msg, mode: 'ask', capture });
   // A new selection starts a new conversation; an answer still streaming for
   // the old one is dropped rather than written into the new one.
   supersede(tabId);
-  await startThread(tabId, plan);
+  await startThread(tabId, plan, notice);
 
   if (panelPending) await promptForPanel(tabId);
-  if (shouldAutoSend(current, msg.kind)) void sendChat(tabId, current.prompts[mode] ?? '', mode);
+  if (!notice && plan.parts.length > 0 && shouldAutoSend(current, msg.kind)) void sendChat(tabId, current.defaultPrompt);
+}
+
+/**
+ * Chrome allows two captureVisibleTab calls a second. A student reselecting
+ * quickly can hit that, so one refusal gets a single, slightly later retry.
+ */
+async function captureWithRetry(windowId: number | undefined, msg: SelectionDoneMsg): Promise<CaptureResult> {
+  try {
+    return await captureRect(windowId, msg.rect, msg.devicePixelRatio);
+  } catch (err) {
+    if (!/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(String((err as Error)?.message ?? err))) throw err;
+    await new Promise((r) => setTimeout(r, 600));
+    return await captureRect(windowId, msg.rect, msg.devicePixelRatio);
+  }
 }
 
 /** The plan for a tab, or the most recently selected one when none is given. */
@@ -347,22 +363,25 @@ async function planFor(tabId: number | undefined) {
  * The answer is streamed into the thread, so it survives the panel closing and
  * reappears when the student comes back to the tab.
  */
-async function sendChat(tabId: number, question: string, mode: Mode): Promise<void> {
+async function sendChat(tabId: number, question: string): Promise<void> {
   supersede(tabId);
   const { plan, chat } = await getThread(tabId);
-  if (!plan) return;
+  if (!plan || plan.parts.length === 0) return;
 
-  const base: Chat = chat && chat.planId === plan.id ? { ...chat, turns: chat.turns.map(settle) } : { planId: plan.id, mode, turns: [], updatedAt: Date.now() };
+  const base: Chat =
+    chat && chat.planId === plan.id
+      ? { ...chat, turns: chat.turns.map(settle) }
+      : { planId: plan.id, mode: plan.mode, turns: [], updatedAt: Date.now() };
   const history = historyOf(base.turns);
-  const q = question.trim() || settings.prompts[mode] || defaultQuestion(mode);
+  const q = question.trim() || settings.defaultPrompt.trim() || 'Explain this.';
   const user: Turn = { id: crypto.randomUUID(), role: 'user', text: q };
   const answer: Turn = { id: crypto.randomUUID(), role: 'assistant', text: '', streaming: true };
-  const thread: Chat = { ...base, mode, turns: [...base.turns, user, answer] };
+  const thread: Chat = { ...base, turns: [...base.turns, user, answer] };
   await saveChat(tabId, thread);
 
   const controller = new AbortController();
   streams.set(tabId, controller);
-  const request: AskRequest = { plan: { ...plan, mode, question: q }, history };
+  const request: AskRequest = { plan: { ...plan, question: q }, history };
 
   let dirty = false;
   const flush = async () => {
@@ -399,7 +418,10 @@ async function sendChat(tabId: number, question: string, mode: Mode): Promise<vo
         // A stop keeps whatever arrived; only an empty stop needs saying.
         if (chunk.code === 'aborted') {
           if (!answer.text.trim()) answer.error = 'Stopped before an answer arrived.';
-        } else answer.error = chunk.message;
+        } else {
+          answer.error = chunk.message;
+          answer.errorCode = chunk.code;
+        }
       }
     }
   } catch (err) {
@@ -421,4 +443,19 @@ async function sendChat(tabId: number, question: string, mode: Mode): Promise<vo
 function settle(turn: Turn): Turn {
   if (!turn.streaming) return turn;
   return { ...turn, streaming: false, error: turn.text.trim() ? turn.error : 'Stopped before an answer arrived.' };
+}
+
+/**
+ * Try again after a failed answer: the failed question and its error are
+ * dropped and the question is asked afresh, so history stays clean.
+ */
+async function retryChat(tabId: number): Promise<void> {
+  const { plan, chat } = await getThread(tabId);
+  if (!plan || !chat || chat.planId !== plan.id) return;
+  const turns = chat.turns;
+  const answer = turns[turns.length - 1];
+  const question = turns[turns.length - 2];
+  if (answer?.role !== 'assistant' || !answer.error || question?.role !== 'user') return;
+  await saveChat(tabId, { ...chat, turns: turns.slice(0, -2) });
+  await sendChat(tabId, question.text);
 }

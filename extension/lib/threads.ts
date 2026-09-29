@@ -27,6 +27,8 @@ export interface Turn extends ChatTurn {
   model?: ModelRef;
   cached?: boolean;
   error?: string;
+  /** The error's category (providers/errors.ts), so the panel can offer a fix. */
+  errorCode?: string;
 }
 
 export interface Chat {
@@ -35,6 +37,8 @@ export interface Chat {
   mode: Mode;
   turns: Turn[];
   updatedAt: number;
+  /** Why the selection could not be used (e.g. the screenshot failed). */
+  notice?: string;
 }
 
 export interface Thread {
@@ -66,19 +70,14 @@ export async function getThread(tabId: number): Promise<Thread> {
 }
 
 /** A new selection in this tab: store it and start a fresh, empty conversation. */
-export async function startThread(tabId: number, plan: Plan): Promise<Thread> {
-  const chat: Chat = { planId: plan.id, mode: plan.mode, turns: [], updatedAt: Date.now() };
+export async function startThread(tabId: number, plan: Plan, notice?: string): Promise<Thread> {
+  const chat: Chat = { planId: plan.id, mode: plan.mode, turns: [], updatedAt: Date.now(), ...(notice ? { notice } : {}) };
   await setWithEviction({ [selKey(tabId)]: plan, [chatKey(tabId)]: chat });
   return { tabId, plan, chat };
 }
 
 export async function saveChat(tabId: number, chat: Chat): Promise<void> {
   await setWithEviction({ [chatKey(tabId)]: { ...chat, updatedAt: Date.now() } });
-}
-
-export async function setThreadMode(tabId: number, mode: Mode): Promise<void> {
-  const { chat } = await getThread(tabId);
-  if (chat) await saveChat(tabId, { ...chat, mode });
 }
 
 export async function clearThread(tabId: number): Promise<void> {

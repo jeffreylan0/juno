@@ -6,7 +6,7 @@
  * each tab's thread to `storage.session` (see threads.ts) and the panel
  * renders from storage change events. Messages here are commands only.
  */
-import type { Mode, Rect, SelectionKind } from '@shared/payload';
+import type { Rect, SelectionKind } from '@shared/payload';
 
 /** Any extension page → background: inject the content script and arm a selection. */
 export interface SelectionArmMsg {
@@ -69,7 +69,12 @@ export interface ChatSendMsg {
   type: 'chat:send';
   tabId: number;
   question: string;
-  mode: Mode;
+}
+
+/** Panel → background: ask the last failed question again. */
+export interface ChatRetryMsg {
+  type: 'chat:retry';
+  tabId: number;
 }
 
 /** Panel → background: stop the answer streaming in a tab's conversation. */
@@ -78,11 +83,14 @@ export interface ChatStopMsg {
   tabId: number;
 }
 
-/** Panel → background: change the ask mode for a tab's conversation. */
-export interface ChatModeMsg {
-  type: 'chat:mode';
-  tabId: number;
-  mode: Mode;
+/**
+ * Options → background: check an API key by listing the vendor's models. It
+ * costs nothing, proves the key works, and returns the models to pick from.
+ */
+export interface KeysTestMsg {
+  type: 'keys:test';
+  vendor: 'anthropic' | 'openai';
+  key: string;
 }
 
 /** Content/toast → background: open the answer panel from a real user gesture. */
@@ -91,8 +99,8 @@ export interface PanelOpenMsg {
 }
 
 /**
- * Background → panel: close yourself. Chrome has no sidePanel.close(), but a
- * side panel document may close its own window.
+ * Background → panel: close yourself. For browsers without sidePanel.close()
+ * (Chrome before 141), a side panel document may close its own window.
  */
 export interface PanelCloseMsg {
   type: 'panel:close';
@@ -133,7 +141,8 @@ export type RuntimeMessage =
   | PlanGetMsg
   | ChatSendMsg
   | ChatStopMsg
-  | ChatModeMsg
+  | ChatRetryMsg
+  | KeysTestMsg
   | PanelOpenMsg
   | PanelCloseMsg
   | PanelReadyMsg

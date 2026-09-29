@@ -20,6 +20,12 @@ const BASE =
   'and is asking about exactly that content, nothing else on the page. Be accurate; prefer showing work to asserting results.';
 
 export const MODE_PROMPTS: Record<Mode, string> = {
+  ask:
+    `${BASE} Do what the student asks, the way they ask it. If they want a hint, give a hint that unblocks the next step ` +
+    'and do NOT give the final answer. If they want their work checked, check it, point to the first mistake precisely, ' +
+    'and let them fix it. Otherwise explain the reasoning step by step and, for a problem, state the final answer on its own line ' +
+    'as "Answer: ...". Keep the reply as short as the request allows. A screenshot may contain equations, tables, diagrams or ' +
+    'handwriting: read it carefully, and say so if something is illegible rather than guessing.',
   explain:
     `${BASE} Explain the selected content fully: define the terms, work through the reasoning step by step, ` +
     'and end with a one-sentence takeaway. If it is a problem, solve it completely and state the final answer clearly on its own line as "Answer: ...".',
@@ -49,7 +55,9 @@ export function partToText(p: Part, index: number): string {
     case 'code':
       return `${label}\n\`\`\`${p.language ?? ''}\n${p.code}\n\`\`\``;
     case 'image':
-      return `${label} (attached image, ${p.width}x${p.height}, reason: ${p.reason})`;
+      return p.reason === 'user'
+        ? `${label} (attached screenshot of the area the student selected, ${p.width}x${p.height})`
+        : `${label} (attached image, ${p.width}x${p.height}, reason: ${p.reason})`;
   }
 }
 
@@ -60,10 +68,31 @@ export function partToText(p: Part, index: number): string {
  * edit.
  */
 export const DEFAULT_PROMPTS: Record<Mode, string> = {
+  ask: 'Explain this step by step.',
   explain: 'Explain this step by step, then give the final answer.',
   hint: 'Give me one hint for the next step. Do not give away the answer.',
   check: 'Here is my work. Check it and tell me where the first mistake is.',
 };
+
+/**
+ * An answer macro: a button above the question box. Clicking one fills the
+ * box with its prompt and sends it. The student names and writes their own in
+ * settings; these are the shipped starting set.
+ */
+export interface Macro {
+  id: string;
+  name: string;
+  prompt: string;
+}
+
+/** Short on purpose: it sits in the box when a selection lands and should fit on one line. */
+export const DEFAULT_PROMPT = DEFAULT_PROMPTS.ask;
+
+export const DEFAULT_MACROS: Macro[] = [
+  { id: 'explain', name: 'Explain', prompt: 'Explain this step by step.' },
+  { id: 'hint', name: 'Hint', prompt: 'Give me a hint for the next step, not the answer.' },
+  { id: 'check', name: 'Check', prompt: 'Check my work and point to the first mistake.' },
+];
 
 /** Default question when the student just selects and asks with an empty box. */
 export function defaultQuestion(mode: Mode): string {

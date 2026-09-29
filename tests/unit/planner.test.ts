@@ -26,3 +26,27 @@ describe('planner (week-2 scope)', () => {
     expect(plan.selection.devicePixelRatio).toBe(2);
   });
 });
+
+describe('planner: only the selection', () => {
+  it('sends a box as its screenshot alone, even when page text came along', () => {
+    const plan = buildPlan({
+      selection: { ...box, text: 'Claude Opus 4 $15/ MTok $75/ MTok' },
+      mode: 'ask',
+      capture: { dataUrl: 'data:image/png;base64,AA', width: 400, height: 200 },
+    });
+    expect(plan.parts.map((p) => p.kind)).toEqual(['image']);
+  });
+
+  it('sends nothing for a box whose screenshot failed, rather than guessing', () => {
+    expect(buildPlan({ selection: { ...box, text: 'some text' }, mode: 'ask' }).parts).toEqual([]);
+  });
+
+  it('sends a text selection as its text alone', () => {
+    const plan = buildPlan({
+      selection: { ...box, kind: 'text', text: 'F = ma' },
+      mode: 'ask',
+      capture: { dataUrl: 'data:image/png;base64,AA', width: 1, height: 1 },
+    });
+    expect(plan.parts).toEqual([{ kind: 'text', text: 'F = ma', source: 'selection' }]);
+  });
+});

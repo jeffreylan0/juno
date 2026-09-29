@@ -25,8 +25,22 @@ export const test = base.extend<{ context: BrowserContext; extensionId: string; 
     await context.close();
   },
   serviceWorker: async ({ context }, use) => {
-    let [sw] = context.serviceWorkers();
-    if (!sw) sw = await context.waitForEvent('serviceworker');
+    // Poll rather than waitForEvent: the event can fire between checking
+    // serviceWorkers() and starting to wait, and then it never comes.
+    const deadline = Date.now() + 20_000;
+    let sw: Worker | undefined;
+    while (!(sw = context.serviceWorkers()[0]) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    if (!sw) throw new Error('the extension service worker never started');
+    // Just after launch the worker exists before its globals and extension
+    // bindings do (setTimeout and chrome.storage both come back undefined).
+    // Tests that start by writing settings would race that.
+    while (Date.now() < deadline) {
+      const ready = await sw
+        .evaluate(() => typeof setTimeout === 'function' && typeof chrome !== 'undefined' && !!chrome.storage?.local)
+        .catch(() => false);
+      if (ready) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
     await use(sw);
   },
   extensionId: async ({ serviceWorker }, use) => {
@@ -80,7 +94,9 @@ export async function tabIdFor(sw: Worker, url: string): Promise<number> {
 export async function setSettings(sw: Worker, patch: Record<string, unknown>): Promise<void> {
   await sw.evaluate(async (p: Record<string, unknown>) => {
     const { settings } = await chrome.storage.local.get('settings');
-    await chrome.storage.local.set({ settings: { ...(settings ?? {}), ...p } });
+    // Current settings version (lib/storage.ts SETTINGS_VERSION): without it,
+    // the migration treats these as old settings and resets changed defaults.
+    await chrome.storage.local.set({ settings: { ...(settings ?? {}), version: 2, ...p } });
   }, patch);
   // The background caches settings; give its watcher a moment to catch up.
   await new Promise((r) => setTimeout(r, 150));
@@ -103,35 +119,8 @@ export async function dragBox(page: Page, x0: number, y0: number, x1: number, y1
   await page.mouse.up();
 }
 
-/**
- * Draws a box around `selector` and sends it. A drawn box waits to be
- * adjusted by default, so this also presses Enter to ask.
- */
+/** Draws a box around `selector`; with the default settings, letting go sends it to the panel. */
 export async function boxAndAsk(page: Page, selector: string, pad = 4): Promise<void> {
   const box = (await page.locator(selector).boundingBox())!;
   await dragBox(page, box.x - pad, box.y - pad, box.x + box.width + pad, box.y + box.height + pad);
-  await expect(page.locator('selection-ai-overlay')).toHaveAttribute('data-state', 'adjusting');
-  await page.keyboard.press('Enter');
-}
-
-/**
- * Opens popup.html the way the toolbar does. A real popup is not a tab, so the
- * page under test has to be the active one before the popup mounts — otherwise
- * the background arms the selection in the popup's own tab.
- */
-export async function openPopup(context: BrowserContext, extensionId: string, active: Page) {
-  const popup = await context.newPage();
-  await popup.goto('about:blank');
-  await active.bringToFront();
-  await popup.goto(`chrome-extension://${extensionId}/popup.html`);
-  return popup;
-}
-
-/** Clicks by dispatching a DOM event, which works in a background tab. */
-export async function clickIn(page: Page, selector: string): Promise<void> {
-  await page.evaluate((s: string) => {
-    const el = document.querySelector<HTMLElement>(s);
-    if (!el) throw new Error(`no element for ${s}`);
-    el.click();
-  }, selector);
 }

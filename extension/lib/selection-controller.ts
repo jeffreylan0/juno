@@ -5,9 +5,8 @@
  * cannot be driven the usual way. Both surfaces instead own one of these and
  * feed it `selection:start` from whichever channel reaches them.
  */
-import type { Rect, SelectionKind } from '@shared/payload';
+import type { SelectionKind } from '@shared/payload';
 import { Overlay, type OverlayHost } from '@/entrypoints/content/overlay';
-import { textInRect } from '@/extract/visible';
 import { showToast } from '@/entrypoints/content/toast';
 import { availableModes, detectPdf, readerUrlFor, type PdfContext } from './pdf-detect';
 import type { SelectionCancelMsg, SelectionCommittedMsg, SelectionDoneMsg } from './messages';
@@ -114,14 +113,9 @@ export class SelectionController {
       this.commit('box');
       // Overlay is gone; wait two frames so the capture does not include it.
       await nextPaint();
-      const done: SelectionDoneMsg = {
-        type: 'selection:done',
-        kind: 'box',
-        rect,
-        devicePixelRatio,
-        page,
-        text: this.textIn(rect),
-      };
+      // Only the crop is sent: reading it is the model's job, and scraping
+      // page text from under the box garbled real layouts (see planner.ts).
+      const done: SelectionDoneMsg = { type: 'selection:done', kind: 'box', rect, devicePixelRatio, page };
       await browser.runtime.sendMessage(done);
       return;
     }
@@ -134,19 +128,7 @@ export class SelectionController {
     try {
       return (await getSettings()).adjustBox;
     } catch {
-      return true;
-    }
-  }
-
-  /**
-   * Visible DOM text inside the box rides along so the planner can prefer the
-   * exact form, and so the ask still works if the capture fails.
-   */
-  private textIn(rect: Rect): string | undefined {
-    try {
-      return textInRect(rect, this.opts.doc ?? document) || undefined;
-    } catch {
-      return undefined;
+      return false;
     }
   }
 

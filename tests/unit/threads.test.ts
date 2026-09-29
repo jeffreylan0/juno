@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import type { Plan } from '@shared/payload';
-import { chatKey, getThread, historyOf, parseKey, saveChat, selKey, setThreadMode, startThread, clearThread, type Turn } from '@/lib/threads';
+import { chatKey, getThread, historyOf, parseKey, saveChat, selKey, startThread, clearThread, type Turn } from '@/lib/threads';
 
 function plan(id: string, text = 'F = ma'): Plan {
   return {
@@ -53,10 +53,9 @@ describe('per-tab threads', () => {
     expect(await browser.storage.local.get(null)).toEqual({});
   });
 
-  it('remembers a mode switch and forgets a closed tab', async () => {
-    await startThread(3, plan('a'));
-    await setThreadMode(3, 'hint');
-    expect((await getThread(3)).chat?.mode).toBe('hint');
+  it('records why a selection could not be used, and forgets a closed tab', async () => {
+    await startThread(3, plan('a'), 'Could not take a screenshot.');
+    expect((await getThread(3)).chat?.notice).toBe('Could not take a screenshot.');
     await clearThread(3);
     expect(await getThread(3)).toEqual({ tabId: 3, plan: null, chat: null });
   });

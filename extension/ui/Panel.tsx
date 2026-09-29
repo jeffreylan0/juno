@@ -4,22 +4,25 @@
  * questions to the background, which owns the conversation and streams the
  * answer back into storage.
  *
- * The selection is the conversation's opening attachment. It sits above the
- * composer until the first question is sent, then lives inside that first
- * message; every later question is a follow-up on the same selection.
+ * Layout, top to bottom: the selection (exactly what the model gets), the
+ * conversation, then the answer macros and a large question box. A fresh
+ * selection puts the short default prompt in the box; Enter or Send asks it.
+ * A macro fills the box with its own prompt and sends it straight away.
  *
  * Runs in the Chrome/Edge side panel, the Firefox sidebar, and (from week 12)
  * inside the Safari in-page overlay.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Mode, ModelRef, Plan } from '@shared/payload';
-import { MODES } from '@shared/payload';
-import { getSettings, settingsItem, type Settings } from '@/lib/storage';
-import { chatKey, getThread, selKey, type Chat } from '@/lib/threads';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { ModelRef, Plan } from '@shared/payload';
+import { MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
+import { getSettings, settingsItem, type Macro, type Settings } from '@/lib/storage';
+import { chatKey, getThread, selKey, type Chat, type Turn } from '@/lib/threads';
+import { isTransient, needsSettings } from '@/lib/providers/errors';
 import { Answer } from './Answer';
 import { SelectionCard } from './Selection';
 
-const MODE_LABEL: Record<Mode, string> = { explain: 'Explain', hint: 'Hint', check: 'Check' };
+/** How long a macro's prompt shows in the box before it is sent. */
+const MACRO_FILL_MS = 140;
 
 /**
  * `?tabId=N` pins the panel to one tab. Tests use it, since they open the
@@ -92,12 +95,15 @@ export function Panel() {
   /** Plans already prefilled, so a stored thread is not re-prefilled on every render. */
   const prefilled = useRef(new Set<string>());
   const threadRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLTextAreaElement>(null);
 
-  const turns = chat?.planId === plan?.id ? (chat?.turns ?? []) : [];
-  const mode: Mode = (chat?.planId === plan?.id ? chat?.mode : undefined) ?? plan?.mode ?? settings?.defaultMode ?? 'explain';
+  const ours = !!chat && chat.planId === plan?.id;
+  const turns = ours ? chat!.turns : [];
+  const notice = ours ? chat!.notice : undefined;
   const busy = turns.some((t) => t.streaming);
   const draft = tabId !== null ? (drafts[tabId] ?? '') : '';
   const started = turns.length > 0;
+  const askable = !!plan && plan.parts.length > 0 && !notice;
 
   useEffect(() => {
     // Clears the toolbar badge the background sets when it could not open us.
@@ -105,8 +111,8 @@ export function Panel() {
     void getSettings().then(setSettings);
     const unwatch = settingsItem.watch(() => void getSettings().then(setSettings));
 
-    // The bar's X closes everything. Chrome has no sidePanel.close(), but a
-    // side panel document may close its own window.
+    // The bar's X closes everything. Chrome 141+ closes us with
+    // sidePanel.close(); older browsers need the document to close itself.
     let windowId: number | undefined;
     void browser.windows.getCurrent().then((w) => (windowId = w.id));
     const onMessage = (raw: unknown) => {
@@ -130,65 +136,83 @@ export function Panel() {
     [tabId],
   );
 
-  // A fresh selection puts the mode's saved prompt in the box, ready to edit.
-  // (Sending straight away, when the settings ask for it, is the background's job.)
+  // A fresh selection puts the short default prompt in the box, ready to send
+  // or overwrite. (Sending straight away, when settings ask for it, is the
+  // background's job.)
   useEffect(() => {
-    if (!plan || !settings || tabId === null) return;
+    if (!plan || !settings || tabId === null || !askable) return;
     if (prefilled.current.has(plan.id) || started) return;
     prefilled.current.add(plan.id);
-    setDraft(settings.prompts[mode] ?? '');
-  }, [plan, settings, tabId, started, mode, setDraft]);
+    setDraft(settings.defaultPrompt);
+    requestAnimationFrame(() => {
+      const box = boxRef.current;
+      if (!box) return;
+      box.focus({ preventScroll: true });
+      box.setSelectionRange(box.value.length, box.value.length);
+    });
+  }, [plan, settings, tabId, started, askable, setDraft]);
+
+  // The box grows with what is typed, up to a cap, then scrolls.
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    box.style.height = 'auto';
+    box.style.height = `${Math.min(box.scrollHeight, Math.round(innerHeight * 0.4))}px`;
+  }, [draft]);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
   }, [turns.length, turns[turns.length - 1]?.text]);
 
-  const send = useCallback(() => {
-    if (!plan || tabId === null || busy) return;
-    void browser.runtime.sendMessage({ type: 'chat:send', tabId, question: draft, mode });
-    setDraft('');
-  }, [plan, tabId, busy, draft, mode, setDraft]);
+  const ask = useCallback(
+    (question: string) => {
+      if (!askable || tabId === null || busy) return;
+      void browser.runtime.sendMessage({ type: 'chat:send', tabId, question });
+      setDraft('');
+    },
+    [askable, tabId, busy, setDraft],
+  );
+
+  const runMacro = useCallback(
+    (macro: Macro) => {
+      if (!askable || busy) return;
+      // Fill the box first so the student sees what is being asked, then send.
+      setDraft(macro.prompt);
+      setTimeout(() => ask(macro.prompt), MACRO_FILL_MS);
+    },
+    [askable, busy, setDraft, ask],
+  );
 
   const stop = useCallback(() => {
     if (tabId !== null) void browser.runtime.sendMessage({ type: 'chat:stop', tabId });
   }, [tabId]);
 
-  const changeMode = useCallback(
-    (m: Mode) => {
-      if (tabId === null) return;
-      void browser.runtime.sendMessage({ type: 'chat:mode', tabId, mode: m });
-      // Before anything is sent, the box still holds the old mode's prompt;
-      // swap it for the new one unless the student has already edited it.
-      if (!started && settings && draft === (settings.prompts[mode] ?? '')) setDraft(settings.prompts[m] ?? '');
-    },
-    [tabId, started, settings, draft, mode, setDraft],
-  );
+  const retry = useCallback(() => {
+    if (tabId !== null) void browser.runtime.sendMessage({ type: 'chat:retry', tabId });
+  }, [tabId]);
 
-  const placeholder = useMemo(() => {
-    if (!plan) return 'Select something on the page first';
-    return started ? 'Ask a follow-up…' : `Ask about the selection, then ${MODE_LABEL[mode]}`;
-  }, [plan, started, mode]);
+  const placeholder = !plan ? 'Select something on the page first' : started ? 'Ask a follow-up…' : 'Ask about this selection…';
 
   return (
     <div className="panel" data-tab={tabId ?? ''}>
-      <header className="bar">
-        <div className="modes" role="tablist">
-          {MODES.map((m) => (
-            <button key={m} role="tab" aria-selected={m === mode} className={m === mode ? 'on' : ''} onClick={() => changeMode(m)}>
-              {MODE_LABEL[m]}
-            </button>
-          ))}
-        </div>
-        <div className="bar-right">
-          <ModelPicker settings={settings} />
-          <button type="button" className="icon" title="Settings" aria-label="Settings" onClick={() => browser.runtime.openOptionsPage()}>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
+      <header className="top">
+        <ModelChip settings={settings} />
+        <button type="button" className="icon" title="Settings" aria-label="Settings" onClick={() => browser.runtime.openOptionsPage()}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
+      </header>
+
+      {settings?.provider === 'mock' && (
+        <div className="mock-note" data-testid="mock-note">
+          Placeholder answers — no AI is connected.{' '}
+          <button type="button" className="link" onClick={() => browser.runtime.openOptionsPage()}>
+            Connect Claude or ChatGPT
           </button>
         </div>
-      </header>
+      )}
 
       <div className="thread" ref={threadRef}>
         {!plan && (
@@ -197,55 +221,107 @@ export function Panel() {
             select what you want to ask about.
           </div>
         )}
+        {plan && <SelectionCard plan={plan} notice={notice} />}
         {plan &&
           turns.map((t, i) =>
             t.role === 'user' ? (
               <div key={t.id} className="turn user">
-                {/* The selection belongs to the opening message, like an attachment. */}
-                {i === 0 && <SelectionCard plan={plan} variant="sent" />}
                 <div className="turn-text">{t.text}</div>
               </div>
             ) : (
               <div key={t.id} className="turn assistant" data-streaming={t.streaming ? 'true' : 'false'}>
-                {t.error ? <div className="error">{t.error}</div> : <Answer text={t.text} streaming={!!t.streaming} />}
-                {!t.streaming && !t.error && <Usage model={t.model} usage={t.usage} cached={t.cached} />}
+                {t.error ? (
+                  <ErrorTurn turn={t} last={i === turns.length - 1} onRetry={retry} />
+                ) : (
+                  <Answer text={t.text} streaming={!!t.streaming} />
+                )}
+                {settings?.showUsage && !t.streaming && !t.error && <Usage model={t.model} usage={t.usage} cached={t.cached} />}
               </div>
             ),
           )}
       </div>
 
-      {plan && !started && <SelectionCard plan={plan} variant="pending" />}
-
-      <form
-        className="composer"
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-      >
-        <textarea
-          value={draft}
-          placeholder={placeholder}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          rows={2}
-          disabled={!plan}
-        />
-        {busy ? (
-          <button type="button" onClick={stop}>
-            Stop
-          </button>
-        ) : (
-          <button type="submit" disabled={!plan}>
-            {started ? 'Send' : MODE_LABEL[mode]}
-          </button>
+      <div className="ask">
+        {settings && settings.macros.length > 0 && (
+          <div className="macros" role="toolbar" aria-label="Answer macros">
+            {settings.macros.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className="macro"
+                title={m.prompt}
+                disabled={!askable || busy}
+                onClick={() => runMacro(m)}
+              >
+                {m.name}
+              </button>
+            ))}
+          </div>
         )}
-      </form>
+        <form
+          className={`composer${askable ? '' : ' off'}`}
+          onSubmit={(e) => {
+            e.preventDefault();
+            ask(draft);
+          }}
+        >
+          <textarea
+            ref={boxRef}
+            value={draft}
+            placeholder={placeholder}
+            aria-label="Your question"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              // Not while an input method is composing (pinyin, kana, …):
+              // Enter there picks a candidate, it is not "send".
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                ask(draft);
+              }
+            }}
+            rows={3}
+            disabled={!askable}
+          />
+          <div className="composer-row">
+            <span className="composer-hint">Enter to send · Shift+Enter for a new line</span>
+            {busy ? (
+              <button type="button" className="send stop" onClick={stop}>
+                Stop
+              </button>
+            ) : (
+              <button type="submit" className="send" disabled={!askable}>
+                Send
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 19V5" />
+                  <path d="m5 12 7-7 7 7" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ErrorTurn({ turn, last, onRetry }: { turn: Turn; last: boolean; onRetry: () => void }) {
+  return (
+    <div className="error" role="alert" data-code={turn.errorCode ?? ''}>
+      <div>{turn.error}</div>
+      {(needsSettings(turn.errorCode) || (last && isTransient(turn.errorCode))) && (
+        <div className="error-actions">
+          {needsSettings(turn.errorCode) && (
+            <button type="button" onClick={() => browser.runtime.openOptionsPage()}>
+              Open settings
+            </button>
+          )}
+          {last && isTransient(turn.errorCode) && (
+            <button type="button" onClick={onRetry}>
+              Try again
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -261,18 +337,26 @@ function Usage({ model, usage, cached }: { model?: ModelRef; usage?: { inputToke
   );
 }
 
-function ModelPicker({ settings }: { settings: Settings | null }) {
-  if (!settings) return null;
+/** Who is answering, at a glance; a click opens settings to change it. */
+function ModelChip({ settings }: { settings: Settings | null }) {
+  if (!settings) return <span />;
+  const vendorName = settings.vendor === 'anthropic' ? 'Claude' : 'ChatGPT';
   const label =
     settings.provider === 'mock'
-      ? 'mock'
+      ? 'Mock answers'
       : settings.provider === 'local'
-        ? `local · ${settings.localModel}`
-        : settings.modelOverride
-          ? settings.modelOverride.model
-          : `${settings.vendor} · auto`;
+        ? `Local · ${settings.localModel}`
+        : settings.provider === 'gateway'
+          ? 'Hosted plan'
+          : settings.modelOverride
+            ? (MODEL_NAMES[settings.modelOverride.model] ?? settings.modelOverride.model)
+            : `${vendorName} · Auto`;
+  const title =
+    settings.provider === 'byok' && !settings.modelOverride
+      ? `${MODEL_NAMES[MODEL_TABLE[settings.vendor].small]} for text, ${MODEL_NAMES[MODEL_TABLE[settings.vendor].large]} for screenshots`
+      : 'Change in Settings';
   return (
-    <button type="button" className="model" title="Change in Options" onClick={() => browser.runtime.openOptionsPage()}>
+    <button type="button" className="model" title={title} data-testid="model-chip" onClick={() => browser.runtime.openOptionsPage()}>
       {label}
     </button>
   );

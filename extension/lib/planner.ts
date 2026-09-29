@@ -1,9 +1,18 @@
 /**
- * Builds a Plan from a selection. Week-2 scope: a box selection becomes an
- * image part plus any DOM text the content script recovered; text selections
- * become a text part. Weeks 5–6 replace `partsFor` with the extractors
- * (visible text, KaTeX/MathJax, tables, code) and add crops only for visual or
- * layout-sensitive content.
+ * Builds a Plan from a selection: exactly what the student selected, nothing
+ * the extension read off the page on its own.
+ *
+ *   box     → the screenshot crop, and only the crop. Reading it (OCR, maths,
+ *             tables) is the model's job; page text scraped from under the box
+ *             came out garbled on real layouts and duplicated what the image
+ *             already shows.
+ *   text    → the selected text, and only the text.
+ *   element → the element's text when it has some, otherwise its crop
+ *             (element selection is the next feature; this is a placeholder).
+ *
+ * This departs from the plan's "cheapest exact form" planner for box
+ * selections, by the product owner's call. The eval keeps a `planner` route
+ * (eval/lib.ts) so the text-extraction idea can still be measured for Gate A.
  */
 import { estimateTokens, type Mode, type Part, type Plan } from '@shared/payload';
 import type { SelectionDoneMsg } from './messages';
@@ -19,21 +28,19 @@ export interface PlanInput {
 }
 
 export function partsFor(input: PlanInput): Part[] {
-  const parts: Part[] = [];
-  const text = input.selection.text?.trim();
-  if (text) parts.push({ kind: 'text', text, source: input.selection.kind === 'text' ? 'selection' : 'element' });
-  if (input.capture) {
-    parts.push({
-      kind: 'image',
-      dataUrl: input.capture.dataUrl,
-      width: input.capture.width,
-      height: input.capture.height,
-      // Week 2: every box is user-requested; the extractors later downgrade this to
-      // 'visual' | 'layout' | 'fallback' or drop the crop entirely.
-      reason: input.selection.kind === 'box' ? 'user' : 'fallback',
-    });
+  const { selection, capture } = input;
+  const image = (reason: 'user' | 'fallback'): Part[] =>
+    capture ? [{ kind: 'image', dataUrl: capture.dataUrl, width: capture.width, height: capture.height, reason }] : [];
+  const text = selection.text?.trim();
+
+  switch (selection.kind) {
+    case 'box':
+      return image('user');
+    case 'text':
+      return text ? [{ kind: 'text', text, source: 'selection' }] : [];
+    case 'element':
+      return text ? [{ kind: 'text', text, source: 'element' }] : image('fallback');
   }
-  return parts;
 }
 
 export function buildPlan(input: PlanInput, id = crypto.randomUUID()): Plan {

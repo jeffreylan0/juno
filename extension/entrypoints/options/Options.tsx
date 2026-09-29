@@ -1,33 +1,43 @@
 /**
- * Settings. Grouped into what the student actually thinks about: how they
- * select, what gets asked, which model answers, and what stays private.
+ * Settings. Grouped into what the student actually thinks about: who answers,
+ * how they select, what gets asked, and what stays private.
  *
  * Deliberately barebones — every colour is a token in options.css so the real
- * theme drops in without touching this file.
+ * theme drops in without touching this file. A full settings pass is planned
+ * for the next round; this one adds the answer macros and the key check.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { MODES, type Mode } from '@shared/payload';
-import { DEFAULT_PROMPTS } from '@shared/prompts';
-import { MODEL_TABLE } from '@/lib/router';
+import { DEFAULT_MACROS, DEFAULT_PROMPT } from '@shared/prompts';
+import { MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
+import type { KeyModel, KeyTestResult } from '@/lib/providers/byok';
 import {
   DEFAULT_SETTINGS,
   getKeys,
   getSettings,
   keysItem,
+  sanitizeMacros,
   settingsItem,
   type Keys,
+  type Macro,
   type PanelOpen,
   type SendBehavior,
   type Settings,
 } from '@/lib/storage';
 
-const MODE_LABEL: Record<Mode, string> = { explain: 'Explain', hint: 'Hint', check: 'Check' };
+type Vendor = 'anthropic' | 'openai';
+
+const VENDOR_NAME: Record<Vendor, string> = { anthropic: 'Anthropic (Claude)', openai: 'OpenAI (ChatGPT)' };
+const KEY_HINT: Record<Vendor, string> = { anthropic: 'sk-ant-…', openai: 'sk-…' };
+const KEY_PAGE: Record<Vendor, string> = {
+  anthropic: 'https://console.anthropic.com/settings/keys',
+  openai: 'https://platform.openai.com/api-keys',
+};
 
 const PROVIDERS: { id: Settings['provider']; label: string; help: string }[] = [
-  { id: 'mock', label: 'Mock (replay)', help: 'Replays recorded answers; no network, no spend. The development default.' },
-  { id: 'local', label: 'Local (Ollama)', help: 'An OpenAI-compatible server on your own machine. Free and private.' },
-  { id: 'byok', label: 'My own API key', help: 'Direct calls to Anthropic or OpenAI with the key below.' },
-  { id: 'gateway', label: 'Hosted plan', help: 'Sign in; usage counts against your plan. Arrives in week 9.' },
+  { id: 'byok', label: 'My own API key', help: 'Answers come straight from Anthropic or OpenAI, billed to your key. The key stays in this browser.' },
+  { id: 'mock', label: 'Placeholder answers', help: 'No AI, no network, no cost. For trying the extension out.' },
+  { id: 'local', label: 'Local model (Ollama)', help: 'A model running on your own machine. Free and private; needs Ollama.' },
+  { id: 'gateway', label: 'Hosted plan', help: 'Sign in; usage counts against your plan. Coming later.' },
 ];
 
 const PANEL: { id: PanelOpen; label: string; help: string }[] = [
@@ -44,10 +54,14 @@ const PANEL: { id: PanelOpen; label: string; help: string }[] = [
 ];
 
 const SEND: { id: SendBehavior; label: string; help: string }[] = [
-  { id: 'prefill', label: 'Put the prompt in the box and wait', help: 'You can edit it before anything is sent. Nothing costs money until you ask.' },
-  { id: 'auto', label: 'Send as soon as I select', help: 'Fastest loop: select, read. Every selection is a paid call.' },
-  { id: 'auto-box', label: 'Send box selections, wait for the rest', help: 'Screenshots of problems go straight out; text and element selections wait.' },
+  { id: 'prefill', label: 'Put the default prompt in the box and wait', help: 'Press Enter or a macro to ask. Nothing is spent until you do.' },
+  { id: 'auto', label: 'Ask the default prompt straight away', help: 'Fastest: select, read. Every selection is a paid call.' },
+  { id: 'auto-box', label: 'Ask straight away for boxes only', help: 'Screenshots go straight out; text selections wait for you.' },
 ];
+
+type TestState = { state: 'idle' } | { state: 'testing' } | KeyTestResult;
+
+const isResult = (t: TestState): t is KeyTestResult => 'ok' in t;
 
 export function Options() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -55,34 +69,96 @@ export function Options() {
   const [blocked, setBlocked] = useState('');
   const [saved, setSaved] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [tests, setTests] = useState<Record<Vendor, TestState>>({ anthropic: { state: 'idle' }, openai: { state: 'idle' } });
+  const [models, setModels] = useState<Partial<Record<Vendor, KeyModel[]>>>({});
 
   useEffect(() => {
-    void Promise.all([getSettings(), getKeys()]).then(([s, k]) => {
+    void Promise.all([getSettings(), getKeys(), browser.storage.local.get('models')]).then(([s, k, m]) => {
       setSettings(s);
       setKeys(k);
       setBlocked(s.blockedSites.join('\n'));
+      setModels((m.models as Partial<Record<Vendor, KeyModel[]>> | undefined) ?? {});
       setLoaded(true);
     });
   }, []);
 
-  async function save() {
+  async function persist(next: Settings, nextKeys: Keys) {
     const blockedSites = blocked
       .split(/\n|,/)
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
-    await settingsItem.setValue({ ...settings, blockedSites });
-    await keysItem.setValue(keys);
+    const clean: Settings = {
+      ...next,
+      blockedSites,
+      defaultPrompt: next.defaultPrompt.trim() ? next.defaultPrompt : DEFAULT_PROMPT,
+      // Blank rows are drafts nobody finished; do not ship an empty button.
+      macros: sanitizeMacros(next.macros.filter((m) => m.name.trim() && m.prompt.trim())),
+    };
+    await settingsItem.setValue(clean);
+    await keysItem.setValue(nextKeys);
+    setSettings(clean);
     setSaved(true);
     setTimeout(() => setSaved(false), 1600);
   }
 
-  const models = MODEL_TABLE[settings.vendor];
-  const promptsChanged = useMemo(
-    () => MODES.some((m) => settings.prompts[m] !== DEFAULT_PROMPTS[m]),
-    [settings.prompts],
-  );
+  async function test(vendor: Vendor) {
+    setTests((t) => ({ ...t, [vendor]: { state: 'testing' } }));
+    let result: KeyTestResult;
+    try {
+      result = (await browser.runtime.sendMessage({ type: 'keys:test', vendor, key: keys[vendor] })) as KeyTestResult;
+    } catch (err) {
+      result = { ok: false, error: `Could not run the check: ${(err as Error).message}`, code: 'http' };
+    }
+    setTests((t) => ({ ...t, [vendor]: result }));
+    if (result.ok) {
+      const next = { ...models, [vendor]: result.models };
+      setModels(next);
+      await browser.storage.local.set({ models: next });
+    }
+  }
+
+  /** One click from a working key to real answers: switch, save, done. */
+  async function useKey(vendor: Vendor) {
+    await persist(
+      {
+        ...settings,
+        provider: 'byok',
+        vendor,
+        modelOverride: settings.modelOverride?.vendor === vendor ? settings.modelOverride : null,
+      },
+      keys,
+    );
+  }
+
+  const setMacro = (i: number, patch: Partial<Macro>) =>
+    setSettings((s) => ({ ...s, macros: s.macros.map((m, j) => (j === i ? { ...m, ...patch } : m)) }));
+  const moveMacro = (i: number, by: number) =>
+    setSettings((s) => {
+      const macros = [...s.macros];
+      const j = i + by;
+      if (j < 0 || j >= macros.length) return s;
+      [macros[i], macros[j]] = [macros[j]!, macros[i]!];
+      return { ...s, macros };
+    });
+  const removeMacro = (i: number) => setSettings((s) => ({ ...s, macros: s.macros.filter((_, j) => j !== i) }));
+  const addMacro = () =>
+    setSettings((s) => ({ ...s, macros: [...s.macros, { id: `macro-${Date.now().toString(36)}`, name: '', prompt: '' }] }));
+
+  const macrosChanged = useMemo(() => {
+    const shape = (ms: Macro[]) => JSON.stringify(ms.map(({ name, prompt }) => ({ name, prompt })));
+    return shape(settings.macros) !== shape(DEFAULT_MACROS);
+  }, [settings.macros]);
 
   if (!loaded) return <main className="options" />;
+
+  const vendor = settings.vendor;
+  const table = MODEL_TABLE[vendor];
+  const listed = models[vendor];
+  const current = tests[vendor];
+  const works = isResult(current) && current.ok;
+  const testing = 'state' in current && current.state === 'testing';
+  const using = settings.provider === 'byok' && settings.vendor === vendor;
+  const choices: KeyModel[] = listed ?? [table.small, table.large].map((id) => ({ id, name: MODEL_NAMES[id] ?? id, vision: true }));
 
   return (
     <main className="options">
@@ -91,6 +167,92 @@ export function Options() {
         Click the toolbar icon and a selection starts right away. Switch between box and text from the chips on screen, or
         press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> and <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>.
       </p>
+
+      <section>
+        <h2>Who answers</h2>
+        {PROVIDERS.map((p) => (
+          <label key={p.id} className="radio">
+            <input type="radio" name="provider" checked={settings.provider === p.id} onChange={() => setSettings({ ...settings, provider: p.id })} />
+            <span>
+              <b>{p.label}</b>
+              <small>{p.help}</small>
+            </span>
+          </label>
+        ))}
+      </section>
+
+      <section data-testid="keys">
+        <h2>Your API key</h2>
+        <p className="help">
+          Stored only in this browser profile and sent only to the vendor you choose. Set a monthly spend limit in the vendor's
+          console so a busy week cannot surprise you.
+        </p>
+        <label>
+          Vendor
+          <select value={vendor} onChange={(e) => setSettings({ ...settings, vendor: e.target.value as Vendor, modelOverride: null })}>
+            <option value="anthropic">{VENDOR_NAME.anthropic}</option>
+            <option value="openai">{VENDOR_NAME.openai}</option>
+          </select>
+        </label>
+        <div className="field">
+          <span className="field-label">
+            {vendor === 'anthropic' ? 'Anthropic' : 'OpenAI'} key ·{' '}
+            <a className="link" href={KEY_PAGE[vendor]} target="_blank" rel="noopener noreferrer">
+              get one
+            </a>
+          </span>
+          <span className="key-row">
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              aria-label={`${vendor} API key`}
+              value={keys[vendor]}
+              data-testid="key-input"
+              onChange={(e) => {
+                setKeys({ ...keys, [vendor]: e.target.value.trim() });
+                setTests((t) => ({ ...t, [vendor]: { state: 'idle' } }));
+              }}
+              placeholder={KEY_HINT[vendor]}
+            />
+            <button
+              type="button"
+              className="secondary"
+              data-testid="test-key"
+              disabled={!keys[vendor] || testing}
+              onClick={() => void test(vendor)}
+            >
+              {testing ? 'Checking…' : 'Test key'}
+            </button>
+          </span>
+        </div>
+        <KeyStatus test={current} />
+        {works && !using && (
+          <button type="button" className="primary" data-testid="use-key" onClick={() => void useKey(vendor)}>
+            Use this key for answers
+          </button>
+        )}
+        {works && using && <p className="help ok">Answers come from this key. Save if you changed it.</p>}
+        <label>
+          Model
+          <select
+            value={settings.modelOverride?.model ?? ''}
+            data-testid="model-select"
+            onChange={(e) => setSettings({ ...settings, modelOverride: e.target.value ? { vendor, model: e.target.value } : null })}
+          >
+            <option value="">
+              Automatic — {MODEL_NAMES[table.small]} for text, {MODEL_NAMES[table.large]} for screenshots
+            </option>
+            {choices.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+                {m.vision ? '' : ' (text only — cannot read boxes)'}
+              </option>
+            ))}
+          </select>
+        </label>
+        {!listed && <p className="help">Test your key to list every model it can use.</p>}
+      </section>
 
       <section>
         <h2>Selecting</h2>
@@ -109,8 +271,8 @@ export function Options() {
           <span>
             <b>Adjust a box before asking</b>
             <small>
-              After you draw a box it stays on screen with handles: drag an edge to resize, drag inside to move, then press Ask
-              or Enter. Off, a box is sent the moment you let go.
+              Off: a box goes to the panel the moment you let go. On: it stays on screen with handles to resize or move, then
+              Enter or Ask sends it.
             </small>
           </span>
         </label>
@@ -126,23 +288,31 @@ export function Options() {
         </label>
         <p className="help">{PANEL.find((p) => p.id === settings.panelOpen)?.help} The red ✕ on the bar closes the panel too.</p>
         <p className="help">
-          On a PDF opened in the browser's own viewer, only box selection is possible — the text lives inside a plugin the
-          extension cannot read. Selection AI offers to reopen the file in its own reader, where all modes work.
+          On a PDF opened in the browser's own viewer, only box selection is possible. Selection AI offers to reopen the file
+          in its own reader, where all modes work.
         </p>
       </section>
 
-      <section>
-        <h2>Asking</h2>
+      <section data-testid="asking">
+        <div className="head">
+          <h2>Asking</h2>
+          {macrosChanged && (
+            <button type="button" className="link" onClick={() => setSettings({ ...settings, macros: DEFAULT_MACROS.map((m) => ({ ...m })) })}>
+              Reset macros
+            </button>
+          )}
+        </div>
         <label>
-          Which mode a selection starts in
-          <select value={settings.defaultMode} onChange={(e) => setSettings({ ...settings, defaultMode: e.target.value as Mode })}>
-            {MODES.map((m) => (
-              <option key={m} value={m}>
-                {MODE_LABEL[m]}
-              </option>
-            ))}
-          </select>
+          Default prompt
+          <input
+            value={settings.defaultPrompt}
+            maxLength={120}
+            data-testid="default-prompt"
+            onChange={(e) => setSettings({ ...settings, defaultPrompt: e.target.value })}
+            placeholder={DEFAULT_PROMPT}
+          />
         </label>
+        <p className="help">Sits in the question box when a selection lands. Keep it short; one line reads best.</p>
         <label>
           When a selection lands
           <select value={settings.sendBehavior} onChange={(e) => setSettings({ ...settings, sendBehavior: e.target.value as SendBehavior })}>
@@ -154,78 +324,52 @@ export function Options() {
           </select>
         </label>
         <p className="help">{SEND.find((s) => s.id === settings.sendBehavior)?.help}</p>
-      </section>
 
-      <section>
-        <div className="head">
-          <h2>Default prompts</h2>
-          {promptsChanged && (
-            <button type="button" className="link" onClick={() => setSettings({ ...settings, prompts: { ...DEFAULT_PROMPTS } })}>
-              Reset to defaults
-            </button>
-          )}
-        </div>
-        <p className="help">What lands in the question box for each mode. Edit anything here; leave one blank to ask with no question at all.</p>
-        {MODES.map((m) => (
-          <label key={m}>
-            {MODE_LABEL[m]}
-            <textarea
-              rows={2}
-              value={settings.prompts[m] ?? ''}
-              placeholder={DEFAULT_PROMPTS[m]}
-              onChange={(e) => setSettings({ ...settings, prompts: { ...settings.prompts, [m]: e.target.value } })}
-            />
-          </label>
-        ))}
-      </section>
-
-      <section>
-        <h2>Model</h2>
-        {PROVIDERS.map((p) => (
-          <label key={p.id} className="radio">
-            <input type="radio" name="provider" checked={settings.provider === p.id} onChange={() => setSettings({ ...settings, provider: p.id })} />
-            <span>
-              <b>{p.label}</b>
-              <small>{p.help}</small>
-            </span>
-          </label>
-        ))}
-        <label>
-          Vendor
-          <select
-            value={settings.vendor}
-            onChange={(e) => setSettings({ ...settings, vendor: e.target.value as Settings['vendor'], modelOverride: null })}
-          >
-            <option value="anthropic">Anthropic (Claude)</option>
-            <option value="openai">OpenAI (ChatGPT)</option>
-          </select>
-        </label>
-        <label>
-          Which model
-          <select
-            value={settings.modelOverride?.model ?? ''}
-            onChange={(e) =>
-              setSettings({ ...settings, modelOverride: e.target.value ? { vendor: settings.vendor, model: e.target.value } : null })
-            }
-          >
-            <option value="">Automatic — small for text, large for images and checking</option>
-            <option value={models.small}>{models.small} (small)</option>
-            <option value={models.large}>{models.large} (large)</option>
-          </select>
-        </label>
-      </section>
-
-      <section>
-        <h2>Your API keys</h2>
-        <p className="help">Stored only in this browser profile and never sent anywhere but the provider. Set a monthly spend cap in each provider console.</p>
-        <label>
-          Anthropic key
-          <input type="password" autoComplete="off" value={keys.anthropic} onChange={(e) => setKeys({ ...keys, anthropic: e.target.value.trim() })} placeholder="sk-ant-..." />
-        </label>
-        <label>
-          OpenAI key
-          <input type="password" autoComplete="off" value={keys.openai} onChange={(e) => setKeys({ ...keys, openai: e.target.value.trim() })} placeholder="sk-..." />
-        </label>
+        <h3>Answer macros</h3>
+        <p className="help">Buttons above the question box. A click puts the prompt in the box and sends it.</p>
+        <ol className="macro-list">
+          {settings.macros.map((m, i) => (
+            <li key={m.id} className="macro-row" data-testid="macro-row">
+              <input
+                className="macro-name"
+                value={m.name}
+                placeholder="Button name"
+                aria-label="Button name"
+                maxLength={24}
+                onChange={(e) => setMacro(i, { name: e.target.value })}
+              />
+              <textarea
+                className="macro-prompt"
+                rows={2}
+                value={m.prompt}
+                placeholder="Prompt it sends"
+                aria-label="Prompt"
+                onChange={(e) => setMacro(i, { prompt: e.target.value })}
+              />
+              <span className="macro-tools">
+                <button type="button" className="tool" title="Move up" aria-label="Move up" disabled={i === 0} onClick={() => moveMacro(i, -1)}>
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  className="tool"
+                  title="Move down"
+                  aria-label="Move down"
+                  disabled={i === settings.macros.length - 1}
+                  onClick={() => moveMacro(i, 1)}
+                >
+                  ↓
+                </button>
+                <button type="button" className="tool" title="Remove" aria-label="Remove" onClick={() => removeMacro(i)}>
+                  ✕
+                </button>
+              </span>
+            </li>
+          ))}
+        </ol>
+        <button type="button" className="secondary add" data-testid="add-macro" onClick={addMacro} disabled={settings.macros.length >= 8}>
+          Add macro
+        </button>
       </section>
 
       <section>
@@ -243,16 +387,35 @@ export function Options() {
       <section>
         <h2>Privacy</h2>
         <p className="help">
-          Nothing leaves the page until you select something, and only the selection is sent — never the whole page. Blocked
-          sites turn the shortcut off entirely: one hostname per line.
+          Nothing leaves the page until you select something, and only the selection is sent — the screenshot of a box, or the
+          text you selected — never the rest of the page. Blocked sites turn the shortcut off entirely: one hostname per line.
         </p>
         <textarea rows={4} value={blocked} onChange={(e) => setBlocked(e.target.value)} placeholder="exam.example.edu" />
       </section>
 
       <footer>
-        <button type="button" onClick={() => void save()}>Save</button>
+        <button type="button" className="primary" data-testid="save" onClick={() => void persist(settings, keys)}>
+          Save
+        </button>
         {saved && <span className="saved">Saved</span>}
       </footer>
     </main>
+  );
+}
+
+function KeyStatus({ test }: { test: TestState }) {
+  if (!isResult(test)) return null;
+  if (test.ok) {
+    const vision = test.models.filter((m) => m.vision).length;
+    return (
+      <p className="help ok" data-testid="key-status">
+        ✓ Key works. {test.models.length} models available{vision !== test.models.length ? `, ${vision} of them read images` : ''}.
+      </p>
+    );
+  }
+  return (
+    <p className="help bad" data-testid="key-status">
+      {test.error}
+    </p>
   );
 }

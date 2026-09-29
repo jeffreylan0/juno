@@ -14,7 +14,8 @@ export const gatewayDriver: ProviderDriver = {
     const usage = yield* streamOpenAIChat(
       ctx.fetch,
       `${ctx.settings.gatewayUrl.replace(/\/$/, '')}/ask`,
-      { authorization: `Bearer ${ctx.keys.session}`, 'x-vendor': 'Worker' },
+      'the hosted service',
+      { authorization: `Bearer ${ctx.keys.session}` },
       { model: `${model.vendor}/${model.model}`, messages: toChatMessages(req), route: req.plan.route },
       ctx.signal,
     );

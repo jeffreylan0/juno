@@ -6,8 +6,14 @@
  * only where the content is visual or layout-sensitive.
  */
 
-export type Mode = 'explain' | 'hint' | 'check';
-export const MODES: readonly Mode[] = ['explain', 'hint', 'check'] as const;
+/**
+ * How the model is briefed. The extension uses `ask`: one general tutor brief,
+ * with the student's macro (Explain, Hint, Check or their own) carrying what
+ * they want in the question itself. The fixed modes stay for the eval, which
+ * measures each behaviour on its own.
+ */
+export type Mode = 'ask' | 'explain' | 'hint' | 'check';
+export const MODES: readonly Mode[] = ['ask', 'explain', 'hint', 'check'] as const;
 
 export type Route = 'small' | 'large';
 

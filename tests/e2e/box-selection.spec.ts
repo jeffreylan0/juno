@@ -5,7 +5,7 @@
  * nothing.
  */
 import type { Page, Worker } from '@playwright/test';
-import { FIXTURE_ORIGIN, boxAndAsk, expect, openPanel, startSelection, tabIdFor, test } from './fixtures';
+import { FIXTURE_ORIGIN, boxAndAsk, expect, openPanel, setSettings, startSelection, tabIdFor, test } from './fixtures';
 import type { Plan } from '../../shared/payload';
 
 const getPlan = async (panel: Page, tabId?: number) =>
@@ -30,7 +30,7 @@ async function openFixture(page: Page, sw: Worker, path: string): Promise<{ url:
   return { url, tabId: await tabIdFor(sw, url) };
 }
 
-test('a box selection produces a plan with an image part and the visible text', async ({ context, extensionId, serviceWorker }) => {
+test('a box selection sends its screenshot and nothing read off the page', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
   const { url } = await openFixture(page, serviceWorker, 'text.html');
   const panel = await openPanel(context, extensionId);
@@ -41,14 +41,8 @@ test('a box selection produces a plan with an image part and the visible text', 
 
   expect(plan.selection.kind).toBe('box');
   expect(plan.route).toBe('large');
-  const kinds = plan.parts.map((p) => p.kind);
-  expect(kinds).toContain('image');
-  expect(kinds).toContain('text');
-
-  const text = plan.parts.find((p) => p.kind === 'text');
-  expect(text && text.kind === 'text' ? text.text : '').toContain('Balance the equation');
-  // The decoys are white-on-white and 1px; neither may reach the model.
-  expect(JSON.stringify(plan.parts.filter((p) => p.kind !== 'image'))).not.toContain('decoy');
+  // Reading the screenshot is the model's job: no page text rides along.
+  expect(plan.parts.map((p) => p.kind)).toEqual(['image']);
 
   const image = plan.parts.find((p) => p.kind === 'image');
   expect(image?.kind === 'image' && image.dataUrl.startsWith('data:image/png;base64,')).toBe(true);
@@ -68,21 +62,35 @@ test('the panel holds a conversation: a first answer, then a follow-up on the sa
   await startSelection(serviceWorker, 'box', url);
   await boxAround(page, panel, '#problem', tabId);
 
-  // Before anything is sent, the selection waits above the composer with the
-  // mode's default prompt ready to edit.
-  await expect(panel.getByTestId('selection')).toHaveClass(/pending/);
+  // The selection sits at the top of the panel, labelled by kind, with no
+  // token counts; the short default prompt waits in a big question box.
+  const card = panel.getByTestId('selection');
+  await expect(card).toBeVisible();
+  await expect(panel.getByTestId('selection-kind')).toHaveText('Box');
+  await expect(card).not.toContainText('tok');
+  await expect(card).not.toContainText(/attached/i);
   await expect(panel.locator('.selection-image')).toBeVisible();
   const box = panel.locator('.composer textarea');
-  await expect(box).toHaveValue(/step by step/);
+  await expect(box).toHaveValue('Explain this step by step.');
+  // Focused and ready to type into (the panel tab is not the active one here,
+  // so check the document's focus rather than the window's).
+  expect(await box.evaluate((el) => document.activeElement === el)).toBe(true);
+  const send = panel.locator('.composer .send');
+  await expect(send).toHaveText(/Send/);
 
-  await panel.locator('.composer button[type="submit"]').click();
+  // The selection is above the conversation, and the box is below it.
+  const cardTop = (await card.boundingBox())!.y;
+  const boxTop = (await box.boundingBox())!.y;
+  expect(cardTop).toBeLessThan(120);
+  expect(boxTop).toBeGreaterThan(cardTop);
+
+  await send.click();
   const answers = panel.locator('.turn.assistant');
   await expect(answers).toHaveCount(1);
   await expect(answers.first()).toHaveAttribute('data-streaming', 'false', { timeout: 25_000 });
   await expect(answers.first()).toContainText('Mock answer');
-  // The selection now belongs to the opening message, like an attachment.
-  await expect(panel.locator('.turn.user').first().getByTestId('selection')).toHaveClass(/sent/);
-  await expect(panel.locator('.selection.pending')).toHaveCount(0);
+  // Students never see model or token lines by default.
+  await expect(panel.locator('.usage')).toHaveCount(0);
 
   await expect(box).toHaveAttribute('placeholder', 'Ask a follow-up…');
   await box.fill('What does the minus sign mean?');
@@ -95,8 +103,50 @@ test('the panel holds a conversation: a first answer, then a follow-up on the sa
   // The background owns the thread, so it is all in storage, in order.
   const chat = (await getChat(panel, tabId))!;
   expect(chat.turns.map((t) => t.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
-  // Only the opening message shows the selection.
+  // The selection is shown once, at the top, however long the thread gets.
   await expect(panel.getByTestId('selection')).toHaveCount(1);
+});
+
+test('a macro fills the box with its prompt and sends it', async ({ context, extensionId, serviceWorker }) => {
+  const page = await context.newPage();
+  const { url, tabId } = await openFixture(page, serviceWorker, 'text.html');
+  const panel = await openPanel(context, extensionId, tabId);
+  await page.bringToFront();
+  await startSelection(serviceWorker, 'box', url);
+  await boxAround(page, panel, '#problem', tabId);
+
+  const macros = panel.locator('.macros .macro');
+  await expect(macros).toHaveText(['Explain', 'Hint', 'Check']);
+  // The old mode tabs are gone from the top of the panel.
+  await expect(panel.locator('[role="tab"]')).toHaveCount(0);
+
+  await macros.filter({ hasText: 'Hint' }).click();
+  await expect(panel.locator('.turn.user').first()).toHaveText('Give me a hint for the next step, not the answer.');
+  await expect(panel.locator('.turn.assistant').first()).toHaveAttribute('data-streaming', 'false', { timeout: 25_000 });
+  await expect(panel.locator('.composer textarea')).toHaveValue('');
+
+  // A macro works for follow-ups too.
+  await macros.filter({ hasText: 'Check' }).click();
+  await expect(panel.locator('.turn.user').nth(1)).toHaveText('Check my work and point to the first mistake.');
+  await expect(panel.locator('.turn.assistant').nth(1)).toContainText('Mock follow-up', { timeout: 25_000 });
+});
+
+test('macros and the default prompt come from settings', async ({ context, extensionId, serviceWorker }) => {
+  await setSettings(serviceWorker, {
+    defaultPrompt: 'Solve it.',
+    macros: [{ id: 'eli5', name: 'ELI5', prompt: "Explain it like I'm five." }],
+  });
+  const page = await context.newPage();
+  const { url, tabId } = await openFixture(page, serviceWorker, 'text.html');
+  const panel = await openPanel(context, extensionId, tabId);
+  await page.bringToFront();
+  await startSelection(serviceWorker, 'box', url);
+  await boxAround(page, panel, '#problem', tabId);
+
+  await expect(panel.locator('.composer textarea')).toHaveValue('Solve it.');
+  await expect(panel.locator('.macros .macro')).toHaveText(['ELI5']);
+  await panel.locator('.macros .macro').click();
+  await expect(panel.locator('.turn.user').first()).toHaveText("Explain it like I'm five.");
 });
 
 test('the conversation survives the panel closing and reopening', async ({ context, extensionId, serviceWorker }) => {
@@ -107,7 +157,7 @@ test('the conversation survives the panel closing and reopening', async ({ conte
   await startSelection(serviceWorker, 'box', url);
   await boxAround(page, panel, '#problem', tabId);
 
-  await panel.locator('.composer button[type="submit"]').click();
+  await panel.locator('.composer .send').click();
   await expect(panel.locator('.turn.assistant').first()).toHaveAttribute('data-streaming', 'false', { timeout: 25_000 });
   await panel.close();
 
@@ -143,7 +193,7 @@ test('each tab keeps its own selection and conversation', async ({ context, exte
   expect(planB.page.url).toBe(second.url);
 
   // Asking in one tab leaves the other's thread untouched.
-  await panelA.locator('.composer button[type="submit"]').click();
+  await panelA.locator('.composer .send').click();
   await expect(panelA.locator('.turn.assistant')).toHaveCount(1);
   await expect(panelB.locator('.turn')).toHaveCount(0);
 
@@ -171,8 +221,11 @@ test('a text selection shows the text it captured', async ({ context, extensionI
   await expect.poll(async () => (await getPlan(panel, tabId))?.selection.kind ?? null, { timeout: 15_000 }).toBe('text');
   // Before this preview, a text selection produced a one-line chip and an
   // empty panel, which read as "it did not work".
+  await expect(panel.getByTestId('selection-kind')).toHaveText('Text');
   await expect(panel.getByTestId('selection-text')).toContainText('Balance the equation');
+  // Text is sent as text alone; no screenshot rides along.
   await expect(panel.locator('.selection-image')).toHaveCount(0);
+  expect((await getPlan(panel, tabId))!.parts.map((p) => p.kind)).toEqual(['text']);
 });
 
 test('escape cancels without producing a plan', async ({ context, extensionId, serviceWorker }) => {
