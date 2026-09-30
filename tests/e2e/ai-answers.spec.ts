@@ -146,7 +146,7 @@ test('a rejected key says so and offers settings; an overload offers a retry tha
   await expect(panel.locator('.turn.assistant .error')).toHaveCount(1);
 });
 
-test('the settings page checks a key for free and switches answers to it', async ({ context, extensionId, serviceWorker }) => {
+test('settings show only what the chosen AI needs, check a key for free, and save as you go', async ({ context, extensionId, serviceWorker }) => {
   await context.route(ANTHROPIC, async (route: Route) => {
     const req = route.request();
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
@@ -169,11 +169,21 @@ test('the settings page checks a key for free and switches answers to it', async
 
   const options = await context.newPage();
   await options.goto(`chrome-extension://${extensionId}/options.html`);
+  // Placeholder answers to start with: no key box, no server box.
+  await expect(options.getByTestId('answer-placeholder')).toHaveClass(/on/);
+  await expect(options.getByTestId('keys')).toHaveCount(0);
+  await expect(options.getByTestId('local')).toHaveCount(0);
+
+  // Choosing Claude shows only what Claude needs, and is saved at once.
+  await options.getByTestId('answer-claude').click();
   const keys = options.getByTestId('keys');
+  await expect(keys).toBeVisible();
+  await expect(options.getByTestId('local')).toHaveCount(0);
+  await expect(options.getByTestId('saved')).toHaveText('Saved');
+
   await keys.getByTestId('key-input').fill('sk-ant-bad');
   await keys.getByTestId('test-key').click();
   await expect(keys.getByTestId('key-status')).toHaveText('Anthropic rejected the API key. Check it in Settings.');
-  await expect(keys.getByTestId('use-key')).toHaveCount(0);
 
   await keys.getByTestId('key-input').fill('sk-ant-good');
   await keys.getByTestId('test-key').click();
@@ -183,16 +193,26 @@ test('the settings page checks a key for free and switches answers to it', async
     'Claude Haiku 4.5',
     'Claude Sonnet 5.5',
   ]);
+  await keys.getByTestId('model-select').selectOption('claude-sonnet-5-5');
 
-  await keys.getByTestId('use-key').click();
+  // No Save button: the choice, the key and the model are already stored.
+  await expect(options.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
   await expect
     .poll(async () =>
       serviceWorker.evaluate(async () => {
         const { settings, keys } = await chrome.storage.local.get(['settings', 'keys']);
-        return { provider: settings?.provider, vendor: settings?.vendor, key: keys?.anthropic };
+        return { provider: settings?.provider, vendor: settings?.vendor, model: settings?.modelOverride?.model, key: keys?.anthropic };
       }),
     )
-    .toEqual({ provider: 'byok', vendor: 'anthropic', key: 'sk-ant-good' });
+    .toEqual({ provider: 'byok', vendor: 'anthropic', model: 'claude-sonnet-5-5', key: 'sk-ant-good' });
+
+  // A local model swaps the key for a server address.
+  await options.getByTestId('answer-local').click();
+  await expect(options.getByTestId('keys')).toHaveCount(0);
+  await expect(options.getByTestId('local')).toBeVisible();
+  // And coming back to Claude keeps the model picked for it.
+  await options.getByTestId('answer-claude').click();
+  await expect(options.getByTestId('model-select')).toHaveValue('claude-sonnet-5-5');
 });
 
 test('the model picker beside the macros switches who answers, without a trip to settings', async ({ context, extensionId, serviceWorker }) => {

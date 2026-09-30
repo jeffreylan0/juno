@@ -1,7 +1,9 @@
 /**
- * The panel: one chat at a time, gathering selections from any page in this
- * window until the panel is closed. Closing it ends the chat — it stays in
- * the chat menu — and opening it again starts a new one.
+ * The panel: the chat the selection bar is filling. It follows the bar: the
+ * shortcut icon summons the bar, each selection lands here, on any tab, and
+ * the bar's ✕ finishes the chat (it stays in the chat menu) and closes the
+ * panel. Closing only the panel keeps the chat going; the next selection
+ * brings it back.
  *
  * Layout, top to bottom:
  *  - the top bar: chat menu (left), the chat's name (click to rename), the
@@ -23,7 +25,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ModelRef } from '@shared/payload';
 import { BRAND } from '@/brand';
-import { hasUsableSelection, isRemovable, pendingSelections, type AssistantItem, type Chat } from '@/lib/chats';
+import { autoTitle, hasUsableSelection, isRemovable, pendingSelections, type AssistantItem, type Chat } from '@/lib/chats';
 import { isTransient, needsSettings } from '@/lib/providers/errors';
 import { getKeys, getSettings, keysItem, settingsItem, type Keys, type Macro, type Settings } from '@/lib/storage';
 import { Answer } from './Answer';
@@ -149,10 +151,6 @@ export function Panel() {
 
   const stop = () => chatId && void send({ type: 'chat:stop', chatId });
   const retry = () => chatId && void send({ type: 'chat:retry', chatId });
-  const newChat = () => {
-    setMenuOpen(false);
-    if (windowId !== null) void send({ type: 'chat:new', windowId });
-  };
   const toggleTemporary = () => {
     if (windowId !== null) void send({ type: 'chat:temporary', windowId, on: !temporary });
   };
@@ -182,7 +180,7 @@ export function Panel() {
           className={`icon ghost${temporary ? ' on' : ''}`}
           aria-label="Temporary chat"
           aria-pressed={temporary}
-          title={temporary ? 'Leave temporary chat (it will be deleted)' : 'Temporary chat: not saved, deleted when the panel closes'}
+          title={temporary ? 'Leave temporary chat (it will be deleted)' : 'Temporary chat: not saved, deleted when you finish it'}
           data-testid="temporary"
           onClick={toggleTemporary}
         >
@@ -198,7 +196,6 @@ export function Panel() {
           chats={chats}
           currentId={chatId}
           onClose={() => setMenuOpen(false)}
-          onNew={newChat}
           onOpen={(id) => {
             setMenuOpen(false);
             if (windowId !== null && id !== chatId) void send({ type: 'chat:open', windowId, chatId: id });
@@ -218,6 +215,8 @@ export function Panel() {
                   <SelectionCard
                     key={item.id}
                     item={item}
+                    // The chat is named after its first page; saying so again above each selection is noise.
+                    showPage={autoTitle(item.plan) !== chat.title}
                     onRemove={isRemovable(chat, item.id) ? () => void send({ type: 'chat:drop-selection', chatId: chat.id, itemId: item.id }) : undefined}
                   />
                 );
@@ -287,9 +286,7 @@ export function Panel() {
             disabled={!askable}
           />
           <div className="composer-row">
-            <span className="composer-hint">
-              Enter to send<span className="extra"> · Shift+Enter for a new line</span>
-            </span>
+            <span className="composer-hint">Shift+Enter for a new line</span>
             {busy ? (
               <button type="button" className="send stop" onClick={stop}>
                 Stop
@@ -361,7 +358,8 @@ function Empty({ temporary, shortcut }: { temporary: boolean; shortcut: string }
       <div className="empty temporary" data-testid="empty">
         <Icon name="ghost" className="empty-ghost" />
         <p>
-          <strong>Temporary chat.</strong> It won't appear in your chats, and it's deleted when you close the panel.
+          <strong>Temporary chat.</strong> It won't appear in your chats, and it's deleted when you finish it with ✕ on the
+          selection bar.
         </p>
         <p>{how}</p>
       </div>
@@ -370,7 +368,10 @@ function Empty({ temporary, shortcut }: { temporary: boolean; shortcut: string }
   return (
     <div className="empty" data-testid="empty">
       <p>{how}</p>
-      <p>Everything you select goes into this chat — from any page — until you close the panel.</p>
+      <p>
+        Keep selecting, on this page or any other tab: everything goes into this chat until you press ✕ on the selection
+        bar.
+      </p>
     </div>
   );
 }

@@ -1,21 +1,25 @@
 /**
- * Which chat each window's panel shows, and the panel's lifecycle.
+ * Which chat each window is on, and when a chat begins and ends.
  *
- * Every browser window has at most one current chat, kept in storage.session
- * under `current:<windowId>` so it survives the service worker being torn
- * down. The rules:
+ * The selection bar leads; the panel follows it. A chat is "in progress" in a
+ * window while the student is selecting there, and the rules are:
  *
- *  - Opening the panel starts a new, empty chat. An empty chat is never
- *    written, so opening and closing the panel leaves nothing behind.
- *  - Every selection made in that window goes into the current chat, whichever
- *    page it came from, until the panel closes.
- *  - Closing the panel ends the chat: a saved chat stays in the menu, a
- *    temporary one is deleted.
- *  - A selection made while the panel is closed starts a chat that the panel
- *    takes over when it opens (it usually opens because of that selection).
+ *  - Clicking the shortcut icon (or pressing the shortcut) summons the bar on
+ *    the current tab. With no chat in progress in the window, the first
+ *    selection starts a new one; with a chat in progress, the bar joins it —
+ *    on any tab, so one chat can gather selections across pages.
+ *  - After each selection the bar stays on its page, ready for the next.
+ *  - The bar's ✕ finishes the chat: every bar in the window goes, the panel
+ *    closes, and the chat stays in the menu (a temporary one is deleted).
+ *  - Closing only the panel leaves the chat in progress while a bar is still
+ *    up; the next selection brings the panel back on the same chat. Once no
+ *    bar and no panel are left (tabs closed, pages navigated away), the chat
+ *    ends as if ✕ had been pressed.
  *
- * The background calls these one at a time (it serialises every chat write),
- * so none of them has to worry about another running halfway through.
+ * State lives in storage.session so it survives the service worker being torn
+ * down: `current:<windowId>` names the chat, `bars` maps each tab showing a bar
+ * to its window. The background calls these one at a time (it serialises every
+ * chat write), so none of them has to worry about another running halfway.
  */
 import type { Plan } from '@shared/payload';
 import { discardChat, getChat, newChat, saveChat, withSelection, type Chat, type ChatSummary, type SelectionItem } from './chats';
@@ -24,15 +28,11 @@ import { storePlanImages } from './images';
 export interface Current {
   chatId: string;
   temporary: boolean;
-  /**
-   * Started by a selection while no panel was open. The next panel to open
-   * takes this chat over instead of starting a new one.
-   */
-  adoptable?: boolean;
 }
 
 const PREFIX = 'current:';
 export const currentKey = (windowId: number) => `${PREFIX}${windowId}`;
+export const BARS_KEY = 'bars';
 
 const session = () => (browser.storage as unknown as { session: chrome.storage.StorageArea }).session;
 
@@ -42,7 +42,7 @@ export async function getCurrent(windowId: number): Promise<Current | null> {
 }
 
 export async function setCurrent(windowId: number, current: Current | null): Promise<void> {
-  if (current) await session().set({ [currentKey(windowId)]: current });
+  if (current) await session().set({ [currentKey(windowId)]: { chatId: current.chatId, temporary: current.temporary } });
   else await session().remove(currentKey(windowId));
 }
 
@@ -54,6 +54,15 @@ export async function allCurrent(): Promise<Array<[number, Current]>> {
 }
 
 const fresh = (temporary = false): Current => ({ chatId: crypto.randomUUID(), temporary });
+
+/** The window's chat in progress, starting one if there is none. */
+export async function ensureCurrent(windowId: number): Promise<Current> {
+  const current = await getCurrent(windowId);
+  if (current) return current;
+  const next = fresh();
+  await setCurrent(windowId, next);
+  return next;
+}
 
 let onDiscard: (chatId: string) => void = () => {};
 /** Called just before a temporary chat is deleted, so its answer can stop streaming (and billing). */
@@ -68,39 +77,66 @@ async function leave(current: Current | null): Promise<void> {
   await discardChat(current.chatId);
 }
 
-/**
- * A panel connected. `first` is whether it is the only panel open in its
- * window; `claim` is set when a panel that was already open reconnects after
- * the worker restarted, and names the chat it is showing.
- */
-export async function panelOpened(
-  windowId: number,
-  { first, claim }: { first: boolean; claim?: { chatId: string; temporary: boolean } },
-): Promise<Current> {
-  const current = await getCurrent(windowId);
-  let next: Current;
-  if (claim) {
-    next = current ?? { chatId: claim.chatId, temporary: claim.temporary };
-  } else if (current?.adoptable || (!first && current)) {
-    next = current;
-  } else {
-    await leave(current);
-    next = fresh();
-  }
-  next = { chatId: next.chatId, temporary: next.temporary };
-  await setCurrent(windowId, next);
-  return next;
+// ── Bars ─────────────────────────────────────────────────────────────────
+
+type Bars = Record<string, number>;
+
+async function getBars(): Promise<Bars> {
+  return ((await session().get(BARS_KEY))[BARS_KEY] as Bars | undefined) ?? {};
 }
 
-/** The last panel in a window closed: its chat ends. */
-export async function panelClosed(windowId: number): Promise<Current | null> {
-  const current = await getCurrent(windowId);
-  await leave(current);
-  await setCurrent(windowId, null);
+/** A bar appeared on a tab. */
+export async function barShown(tabId: number, windowId: number): Promise<void> {
+  const bars = await getBars();
+  if (bars[tabId] === windowId) return;
+  await session().set({ [BARS_KEY]: { ...bars, [tabId]: windowId } });
+}
+
+/** A bar went away on its own (Escape before it added anything, the page left). Returns its window. */
+export async function barGone(tabId: number): Promise<number | undefined> {
+  const bars = await getBars();
+  const windowId = bars[tabId];
+  if (windowId === undefined) return undefined;
+  delete bars[tabId];
+  await session().set({ [BARS_KEY]: bars });
+  return windowId;
+}
+
+/** Tabs showing a bar in this window. */
+export async function barsIn(windowId: number): Promise<number[]> {
+  return Object.entries(await getBars())
+    .filter(([, w]) => w === windowId)
+    .map(([t]) => Number(t));
+}
+
+// ── The chat's life ──────────────────────────────────────────────────────
+
+/**
+ * A panel connected. It shows the chat in progress, or starts one (a panel
+ * opened by hand, before any selection). `claim` is set when a panel that was
+ * already open reconnects after the worker restarted, and names its chat.
+ */
+export async function panelOpened(windowId: number, claim?: Current): Promise<Current> {
+  const current = (await getCurrent(windowId)) ?? claim ?? fresh();
+  await setCurrent(windowId, current);
   return current;
 }
 
-/** "New chat", or the ghost to start a temporary one. */
+/**
+ * Finishes the window's chat: the bar's ✕, or nothing left open. Returns the
+ * tabs whose bars should be taken down.
+ */
+export async function endChat(windowId: number): Promise<number[]> {
+  await leave(await getCurrent(windowId));
+  await setCurrent(windowId, null);
+  const tabs = await barsIn(windowId);
+  const bars = await getBars();
+  for (const t of tabs) delete bars[t];
+  await session().set({ [BARS_KEY]: bars });
+  return tabs;
+}
+
+/** The ghost, turned on with something already in the chat: a separate, temporary chat. */
 export async function startChat(windowId: number, temporary: boolean): Promise<Current> {
   await leave(await getCurrent(windowId));
   const next = fresh(temporary);
@@ -117,8 +153,8 @@ export async function setTemporary(windowId: number, on: boolean): Promise<Curre
   const current = await getCurrent(windowId);
   if (on) {
     if (current?.temporary) return current;
-    if (current && !(await getChat(current.chatId))) {
-      const next = { chatId: current.chatId, temporary: true };
+    if (!current || !(await getChat(current.chatId))) {
+      const next = { chatId: current?.chatId ?? crypto.randomUUID(), temporary: true };
       await setCurrent(windowId, next);
       return next;
     }
@@ -128,7 +164,7 @@ export async function setTemporary(windowId: number, on: boolean): Promise<Curre
   return await startChat(windowId, false);
 }
 
-/** A chat picked from the menu. */
+/** A chat picked from the menu: selecting carries on in it. */
 export async function switchTo(windowId: number, chatId: string): Promise<Current> {
   const current = await getCurrent(windowId);
   if (current?.chatId !== chatId) await leave(current);
@@ -137,7 +173,7 @@ export async function switchTo(windowId: number, chatId: string): Promise<Curren
   return next;
 }
 
-/** After chats are deleted or dropped: any window showing one gets a new, empty chat. */
+/** After chats are deleted or dropped: any window on one carries on in a new, empty chat. */
 export async function replaceGone(ids: Iterable<string>): Promise<void> {
   const gone = new Set(ids);
   for (const [windowId, current] of await allCurrent()) {
@@ -145,20 +181,12 @@ export async function replaceGone(ids: Iterable<string>): Promise<void> {
   }
 }
 
-/**
- * A selection arrived from a tab in this window. It joins the current chat,
- * or starts one when there is none (the panel is closed); a chat started that
- * way is taken over by the next panel to open.
- */
+/** A selection arrived from a tab in this window: it joins the chat in progress, or starts one. */
 export async function addSelection(
   windowId: number,
-  { panelOpen, plan, notice, tabId }: { panelOpen: boolean; plan: Plan; notice?: string; tabId?: number },
+  { plan, notice, tabId }: { plan: Plan; notice?: string; tabId?: number },
 ): Promise<{ chat: Chat; item: SelectionItem; dropped: ChatSummary[] }> {
-  let current = await getCurrent(windowId);
-  if (!current) {
-    current = { ...fresh(), ...(panelOpen ? {} : { adoptable: true }) };
-    await setCurrent(windowId, current);
-  }
+  const current = await ensureCurrent(windowId);
   const base = (await getChat(current.chatId)) ?? newChat(current.temporary, current.chatId);
   const item: SelectionItem = {
     kind: 'selection',
@@ -173,18 +201,8 @@ export async function addSelection(
   return { chat, item, dropped };
 }
 
-/**
- * Clean-up after the worker starts: a window whose panel closed while the
- * worker was not running still has a current chat. Anything not claimed by an
- * open panel (and not waiting for one) is ended.
- */
-export async function endUnclaimed(open: (windowId: number) => boolean): Promise<void> {
-  for (const [windowId, current] of await allCurrent()) {
-    if (open(windowId) || current.adoptable) continue;
-    await leave(current);
-    await setCurrent(windowId, null);
-  }
-  // Temporary chats nobody points at any more.
+/** Temporary chats no window is on any more (a crash, a worker stopped mid-cleanup). */
+export async function discardOrphans(): Promise<void> {
   const live = new Set((await allCurrent()).map(([, c]) => c.chatId));
   const all = await session().get(null);
   for (const [key, value] of Object.entries(all)) {

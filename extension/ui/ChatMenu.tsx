@@ -1,8 +1,11 @@
 /**
  * The chat menu, opened from the top-left button: a drawer over the panel,
- * like Gemini's. New chat at the top, a search box, then every saved chat,
- * newest first, grouped by when it was last used. Each chat can be renamed or
- * deleted in place. Temporary chats never appear here.
+ * like Gemini's. A search box, then every saved chat, newest first, grouped
+ * by when it was last used. Each chat can be renamed or deleted in place, and
+ * opening one carries on selecting into it. Temporary chats never appear here.
+ *
+ * There is no New chat button: a chat starts with the first selection after
+ * the previous one was finished (✕ on the selection bar).
  *
  * The free plan keeps ten chats on this computer; the footer says so, so the
  * oldest one disappearing is never a surprise.
@@ -15,7 +18,6 @@ export function ChatMenu({
   chats,
   currentId,
   onClose,
-  onNew,
   onOpen,
   onRename,
   onDelete,
@@ -23,7 +25,6 @@ export function ChatMenu({
   chats: ChatSummary[];
   currentId: string | null;
   onClose: () => void;
-  onNew: () => void;
   onOpen: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -58,10 +59,6 @@ export function ChatMenu({
           </button>
           <span className="drawer-title">Chats</span>
         </div>
-        <button type="button" className="new-chat" data-testid="new-chat" onClick={onNew}>
-          <Icon name="compose" />
-          New chat
-        </button>
         <label className="search">
           <Icon name="search" />
           <input

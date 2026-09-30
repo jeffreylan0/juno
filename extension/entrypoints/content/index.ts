@@ -40,6 +40,11 @@ export default defineContentScript({
       }
       if (msg?.type === 'selection:start') {
         void controller.start((raw as StartSelectionMsg).kind);
+        return;
+      }
+      if (msg?.type?.startsWith('bar:')) {
+        const answer = controller.handle(msg.type);
+        if (answer !== undefined) sendResponse(answer);
       }
     });
   },

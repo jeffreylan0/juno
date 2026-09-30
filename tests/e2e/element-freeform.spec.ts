@@ -66,9 +66,11 @@ test('element: hover highlights the paragraph, ↑ widens, a click picks it and 
   await page.mouse.move(link.x + 5, link.y + link.height / 2);
   await expect(host).toHaveAttribute('data-highlight', 'Paragraph');
   await page.mouse.click(link.x + 5, link.y + link.height / 2);
-  await expect(page.locator(OVERLAY)).toHaveCount(0);
 
   await expect.poll(async () => (await getPlan(panel, tabId))?.selection.kind ?? null, { timeout: 15_000 }).toBe('element');
+  // The picker is gone; the bar waits for the next selection.
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'ready');
+  await expect(page.locator(`${OVERLAY} .box`)).toBeHidden();
   expect(page.url()).toBe(URL);
   const plan = (await getPlan(panel, tabId))!;
   expect(plan.parts.map((p) => p.kind)).toEqual(['image']);
@@ -128,9 +130,9 @@ test('freeform: a drawn loop sends its bounding box with the outside blanked', a
   await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'drawing');
   await expect(page.locator(`${OVERLAY} .lasso-line`)).toHaveAttribute('d', /^M/);
   await page.mouse.up();
-  await expect(page.locator(OVERLAY)).toHaveCount(0);
 
   await expect.poll(async () => (await getPlan(panel, tabId))?.selection.kind ?? null, { timeout: 15_000 }).toBe('freeform');
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'ready');
   const plan = (await getPlan(panel, tabId))!;
   expect(plan.parts.map((p) => p.kind)).toEqual(['image']);
   expect(Math.abs(plan.selection.rect.width - 2 * r)).toBeLessThan(4);

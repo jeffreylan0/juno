@@ -1,8 +1,9 @@
 /**
  * A selection in the chat: Box, Freeform and Element show their screenshot,
  * Text shows the text itself. It is exactly what the model receives — nothing
- * extra is read off the page. The page it came from is named, since one chat
- * can gather selections from many pages.
+ * extra is read off the page. A selection from a page other than the one the
+ * chat is named after says which page, since one chat can gather selections
+ * from many.
  *
  * Screenshots sit straight on the panel's own background: no card, no frame,
  * no fill, so nothing around a selection looks like part of it. A thin
@@ -23,7 +24,7 @@ import { useImage } from './useChat';
 /** Lines of captured text shown before "Show all". */
 const COLLAPSED_LINES = 14;
 
-export function SelectionCard({ item, onRemove }: { item: SelectionItem; onRemove?: () => void }) {
+export function SelectionCard({ item, onRemove, showPage = true }: { item: SelectionItem; onRemove?: () => void; showPage?: boolean }) {
   const { plan, notice } = item;
   const kind = plan.selection.kind;
   return (
@@ -34,7 +35,7 @@ export function SelectionCard({ item, onRemove }: { item: SelectionItem; onRemov
           {KIND_LABEL[kind]}
         </span>
         {kind === 'element' && plan.selection.label && <span className="selection-sub">· {plan.selection.label}</span>}
-        <PageLink url={plan.page.url} title={plan.page.title} />
+        {showPage && <PageLink url={plan.page.url} title={plan.page.title} />}
         {onRemove && (
           <button type="button" className="icon selection-remove" title="Remove this selection" aria-label="Remove this selection" data-testid="selection-remove" onClick={onRemove}>
             <svg viewBox="0 0 24 24" aria-hidden="true">

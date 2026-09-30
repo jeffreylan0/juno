@@ -26,10 +26,13 @@ import {
 } from '@/lib/chats';
 import {
   addSelection,
-  endUnclaimed,
+  barGone,
+  barShown,
+  barsIn,
+  discardOrphans,
+  endChat,
   getCurrent,
   onTemporaryDiscarded,
-  panelClosed,
   panelOpened,
   replaceGone,
   setCurrent,
@@ -228,73 +231,70 @@ describe('screenshots', () => {
   });
 });
 
-describe('the panel’s lifecycle', () => {
+describe('a chat’s life: the bar leads, the panel follows', () => {
   const W = 7;
 
-  it('opening the panel starts a new chat; closing it ends that chat but keeps it in the menu', async () => {
-    const a = await panelOpened(W, { first: true });
-    await addSelection(W, { panelOpen: true, plan: plan('x') });
-    expect((await getChat(a.chatId))!.items).toHaveLength(1);
-
-    await panelClosed(W);
-    expect(await getCurrent(W)).toBeNull();
-    expect((await listChats()).map((c) => c.id)).toEqual([a.chatId]);
-
-    const b = await panelOpened(W, { first: true });
-    expect(b.chatId).not.toBe(a.chatId);
-    expect(await getChat(b.chatId)).toBeNull(); // empty, and not stored
-  });
-
-  it('a selection made while the panel is closed is waiting when it opens', async () => {
-    const { chat } = await addSelection(W, { panelOpen: false, plan: plan('x') });
-    expect((await getCurrent(W))?.adoptable).toBe(true);
-    const opened = await panelOpened(W, { first: true });
-    expect(opened.chatId).toBe(chat.id);
-    expect((await getCurrent(W))?.adoptable).toBeUndefined();
-  });
-
-  it('a second panel in the same window joins its chat instead of starting one', async () => {
-    const a = await panelOpened(W, { first: true });
-    const b = await panelOpened(W, { first: false });
-    expect(b.chatId).toBe(a.chatId);
-  });
-
-  it('a panel reconnecting after the worker restarted keeps its chat', async () => {
-    const a = await panelOpened(W, { first: true });
-    await addSelection(W, { panelOpen: true, plan: plan('x') });
-    await setCurrent(W, null); // as if nothing were known
-    const again = await panelOpened(W, { first: true, claim: { chatId: a.chatId, temporary: false } });
-    expect(again.chatId).toBe(a.chatId);
-  });
-
-  it('selections from any page join the one chat', async () => {
-    await panelOpened(W, { first: true });
-    await addSelection(W, { panelOpen: true, plan: plan('a'), tabId: 1 });
-    const { chat } = await addSelection(W, { panelOpen: true, plan: plan('b'), tabId: 2 });
+  it('the first selection starts a chat, and every later one joins it, from any page', async () => {
+    const { chat: first } = await addSelection(W, { plan: plan('a'), tabId: 1 });
+    const { chat } = await addSelection(W, { plan: plan('b'), tabId: 2 });
+    expect(chat.id).toBe(first.id);
     expect(chat.items.map((i) => (i.kind === 'selection' ? i.plan.page.title : ''))).toEqual(['Page a', 'Page b']);
     expect(chat.title).toBe('Page a');
   });
 
+  it('the bar’s ✕ finishes the chat: it stays in the menu, the bars go, and the next selection starts a new one', async () => {
+    await barShown(1, W);
+    await barShown(2, W);
+    await barShown(3, 99);
+    const { chat } = await addSelection(W, { plan: plan('a'), tabId: 1 });
+    expect((await endChat(W)).sort()).toEqual([1, 2]);
+    expect(await getCurrent(W)).toBeNull();
+    expect(await barsIn(W)).toEqual([]);
+    expect(await barsIn(99)).toEqual([3]); // another window's bar is untouched
+    expect((await listChats()).map((c) => c.id)).toEqual([chat.id]);
+
+    const { chat: next } = await addSelection(W, { plan: plan('b') });
+    expect(next.id).not.toBe(chat.id);
+  });
+
+  it('a panel shows the chat in progress, or starts one when opened by hand', async () => {
+    const { chat } = await addSelection(W, { plan: plan('a') });
+    expect((await panelOpened(W)).chatId).toBe(chat.id);
+    const other = await panelOpened(8);
+    expect(other.chatId).not.toBe(chat.id);
+    expect(await getChat(other.chatId)).toBeNull(); // empty, and not stored
+  });
+
+  it('a panel reconnecting after the worker restarted keeps its chat', async () => {
+    const { chat } = await addSelection(W, { plan: plan('a') });
+    await setCurrent(W, null); // as if nothing were known
+    expect((await panelOpened(W, { chatId: chat.id, temporary: false })).chatId).toBe(chat.id);
+  });
+
   it('each window has its own chat', async () => {
-    await panelOpened(1, { first: true });
-    await panelOpened(2, { first: true });
-    await addSelection(1, { panelOpen: true, plan: plan('a') });
-    await addSelection(2, { panelOpen: true, plan: plan('b') });
+    await addSelection(1, { plan: plan('a') });
+    await addSelection(2, { plan: plan('b') });
     expect((await getCurrent(1))!.chatId).not.toBe((await getCurrent(2))!.chatId);
   });
 
-  it('a temporary chat keeps its screenshots in memory, and is deleted with them when the panel closes', async () => {
+  it('a bar going on its own is forgotten, and says which window it was in', async () => {
+    await barShown(5, W);
+    expect(await barGone(5)).toBe(W);
+    expect(await barGone(5)).toBeUndefined();
+    expect(await barsIn(W)).toEqual([]);
+  });
+
+  it('a temporary chat keeps its screenshots in memory, and finishing deletes it with them', async () => {
     const memImages = async () => Object.keys(await fakeBrowser.storage.session.get(null)).filter((k) => k.startsWith('img:'));
-    await panelOpened(W, { first: true });
     const temp = await setTemporary(W, true);
-    const { item } = await addSelection(W, { panelOpen: true, plan: shot('s') });
+    const { item } = await addSelection(W, { plan: shot('s') });
     // Never on disk: not in IndexedDB, not in the menu.
     expect(store.map.size).toBe(0);
     expect(await memImages()).toHaveLength(1);
     expect((await hydratePlan(item.plan)).parts[0]).toMatchObject({ dataUrl: 'data:image/png;base64,s' });
     expect(await listChats()).toEqual([]);
 
-    await panelClosed(W);
+    await endChat(W);
     expect(await getChat(temp.chatId)).toBeNull();
     expect(await memImages()).toEqual([]);
   });
@@ -302,55 +302,58 @@ describe('the panel’s lifecycle', () => {
   it('tells the background which temporary chat is going, so its answer can stop', async () => {
     const gone: string[] = [];
     onTemporaryDiscarded((id) => gone.push(id));
-    await panelOpened(W, { first: true });
     const temp = await setTemporary(W, true);
-    await addSelection(W, { panelOpen: true, plan: plan('a') });
-    await startChat(W, false);
+    await addSelection(W, { plan: plan('a') });
+    await endChat(W);
     expect(gone).toEqual([temp.chatId]);
     onTemporaryDiscarded(() => {});
   });
 
   it('the ghost turns an empty chat temporary, but starts a separate one when the chat has content', async () => {
-    const empty = await panelOpened(W, { first: true });
+    const empty = await panelOpened(W);
     const t1 = await setTemporary(W, true);
     expect(t1).toEqual({ chatId: empty.chatId, temporary: true });
     const off = await setTemporary(W, false);
     expect(off.temporary).toBe(false);
 
-    await addSelection(W, { panelOpen: true, plan: plan('a') });
+    await addSelection(W, { plan: plan('a') });
     const saved = (await getCurrent(W))!;
     const t2 = await setTemporary(W, true);
     expect(t2.chatId).not.toBe(saved.chatId);
     expect(await getChat(saved.chatId)).not.toBeNull();
   });
 
-  it('leaving a temporary chat any way deletes it: new chat, opening another, the ghost', async () => {
-    for (const leave of [() => startChat(W, false), () => switchTo(W, 'other'), () => setTemporary(W, false)]) {
+  it('leaving a temporary chat any way deletes it: finishing, opening another, the ghost', async () => {
+    for (const leave of [() => endChat(W), () => switchTo(W, 'other'), () => setTemporary(W, false)]) {
       await startChat(W, true);
-      const { chat } = await addSelection(W, { panelOpen: true, plan: plan('a') });
+      const { chat } = await addSelection(W, { plan: plan('a') });
       await leave();
       expect(await getChat(chat.id)).toBeNull();
     }
   });
 
-  it('a window showing a deleted chat moves to a new, empty one', async () => {
-    await panelOpened(W, { first: true });
-    const { chat } = await addSelection(W, { panelOpen: true, plan: plan('a') });
-    await deleteChat(chat.id);
-    await replaceGone([chat.id]);
-    const now = (await getCurrent(W))!;
-    expect(now.chatId).not.toBe(chat.id);
+  it('opening a saved chat from the menu carries on selecting into it', async () => {
+    const { chat } = await addSelection(W, { plan: plan('a') });
+    await endChat(W);
+    await switchTo(W, chat.id);
+    const { chat: again } = await addSelection(W, { plan: plan('b') });
+    expect(again.id).toBe(chat.id);
+    expect(again.items).toHaveLength(2);
   });
 
-  it('after a restart, a chat whose panel is gone is ended, unless a selection is waiting for it', async () => {
-    await panelOpened(1, { first: true });
-    await setTemporary(1, true);
-    const { chat: temp } = await addSelection(1, { panelOpen: true, plan: plan('a') });
-    await addSelection(2, { panelOpen: false, plan: plan('b') });
-    await endUnclaimed(() => false);
-    expect(await getCurrent(1)).toBeNull();
-    expect(await getChat(temp.id)).toBeNull();
-    expect((await getCurrent(2))?.adoptable).toBe(true);
+  it('a window on a deleted chat carries on in a new, empty one', async () => {
+    const { chat } = await addSelection(W, { plan: plan('a') });
+    await deleteChat(chat.id);
+    await replaceGone([chat.id]);
+    expect((await getCurrent(W))!.chatId).not.toBe(chat.id);
+  });
+
+  it('after a restart, temporary chats no window is on are deleted', async () => {
+    const temp = await setTemporary(W, true);
+    await addSelection(W, { plan: plan('a') });
+    await setCurrent(W, null);
+    await discardOrphans();
+    expect(await getChat(temp.chatId)).toBeNull();
   });
 });
 

@@ -1,7 +1,6 @@
 /** The panel's stroke icons, 24×24, drawn in currentColor. */
 const PATHS = {
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
-  compose: '<path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="M17.6 3.6a2 2 0 0 1 2.8 2.8L12 14.8l-3.6.8.8-3.6z"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
   pencil: '<path d="M16.5 3.8a2.1 2.1 0 0 1 3 3L8 18.3l-4 1 1-4z"/>',
   trash: '<path d="M4 7h16"/><path d="M9.5 7V4.8h5V7"/><path d="M6.5 7l.9 12.2a1 1 0 0 0 1 .8h7.2a1 1 0 0 0 1-.8L17.5 7"/>',

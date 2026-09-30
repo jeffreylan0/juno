@@ -9,9 +9,10 @@
  * while the student is still choosing what to select; a setting opens it on
  * the click instead.
  *
- * Chats (lib/chats.ts) collect selections from any page in the window until
- * the panel closes; which chat a window shows, and what opening and closing
- * the panel does, is lib/current.ts. This file is the only writer, and it
+ * Chats (lib/chats.ts) collect selections from any page in the window while
+ * the student is selecting; the selection bar leads and the panel follows
+ * (lib/current.ts has the rules: the icon starts or joins a chat, the bar's ✕
+ * finishes it). This file is the only writer, and it
  * writes one change at a time (`serial`), so a selection landing while an
  * answer streams is never overwritten by the stream's next write.
  */
@@ -46,9 +47,13 @@ import {
 import {
   addSelection,
   allCurrent,
-  endUnclaimed,
+  getCurrent,
+  barGone,
+  barShown,
+  barsIn,
+  discardOrphans,
+  endChat,
   onTemporaryDiscarded,
-  panelClosed,
   panelOpened,
   replaceGone,
   setTemporary,
@@ -98,11 +103,10 @@ const STREAM_SAVE_MS = 120;
 let panelPending = false;
 /**
  * The tab a selection is armed in. Aborting targets this rather than "the
- * active tab": the student can arm a selection and then switch tabs.
+ * active tab": the student can arm a selection and then switch tabs; arming
+ * on another tab puts this one's bar back to waiting.
  */
 let armedTabId: number | undefined;
-/** True once the panel has been opened for the current arming. */
-let panelOpenedForArm = false;
 /** One answer at a time per chat. */
 const streams = new Map<string, AbortController>();
 
@@ -171,17 +175,21 @@ export default defineBackground(() => {
   );
   keysItem.watch(() => void (panels.size && aiStatus(true)));
 
-  // A panel that closed while the worker was not running, a temporary chat
-  // left behind, screenshots nobody points at: tidied once, after any panel
-  // that is still open has had a moment to reconnect.
   // A temporary chat's answer is not worth finishing (or paying for) once the
-  // chat is gone, however it went: panel closed, New chat, the ghost, another chat opened.
+  // chat is gone, however it went: ✕ on the bar, the ghost, another chat opened.
   onTemporaryDiscarded(stopStream);
+  void restoreReaderTabs();
   void serial(settleStreaming);
-  setTimeout(() => void serial(async () => {
-    await endUnclaimed(panelOpenIn);
-    await sweepImages((await allCurrent()).map(([, c]) => c.chatId));
-  }), 3_000);
+  // A chat whose bars and panel all went while the worker was not running, a
+  // temporary chat left behind, screenshots nobody points at: tidied once,
+  // after any panel that is still open has had a moment to reconnect.
+  setTimeout(async () => {
+    for (const [windowId] of await allCurrent()) await maybeEnd(windowId);
+    await serial(async () => {
+      await discardOrphans();
+      await sweepImages((await allCurrent()).map(([, c]) => c.chatId));
+    });
+  }, 3_000);
 
   browser.runtime.onConnect.addListener((port) => {
     if (port.name !== PANEL_PORT) return;
@@ -191,11 +199,10 @@ export default defineBackground(() => {
       if (msg?.type !== 'hello' || windowId !== undefined) return; // pings only keep us awake
       windowId = msg.windowId;
       const open = panels.get(windowId) ?? new Set();
-      const first = open.size === 0;
       open.add(port);
       panels.set(windowId, open);
       setPanelPending(false);
-      void serial(() => panelOpened(msg.windowId, { first, claim: msg.claim })).then(
+      void serial(() => panelOpened(msg.windowId, msg.claim)).then(
         () => port.postMessage({ type: 'ready' }),
         () => port.postMessage({ type: 'ready' }),
       );
@@ -206,8 +213,9 @@ export default defineBackground(() => {
       open?.delete(port);
       if (open?.size) return;
       panels.delete(windowId);
-      const closed = windowId;
-      void serial(() => panelClosed(closed));
+      // The panel follows the bar: with a bar still up, the chat carries on
+      // and the next selection brings the panel back.
+      void maybeEnd(windowId);
     });
   });
 
@@ -238,17 +246,46 @@ export default defineBackground(() => {
       case 'selection:committed':
         // First statement, before any await: this is the drag's (or the
         // confirm click's) user activation, and Chrome only honours
-        // sidePanel.open() while it is live.
+        // sidePanel.open() while it is live. Opening an open panel changes
+        // nothing; closed by hand, it comes back with the next selection.
         armedTabId = undefined;
-        if (!panelOpenedForArm) void openPanel(sender.tab?.id);
+        void openPanel(sender.tab?.id);
+        if (sender.tab?.id !== undefined) committedAt.set(sender.tab.id, Date.now());
         return;
       case 'selection:done':
         armedTabId = undefined;
-        void handleSelectionDone(msg, sender.tab);
-        return;
+        // Answered once the capture is done, so the bar only comes back after
+        // the screenshot has been taken without it.
+        return reply(handleSelectionDone(msg, sender.tab), sendResponse);
       case 'selection:cancel':
         armedTabId = undefined;
-        if (msg.closePanel) closePanel(sender.tab?.windowId);
+        return;
+      case 'bar:shown':
+        // Sent at every selection's start (and when a page comes back from the
+        // back/forward cache), so a bar that dropped off the list comes back.
+        // The answer says whether a chat is still in progress for it to join.
+        if (sender.tab?.id !== undefined && sender.tab.windowId !== undefined) {
+          const { id, windowId } = sender.tab;
+          return reply(
+            serial(async () => {
+              await barShown(id, windowId);
+              return { inChat: (await getCurrent(windowId)) !== null };
+            }),
+            sendResponse,
+          );
+        }
+        return;
+      case 'bar:gone':
+        if (sender.tab?.id !== undefined) {
+          const id = sender.tab.id;
+          void serial(() => barGone(id)).then((windowId) => {
+            if (windowId !== undefined) void maybeEnd(windowId);
+          });
+        }
+        return;
+      case 'chat:finish':
+        armedTabId = undefined;
+        if (sender.tab?.windowId !== undefined) return reply(finishChat(sender.tab.windowId), sendResponse);
         return;
       case 'plan:get':
         void planFor(msg.tabId).then(sendResponse);
@@ -312,6 +349,7 @@ export default defineBackground(() => {
         // settles both: we remember the tab, it learns its id from the reply.
         if (sender.tab?.id !== undefined) {
           readerTabs.add(sender.tab.id);
+          void saveReaderTabs();
           sendResponse({ tabId: sender.tab.id });
         }
         return true;
@@ -320,14 +358,25 @@ export default defineBackground(() => {
     }
   });
 
+  // A tab closing, or leaving its page, takes its bar with it. With no bar
+  // and no panel left, the chat is over.
   browser.tabs.onRemoved.addListener((tabId) => {
-    readerTabs.delete(tabId);
+    if (readerTabs.delete(tabId)) void saveReaderTabs();
+    void serial(() => barGone(tabId)).then((windowId) => {
+      if (windowId !== undefined) void maybeEnd(windowId);
+    });
+  });
+  browser.tabs.onUpdated.addListener((tabId, change) => {
+    if (change.status !== 'loading') return;
+    void barsFor(tabId).then((windowId) => {
+      // Asked a moment later, once the old page (and its bar) is gone.
+      if (windowId !== undefined) setTimeout(() => void maybeEnd(windowId), 1_000);
+    });
   });
 
-  // A window closing takes its panel with it; the port usually says so first.
+  // A window closing takes everything in it along.
   browser.windows.onRemoved.addListener((windowId) => {
-    if (panelOpenIn(windowId)) return;
-    void serial(() => panelClosed(windowId)).catch(() => {});
+    void serial(() => endChat(windowId)).catch(() => {});
   });
 });
 
@@ -336,8 +385,53 @@ export default defineBackground(() => {
  * click's own gesture; otherwise it waits for the selection to be committed.
  */
 function arm(tabId: number | undefined): void {
-  panelOpenedForArm = false;
-  if (settings.panelOpen === 'on-click') void openPanelForArm(tabId);
+  if (settings.panelOpen === 'on-click') void openPanel(tabId);
+}
+
+/** The window a tab's bar belongs to, if it has one. */
+async function barsFor(tabId: number): Promise<number | undefined> {
+  for (const [windowId] of await allCurrent()) if ((await barsIn(windowId)).includes(tabId)) return windowId;
+  return undefined;
+}
+
+/** Sends a bar-control message to a tab, reader or web page alike; resolves with its answer. */
+async function tellBar(tabId: number, type: 'bar:end' | 'bar:pause' | 'bar:alive'): Promise<unknown> {
+  const send = isOwnPage(tabId)
+    ? browser.runtime.sendMessage({ type, tabId })
+    : browser.tabs.sendMessage(tabId, { type });
+  return await Promise.race([send, new Promise((r) => setTimeout(() => r(undefined), 800))]).catch(() => undefined);
+}
+
+/** When each window's chat was last finished, and when each tab last committed a selection. */
+const finishedAt = new Map<number, number>();
+const committedAt = new Map<number, number>();
+
+/** The bar's ✕: the chat is finished everywhere in the window. */
+async function finishChat(windowId: number): Promise<void> {
+  finishedAt.set(windowId, Date.now());
+  const tabs = await serial(() => endChat(windowId));
+  await Promise.all(tabs.map((t) => tellBar(t, 'bar:end')));
+  closePanel(windowId);
+}
+
+/**
+ * Ends the window's chat once nothing is left to carry it: no panel open and
+ * no bar still up. Bars are asked, because a tab can leave its page without
+ * saying so.
+ */
+async function maybeEnd(windowId: number): Promise<void> {
+  if (panelOpenIn(windowId)) return;
+  const tabs = await barsIn(windowId);
+  const alive = await Promise.all(tabs.map(async (t) => (await tellBar(t, 'bar:alive')) === true));
+  const dead = tabs.filter((_, i) => !alive[i]);
+  if (dead.length) await serial(async () => void (await Promise.all(dead.map(barGone))));
+  if (alive.some(Boolean)) return;
+  await serial(async () => {
+    // Checked again in turn: a panel may have opened, or a bar appeared, while the bars were being asked.
+    if (panelOpenIn(windowId)) return;
+    if ((await barsIn(windowId)).some((t) => !tabs.includes(t))) return;
+    await endChat(windowId);
+  });
 }
 
 function abortArmed(): void {
@@ -382,17 +476,12 @@ async function openPanel(tabId: number | undefined): Promise<boolean> {
   }
 }
 
-async function openPanelForArm(tabId: number | undefined): Promise<void> {
-  panelOpenedForArm = await openPanel(tabId);
-}
-
 /**
  * The bar's X closes everything. Chrome 141+ has sidePanel.close(); before
  * that (and in any browser still catching up) the panel document closes its
  * own window when asked, so it is asked either way.
  */
 function closePanel(windowId: number | undefined): void {
-  panelOpenedForArm = false;
   const sp = (browser as unknown as { sidePanel?: { close?(o: { windowId: number }): Promise<void> } }).sidePanel;
   if (sp?.close && windowId !== undefined) void sp.close({ windowId }).catch(() => {});
   void browser.runtime.sendMessage({ type: 'panel:close', windowId }).catch(() => {});
@@ -435,6 +524,15 @@ async function ensureContentScript(tabId: number): Promise<void> {
  * permission, which we do not ask for, so the reader announces itself instead.
  */
 const readerTabs = new Set<number>();
+const READER_TABS_KEY = 'readerTabs';
+/** Kept in storage.session too: a reader says hello once, and the worker may restart long after. */
+function saveReaderTabs(): Promise<void> {
+  return browser.storage.session.set({ [READER_TABS_KEY]: [...readerTabs] });
+}
+async function restoreReaderTabs(): Promise<void> {
+  const saved = (await browser.storage.session.get(READER_TABS_KEY))[READER_TABS_KEY] as number[] | undefined;
+  for (const id of saved ?? []) readerTabs.add(id);
+}
 
 function isOwnPage(tabId: number | undefined): boolean {
   return tabId !== undefined && readerTabs.has(tabId);
@@ -442,6 +540,8 @@ function isOwnPage(tabId: number | undefined): boolean {
 
 async function startSelection(tabId: number | undefined, kind: SelectionKind): Promise<void> {
   if (tabId === undefined) return;
+  // Selecting moves here: a bar still armed on another tab goes back to waiting.
+  if (armedTabId !== undefined && armedTabId !== tabId) void tellBar(armedTabId, 'bar:pause');
   const current = await getSettings();
   const tab = await browser.tabs.get(tabId);
   const host = safeHost(tab.url);
@@ -496,14 +596,14 @@ async function handleSelectionDone(msg: SelectionDoneMsg, tab: chrome.tabs.Tab |
     }
   }
   const plan = buildPlan({ selection: msg, mode: 'ask', capture });
-  // The selection joins the window's chat, whatever page it came from; an
-  // answer still streaming there carries on. Whether a panel is open is read
-  // now, not when the write gets its turn: a panel whose hello lands in
-  // between must still take this selection's chat over.
-  const panelOpen = panelOpenIn(windowId);
+  // ✕ was pressed (on this tab or another) while this screenshot was being
+  // taken: the chat it belonged to is finished, so it does not start another.
+  if ((finishedAt.get(windowId) ?? 0) > (committedAt.get(tabId) ?? Date.now())) return;
+  // The selection joins the window's chat in progress, whatever page it came
+  // from, or starts one; an answer still streaming there carries on.
   let added: Awaited<ReturnType<typeof addSelection>>;
   try {
-    added = await serial(() => addSelection(windowId, { panelOpen, plan, notice, tabId }));
+    added = await serial(() => addSelection(windowId, { plan, notice, tabId }));
   } catch (err) {
     console.warn('[selection-ai] could not keep the selection', err);
     return;

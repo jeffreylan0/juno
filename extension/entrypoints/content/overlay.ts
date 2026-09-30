@@ -1,7 +1,8 @@
 /**
  * Shadow-DOM overlay: the drag surface, the control bar and the cursor
- * tooltip. Mounted only while a selection is armed and removed before the tab
- * is captured.
+ * tooltip. While a selection is armed it is all three; between selections it
+ * is just the bar, waiting (`ready`), with nothing over the page. It is
+ * removed entirely before the tab is captured.
  *
  * Three rules keep it out of the way. The drag surface is a sibling of the
  * bar, not its parent, so clicks on our own controls can never start a box.
@@ -88,8 +89,8 @@ export interface OverlayHandlers {
   /** The user picked a different mode from the bar's chips. */
   onModeChange: (kind: SelectionKind) => void;
   /**
-   * The bar's X was pressed. The selection is cancelled either way; this is
-   * where the caller also closes the answer panel. Escape does not call it.
+   * The bar's X was pressed: the caller finishes the chat. Any armed
+   * selection is cancelled first. Escape does not call it.
    */
   onClose?: () => void;
 }
@@ -100,10 +101,11 @@ export interface BoxOptions {
 }
 
 /**
- * armed: waiting for the first drag. drawing: a pointer drag is in progress.
- * adjusting: a box is drawn and waits to be resized or sent.
+ * ready: just the bar, between selections; nothing is armed. armed: waiting
+ * for the first drag. drawing: a pointer drag is in progress. adjusting: a box
+ * is drawn and waits to be resized or sent.
  */
-type OverlayState = 'armed' | 'drawing' | 'adjusting';
+type OverlayState = 'ready' | 'armed' | 'drawing' | 'adjusting';
 
 /**
  * Just enough of WXT's ContentScriptContext to tear down cleanly. The reader is
@@ -128,14 +130,35 @@ export class Overlay {
   constructor(
     private ctx: OverlayHost,
     private handlers: OverlayHandlers,
-  ) {}
+  ) {
+    // An updated or reloaded extension invalidates this script: whatever it
+    // put on the page goes with it, the waiting bar included.
+    ctx.onInvalidated(() => {
+      this.cancelCurrent?.();
+      this.unmount();
+    });
+  }
 
   get active(): boolean {
     return this.root !== null;
   }
 
-  private mount(kind: SelectionKind, modes: SelectionKind[]): HTMLElement {
+  /** Whether a selection is being made right now (not just the bar waiting). */
+  get selecting(): boolean {
+    return this.root !== null && this.state !== 'ready';
+  }
+
+  /** Just the bar, waiting between selections. The page underneath works as usual. */
+  ready(modes: SelectionKind[]): void {
+    this.abort();
+    this.mount(null, modes);
+    this.setState('ready');
+  }
+
+  private mount(kind: SelectionKind | null, modes: SelectionKind[]): HTMLElement {
     this.unmount();
+    // A bar left by an earlier copy of this script (one the extension's update orphaned).
+    document.querySelectorAll('selection-ai-overlay').forEach((el) => el.remove());
     const host = document.createElement('selection-ai-overlay');
     // Open, not closed: the overlay holds nothing worth hiding — secrets stay
     // on the options page — and open keeps it inspectable in DevTools and
@@ -168,8 +191,8 @@ export class Overlay {
 
     const bar = new Bar(kind, modes, {
       onClose: () => {
-        this.handlers.onClose?.();
         this.abort();
+        this.handlers.onClose?.();
       },
       onConfirm: () => this.confirmCurrent?.(),
       onModeChange: (next) => this.handlers.onModeChange(next),
@@ -208,7 +231,7 @@ export class Overlay {
     // carries the instructions and the Ask button.
     this.tip?.classList.toggle('on', drawing);
     this.host?.setAttribute('data-state', state);
-    if (state === 'armed') this.bar?.resetInstruction();
+    if (state === 'armed' || state === 'ready') this.bar?.resetInstruction();
     if (!drawing) this.bar?.setAdjusting(state === 'adjusting');
   }
 
@@ -392,7 +415,6 @@ export class Overlay {
 
       teardown.push(arm(finish));
       this.cancelCurrent = () => finish(null);
-      this.ctx.onInvalidated(() => finish(null));
     });
   }
 }

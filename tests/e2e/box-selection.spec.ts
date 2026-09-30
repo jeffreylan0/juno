@@ -52,8 +52,10 @@ test('a box selection sends its screenshot and nothing read off the page', async
 
   const image = plan.parts.find((p) => p.kind === 'image');
   expect(image?.kind === 'image' && image.dataUrl.startsWith('data:image/png;base64,')).toBe(true);
-  // The overlay must be gone before the capture, so the crop has no blue tint.
-  await expect(page.locator('selection-ai-overlay')).toHaveCount(0);
+  // After the capture the bar comes back, waiting for the next selection:
+  // nothing is armed over the page.
+  await expect(page.locator('selection-ai-overlay')).toHaveAttribute('data-state', 'ready');
+  await expect(page.locator('selection-ai-overlay .backdrop.interactive')).toHaveCount(0);
 });
 
 test('the panel holds a conversation: a first answer, then a follow-up on the same selection', async ({
@@ -162,14 +164,14 @@ test('macros and the default prompt come from settings', async ({ context, exten
   await expect(panel.locator('.turn.user').first()).toHaveText("Explain it like I'm five.");
 });
 
-test('closing the panel ends the chat; it stays in the menu and opens again from there', async ({
+test('the bar’s ✕ finishes the chat; it stays in the menu and opens again from there', async ({
   context,
   extensionId,
   serviceWorker,
 }) => {
   const page = await context.newPage();
   const { url } = await openFixture(page, serviceWorker, 'text.html');
-  let panel = await openPanel(context, extensionId);
+  const panel = await openPanel(context, extensionId);
   await page.bringToFront();
   await startSelection(serviceWorker, 'box', url);
   await boxAround(page, panel, '#problem');
@@ -180,25 +182,28 @@ test('closing the panel ends the chat; it stays in the menu and opens again from
   const title = await page.title();
   await expect(panel.getByTestId('chat-title')).toHaveText(title);
 
-  await closeSidePanels(serviceWorker);
-  await panel.close();
+  // ✕ on the bar: the bar goes, the panel closes, the chat is finished.
+  const closed = panel.waitForEvent('close', { timeout: 10_000 });
+  await page.locator('selection-ai-overlay .bar .close').click();
+  await closed;
+  await expect(page.locator('selection-ai-overlay')).toHaveCount(0);
   await expect.poll(async () => serviceWorker.evaluate(async () => Object.keys(await chrome.storage.session.get(null)).filter((k) => k.startsWith('current:')).length)).toBe(0);
 
-  // Opening the panel again starts a new, empty chat…
-  panel = await openPanel(context, extensionId);
-  await expect(panel.getByTestId('empty')).toBeVisible();
-  await expect(panel.getByTestId('chat-title')).toHaveText('New chat');
-  await expect(panel.locator('.turn')).toHaveCount(0);
+  // The next selection starts a new chat…
+  const again = await openPanel(context, extensionId);
+  await expect(again.getByTestId('empty')).toBeVisible();
+  await expect(again.getByTestId('chat-title')).toHaveText('New chat');
+  await expect(again.locator('.turn')).toHaveCount(0);
 
   // …and the old one is in the menu.
-  await panel.getByTestId('menu').click();
-  const rows = panel.getByTestId('chat-row');
+  await again.getByTestId('menu').click();
+  const rows = again.getByTestId('chat-row');
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText(title);
   await rows.first().locator('.chat-open').click();
-  await expect(panel.getByTestId('chat-menu')).toHaveCount(0);
-  await expect(panel.locator('.turn.user')).toHaveCount(1);
-  await expect(panel.locator('.turn.assistant')).toContainText('Mock answer');
+  await expect(again.getByTestId('chat-menu')).toHaveCount(0);
+  await expect(again.locator('.turn.user')).toHaveCount(1);
+  await expect(again.locator('.turn.assistant')).toContainText('Mock answer');
   expect((await savedChats(serviceWorker)).length).toBe(1);
 });
 
@@ -220,12 +225,13 @@ test('selections from different pages go into the same chat, and one question ca
   await startSelection(serviceWorker, 'box', second.url);
   await boxAround(b, panel, 'table', second.tabId);
 
-  // Both in one chat, each naming its page; the chat is named after the first.
+  // Both in one chat, named after the first page. That page is not repeated
+  // above its own selection; a selection from another page says which.
   const cards = panel.getByTestId('selection');
   await expect(cards).toHaveCount(2);
-  await expect(cards.nth(0).getByTestId('selection-page')).toHaveText(await a.title());
-  await expect(cards.nth(1).getByTestId('selection-page')).toHaveText(await b.title());
   await expect(panel.getByTestId('chat-title')).toHaveText(await a.title());
+  await expect(cards.nth(0).getByTestId('selection-page')).toHaveCount(0);
+  await expect(cards.nth(1).getByTestId('selection-page')).toHaveText(await b.title());
   await expect(panel.locator('.composer textarea')).toHaveAttribute('placeholder', 'Ask about these selections…');
   // Not asked about yet, so either can still be taken back.
   await expect(panel.getByTestId('selection-remove')).toHaveCount(2);

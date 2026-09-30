@@ -2,7 +2,7 @@
  * The toolbar flow: one click arms a selection, the bar carries the controls,
  * the cursor tooltip appears only while a selection is being drawn, a drawn
  * box can be adjusted before asking, the page still scrolls, the bar itself
- * is never selectable, and its X closes the answer panel too.
+ * is never selectable, and its X finishes the chat, closing the panel too.
  */
 import type { Page, Worker } from '@playwright/test';
 import { FIXTURE_ORIGIN, dragBox, expect, openPanel, setSettings, sidePanelCount, tabIdFor, test } from './fixtures';
@@ -119,7 +119,7 @@ test('the tooltip takes over from the bar for the duration of the drag', async (
   await page.mouse.up();
 });
 
-test('the X ends the selection and closes the answer panel', async ({ context, extensionId, serviceWorker }) => {
+test('the X finishes: the bar goes and the answer panel closes', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
   await armed(serviceWorker, page);
   const panel = await openPanel(context, extensionId);
@@ -315,9 +315,9 @@ test('by default, letting go sends the box straight to the panel', async ({ cont
   await page.bringToFront();
 
   await dragBox(page, 100, 100, 300, 200);
-  // No adjusting step: the overlay goes, the plan lands, the panel opens.
-  await expect(page.locator(OVERLAY)).toHaveCount(0);
+  // No adjusting step: the plan lands, the panel opens, and the bar waits for more.
   await expect.poll(async () => (await getPlan(panel))?.selection.kind ?? null, { timeout: 15_000 }).toBe('box');
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'ready');
   expect((await getPlan(panel))!.selection.rect).toEqual({ x: 100, y: 100, width: 200, height: 100 });
   await expect.poll(async () => sidePanelCount(serviceWorker), { timeout: 10_000 }).toBe(1);
 });

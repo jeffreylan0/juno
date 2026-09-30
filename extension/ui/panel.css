@@ -43,7 +43,8 @@
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
-body { background: var(--bg); color: var(--fg); }
+/* Chrome gives extension pages `body { font-size: 75% }`; the chat text size is set on :root. */
+body { background: var(--bg); color: var(--fg); font-size: 1rem; }
 
 .panel { position: relative; display: flex; flex-direction: column; height: 100%; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -87,12 +88,7 @@ button.chat-title:hover { background: var(--hover); }
 .drawer-head .icon { padding: 7px; border-radius: 8px; }
 .drawer-head .icon svg { width: 18px; height: 18px; }
 .drawer-title { font-size: 13.5px; font-weight: 600; }
-.new-chat {
-  display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; color: var(--fg);
-  font: inherit; font-size: 14px; font-weight: 500; padding: 8px 10px; border-radius: 999px; cursor: pointer; text-align: left;
-}
-.new-chat:hover { background: var(--hover); }
-.new-chat svg, .search svg { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.search svg { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .search { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); }
 .search:focus-within { border-color: var(--accent); }
 .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 13.5px; color: var(--fg); }
@@ -257,5 +253,5 @@ a.selection-page:hover { color: var(--fg); text-decoration: underline; }
 .send:disabled { opacity: .5; cursor: default; }
 .send.stop { background: var(--fg); color: var(--bg); }
 
-/* Narrow side panels: keep the hint to what matters most. */
-@media (max-width: 380px) { .composer-hint .extra { display: none; } }
+/* Very narrow side panels: the Send button needs the room more. */
+@media (max-width: 300px) { .composer-hint { display: none; } }

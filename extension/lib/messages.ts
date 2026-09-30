@@ -55,11 +55,42 @@ export interface SelectionDoneMsg {
   page: { url: string; title: string };
 }
 
-/** Content → background: the user cancelled. `closePanel` is set by the X. */
+/** Content → background: Escape stopped the selection being made. */
 export interface SelectionCancelMsg {
   type: 'selection:cancel';
-  /** The bar's X closes everything; Escape only cancels the selection. */
-  closePanel?: boolean;
+}
+
+/** Content/reader → background: a bar is now on this tab. */
+export interface BarShownMsg {
+  type: 'bar:shown';
+}
+
+/**
+ * Content/reader → background: this tab's bar went away without finishing the
+ * chat (Escape before it added anything).
+ */
+export interface BarGoneMsg {
+  type: 'bar:gone';
+}
+
+/**
+ * Content/reader → background: the bar's ✕. Finishes the window's chat: every
+ * bar in the window goes and the panel closes; the chat stays in the menu.
+ */
+export interface ChatFinishMsg {
+  type: 'chat:finish';
+}
+
+/**
+ * Background → content/reader, about the bar:
+ * - `bar:end`: the chat finished; take the bar down.
+ * - `bar:pause`: a selection is starting on another tab; stop selecting here
+ *   and wait, ready.
+ * - `bar:alive`: is a bar up here? (Answers true.) Tabs navigate away
+ *   without saying so.
+ */
+export interface BarControlMsg {
+  type: 'bar:end' | 'bar:pause' | 'bar:alive';
 }
 
 /**
@@ -90,7 +121,7 @@ export interface ChatStopMsg {
   chatId: string;
 }
 
-/** Panel → background: start a new chat in this window ("New chat"). */
+/** Start a new chat in this window. No button sends this any more; kept for diagnostics. */
 export interface ChatNewMsg {
   type: 'chat:new';
   windowId: number;
@@ -207,6 +238,10 @@ export type RuntimeMessage =
   | SelectionAbortMsg
   | SelectionDoneMsg
   | SelectionCancelMsg
+  | BarShownMsg
+  | BarGoneMsg
+  | ChatFinishMsg
+  | BarControlMsg
   | PlanGetMsg
   | ChatSendMsg
   | ChatStopMsg

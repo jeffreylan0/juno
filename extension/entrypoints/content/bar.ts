@@ -1,8 +1,12 @@
 /**
- * The in-page control bar: a red X that closes everything (the bar and the
- * answer panel), the selection modes, the current instruction, an Ask button
- * while a box is being adjusted, and a gear that expands the bar upwards into
- * a scrollable settings menu. Notices sit underneath the control row.
+ * The in-page control bar: a red X that finishes the chat (every bar in the
+ * window and the answer panel close), the selection modes, the current
+ * instruction, an Ask button while a box is being adjusted, and a gear that
+ * expands the bar upwards into a scrollable settings menu. Notices sit
+ * underneath the control row.
+ *
+ * Between selections the bar stays on the page, ready: nothing is armed, the
+ * page works normally, and a chip starts the next selection in one click.
  *
  * It is pinned near the bottom of the viewport. A position setting can move it
  * later; for now every surface agrees on one place so it is always findable.
@@ -102,6 +106,9 @@ export const BAR_STYLE = `
 /** Shown while a drawn box waits to be adjusted and sent. */
 export const ADJUST_HINT = 'Drag the edges to adjust · Enter to ask';
 
+/** Between selections: nothing armed, the page is the student's. */
+export const READY_HINT = 'Pick a mode to select more';
+
 const MODE_HINT: Record<SelectionKind, string> = {
   box: 'Drag to select an area',
   text: 'Select text on the page',
@@ -113,7 +120,7 @@ const GEAR =
   '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>';
 
 export interface BarHandlers {
-  /** The red X: ends the selection and closes the answer panel too. */
+  /** The red X: finishes the chat, which closes every bar and the answer panel. */
   onClose: () => void;
   /** The Ask button, shown while a drawn box is being adjusted. */
   onConfirm: () => void;
@@ -136,8 +143,9 @@ export class Bar {
   private settingsBuilt = false;
   private drawing = false;
 
+  /** `kind` is the mode being selected, or null while the bar waits between selections. */
   constructor(
-    private kind: SelectionKind,
+    private kind: SelectionKind | null,
     private modes: SelectionKind[],
     private handlers: BarHandlers,
   ) {
@@ -157,14 +165,14 @@ export class Bar {
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'close';
-    close.title = 'Close';
-    close.setAttribute('aria-label', 'Close selection and answer panel');
+    close.title = 'Finish: close the bar and the answer panel';
+    close.setAttribute('aria-label', 'Finish: close the bar and the answer panel');
     close.textContent = '✕';
     close.addEventListener('click', () => this.handlers.onClose());
 
     this.say = document.createElement('span');
     this.say.className = 'say';
-    this.say.textContent = MODE_HINT[kind];
+    this.say.textContent = this.hint();
 
     this.ask = document.createElement('button');
     this.ask.type = 'button';
@@ -204,7 +212,11 @@ export class Bar {
   /** A box is drawn and waiting: show the Ask button and how to adjust it. */
   setAdjusting(adjusting: boolean): void {
     this.ask.classList.toggle('on', adjusting);
-    this.say.textContent = adjusting ? ADJUST_HINT : MODE_HINT[this.kind];
+    this.say.textContent = adjusting ? ADJUST_HINT : this.hint();
+  }
+
+  private hint(): string {
+    return this.kind ? MODE_HINT[this.kind] : READY_HINT;
   }
 
   /**
@@ -218,7 +230,7 @@ export class Bar {
   }
 
   resetInstruction(): void {
-    this.say.textContent = MODE_HINT[this.kind];
+    this.say.textContent = this.hint();
   }
 
   /** Adds a notice row under the controls. Returns a function that removes it. */
