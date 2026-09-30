@@ -55,42 +55,41 @@ export interface SelectionDoneMsg {
   page: { url: string; title: string };
 }
 
-/** Content → background: Escape stopped the selection being made. */
+/**
+ * Content → background: Escape stopped the selection being made. The reply
+ * says whether that also hides the bar ({ end: true }: nothing had been
+ * selected in this chat yet, so Escape meant "never mind").
+ */
 export interface SelectionCancelMsg {
   type: 'selection:cancel';
 }
 
-/** Content/reader → background: a bar is now on this tab. */
-export interface BarShownMsg {
-  type: 'bar:shown';
-}
-
 /**
- * Content/reader → background: this tab's bar went away without finishing the
- * chat (Escape before it added anything).
+ * Content/reader → background: what the bar is doing now — selecting in a
+ * mode, or waiting (null). The bar is one per window and follows the active
+ * tab, so the next tab shows it in the same state.
  */
-export interface BarGoneMsg {
-  type: 'bar:gone';
+export interface BarStateMsg {
+  type: 'bar:state';
+  mode: SelectionKind | null;
 }
 
 /**
- * Content/reader → background: the bar's ✕. Finishes the window's chat: every
- * bar in the window goes and the panel closes; the chat stays in the menu.
+ * Content/reader → background: ✕ on the bar, or Escape while it waits. Hides
+ * the bar and the panel and finishes the chat; it stays in the menu.
  */
 export interface ChatFinishMsg {
   type: 'chat:finish';
 }
 
 /**
- * Background → content/reader, about the bar:
- * - `bar:end`: the chat finished; take the bar down.
- * - `bar:pause`: a selection is starting on another tab; stop selecting here
- *   and wait, ready.
- * - `bar:alive`: is a bar up here? (Answers true.) Tabs navigate away
- *   without saying so.
+ * Background → content/reader: put the bar here in this state (`bar:show`,
+ * with `mode`), or take it away (`bar:hide`: the student moved to another tab,
+ * or the chat was finished).
  */
 export interface BarControlMsg {
-  type: 'bar:end' | 'bar:pause' | 'bar:alive';
+  type: 'bar:show' | 'bar:hide';
+  mode?: SelectionKind | null;
 }
 
 /**
@@ -238,8 +237,7 @@ export type RuntimeMessage =
   | SelectionAbortMsg
   | SelectionDoneMsg
   | SelectionCancelMsg
-  | BarShownMsg
-  | BarGoneMsg
+  | BarStateMsg
   | ChatFinishMsg
   | BarControlMsg
   | PlanGetMsg

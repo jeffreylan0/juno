@@ -247,3 +247,52 @@ test('the model picker beside the macros switches who answers, without a trip to
   await expect(panel.locator('.turn.assistant').first()).toContainText('Answer: 1/3', { timeout: 15_000 });
   expect(bodies[0]!.model).toBe('claude-opus-5-5');
 });
+
+test('every selection in the chat reaches the model: all new ones with the question, earlier ones in the history', async ({
+  context,
+  extensionId,
+  serviceWorker,
+}) => {
+  const bodies: { messages: { role: string; content: string | { type: string; text?: string }[] }[] }[] = [];
+  await context.route(MESSAGES, async (route: Route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
+    bodies.push(route.request().postDataJSON());
+    await route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'text/event-stream' }, body: ANSWER });
+  });
+  await useKey(serviceWorker);
+
+  const a = await context.newPage();
+  const b = await context.newPage();
+  await a.goto(`${FIXTURE_ORIGIN}/katex.html`);
+  await b.goto(`${FIXTURE_ORIGIN}/table.html`);
+  const panel = await openPanel(context, extensionId);
+  await selectProblem(a, serviceWorker, panel, `${FIXTURE_ORIGIN}/katex.html`);
+  // The bar follows to tab B; one chip click and a second selection, from another page.
+  await b.bringToFront();
+  await expect(b.locator('selection-ai-overlay')).toHaveAttribute('data-state', 'ready', { timeout: 10_000 });
+  await b.locator('selection-ai-overlay .bar .chip[data-kind="box"]').click();
+  await boxAndAsk(b, 'table');
+  await expect(panel.getByTestId('selection')).toHaveCount(2, { timeout: 15_000 });
+
+  await panel.locator('.macros .macro', { hasText: 'Explain' }).click();
+  await expect(panel.locator('.turn.assistant').first()).toContainText('Answer: 1/3', { timeout: 15_000 });
+  const first = bodies[0]!.messages;
+  expect(first).toHaveLength(1);
+  const opening = first[0]!.content as { type: string; text?: string }[];
+  // Both screenshots, each named by its page, with the question.
+  expect(opening.filter((c) => c.type === 'image')).toHaveLength(2);
+  const text = opening.find((c) => c.type === 'text')!.text!;
+  expect(text).toContain('The student selected 2 things');
+  expect(text).toContain('Fixture: KaTeX page');
+  expect(text).toContain('Fixture: table page');
+
+  // A follow-up with nothing new selected: both screenshots still go, as the history.
+  await panel.locator('.composer textarea').fill('Which one is harder?');
+  await panel.locator('.composer textarea').press('Enter');
+  await expect(panel.locator('.turn.assistant').nth(1)).toContainText('Answer: 1/3', { timeout: 15_000 });
+  const second = bodies[1]!.messages;
+  expect(second.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+  expect((second[0]!.content as { type: string }[]).filter((c) => c.type === 'image')).toHaveLength(2);
+  const last = second[2]!.content;
+  expect(typeof last === 'string' ? last : last.map((c) => c.text ?? '').join('')).toContain('Which one is harder?');
+});

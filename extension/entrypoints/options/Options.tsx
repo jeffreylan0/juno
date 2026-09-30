@@ -211,8 +211,8 @@ export function Options() {
               {' '}or press <kbd>{shortcut}</kbd>
             </>
           ) : null}{' '}
-          to start selecting. Everything you select goes into one chat, on any tab, until you press ✕ on the selection bar.
-          Changes here save as you make them.
+          to bring up the selection bar; it follows you from tab to tab, and everything you select goes into one chat until
+          you close it (✕ or Escape). Changes here save as you make them.
         </p>
 
         <AnswersSection settings={settings} keys={keys} models={models} save={save} saveKey={saveKey} rememberModels={rememberModels} />
@@ -617,6 +617,8 @@ function SelectingSection({ settings, save, shortcut }: { settings: Settings; sa
         <small className="help">Does the same as clicking {BRAND.iconName}. The browser owns shortcuts, so they are changed on its own page.</small>
       </div>
 
+      <AllSitesField />
+
       <div className="field">
         <span className="field-label">After drawing a box</span>
         <Radios
@@ -640,6 +642,48 @@ function SelectingSection({ settings, save, shortcut }: { settings: Settings; sa
         where every mode does.
       </p>
     </Section>
+  );
+}
+
+/**
+ * The bar follows the student from tab to tab only where the extension may
+ * go. Chrome grants that per tab when the icon is clicked; this lets it onto
+ * every site at once (asked once by Chrome, and removable here).
+ */
+function AllSitesField() {
+  const [allowed, setAllowed] = useState<boolean | null>(null);
+  useEffect(() => {
+    const refresh = () => void browser.permissions.contains({ origins: ['<all_urls>'] }).then(setAllowed, () => setAllowed(false));
+    refresh();
+    browser.permissions.onAdded.addListener(refresh);
+    browser.permissions.onRemoved.addListener(refresh);
+    return () => {
+      browser.permissions.onAdded.removeListener(refresh);
+      browser.permissions.onRemoved.removeListener(refresh);
+    };
+  }, []);
+  if (allowed === null) return null;
+  return (
+    <div className="field" data-testid="all-sites">
+      <span className="field-label">The bar on every tab</span>
+      <span className="key-row shortcut-row">
+        <span className={allowed ? 'help ok' : 'help'}>
+          {allowed ? '✓ The bar follows you to every tab.' : 'Off: the bar goes only to tabs where you click the shortcut icon.'}
+        </span>
+        {allowed ? (
+          <button type="button" className="secondary" onClick={() => void browser.permissions.remove({ origins: ['<all_urls>'] })}>
+            Turn off
+          </button>
+        ) : (
+          <button type="button" className="secondary" data-testid="allow-all-sites" onClick={() => void browser.permissions.request({ origins: ['<all_urls>'] })}>
+            Allow
+          </button>
+        )}
+      </span>
+      <small className="help">
+        Chrome asks once. {BRAND.name} still touches a page only while the bar is up, and sends nothing until you select.
+      </small>
+    </div>
   );
 }
 

@@ -43,7 +43,7 @@ export default defineContentScript({
         return;
       }
       if (msg?.type?.startsWith('bar:')) {
-        const answer = controller.handle(msg.type);
+        const answer = controller.handle(msg.type, (raw as { mode?: StartSelectionMsg['kind'] | null }).mode);
         if (answer !== undefined) sendResponse(answer);
       }
     });

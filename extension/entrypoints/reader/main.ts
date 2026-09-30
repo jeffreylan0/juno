@@ -257,14 +257,14 @@ void (async () => {
     | null;
   const selfTabId = reply?.tabId;
   browser.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
-    const msg = raw as { type?: string; tabId?: number; kind?: StartSelectionMsg['kind'] };
+    const msg = raw as { type?: string; tabId?: number; kind?: StartSelectionMsg['kind']; mode?: StartSelectionMsg['kind'] | null };
     if (msg?.tabId !== undefined && msg.tabId !== selfTabId) return;
     if (msg?.type === 'selection:abort') controller.abort();
     if (msg?.type === 'panel:needs-click') controller.promptForPanel();
     if (msg?.type === 'selection:start' && msg.kind) void controller.start(msg.kind);
     // Bar messages are addressed to one tab; unaddressed ones are not ours.
     if (msg?.tabId !== undefined && msg.type?.startsWith('bar:')) {
-      const answer = controller.handle(msg.type);
+      const answer = controller.handle(msg.type, msg.mode);
       if (answer !== undefined) sendResponse(answer);
     }
   });

@@ -90,15 +90,20 @@ test('element: Enter picks from the keyboard, and Escape cancels', async ({ cont
   const page = await context.newPage();
   await page.goto(URL);
   const tabId = await tabIdFor(serviceWorker, URL);
-  const panel = await openPanel(context, extensionId);
+  let panel = await openPanel(context, extensionId);
   await page.bringToFront();
 
+  // Escape before anything is picked: never mind — the bar and the panel go.
   await startSelection(serviceWorker, 'element', URL);
   await expect(page.locator(OVERLAY)).toHaveCount(1);
+  const closed = panel.waitForEvent('close', { timeout: 10_000 });
   await page.keyboard.press('Escape');
   await expect(page.locator(OVERLAY)).toHaveCount(0);
-  expect(await getPlan(panel, tabId)).toBeNull();
+  await closed;
 
+  panel = await openPanel(context, extensionId);
+  await page.bringToFront();
+  expect(await getPlan(panel, tabId)).toBeNull();
   await startSelection(serviceWorker, 'element', URL);
   const table = (await page.locator('#table').boundingBox())!;
   await page.mouse.move(table.x + 10, table.y + 5);

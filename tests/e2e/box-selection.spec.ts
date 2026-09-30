@@ -307,7 +307,10 @@ test('escape cancels without producing a plan', async ({ context, extensionId, s
   await startSelection(serviceWorker, 'box', url);
 
   await expect(page.locator('selection-ai-overlay')).toHaveCount(1);
+  const closed = panel.waitForEvent('close', { timeout: 10_000 });
   await page.keyboard.press('Escape');
   await expect(page.locator('selection-ai-overlay')).toHaveCount(0);
-  expect(await getPlan(panel)).toBeNull();
+  // Nothing was selected, so the bar and the panel went, leaving no chat behind.
+  await closed;
+  expect(await serviceWorker.evaluate(async () => Object.keys(await chrome.storage.session.get(null)).filter((k) => k.startsWith('current:')).length)).toBe(0);
 });

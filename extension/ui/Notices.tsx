@@ -9,6 +9,8 @@
  * choice currently picked.
  */
 import { MAX_SAVED_CHATS } from '@/lib/chats';
+import type { BarState } from '@/lib/current';
+import { BRAND } from '@/brand';
 import type { AiStatus } from '@/lib/status';
 import { answerChoiceOf, type Keys, type Settings } from '@/lib/storage';
 import { Icon, type IconName } from './icons';
@@ -40,6 +42,7 @@ export function Notices({
   onRecheck,
   dropped,
   onDismissDropped,
+  bar,
 }: {
   settings: Settings | null;
   keys: Keys | null;
@@ -48,8 +51,11 @@ export function Notices({
   onRecheck: () => void;
   dropped: string[] | null;
   onDismissDropped: () => void;
+  bar: BarState | null;
 }) {
   const notices: Notice[] = [];
+  const where = bar ? barNotice(bar) : null;
+  if (where) notices.push(where);
   const connection = settings && connectionNotice(settings, keys, status, checking, onRecheck);
   if (connection) notices.push(connection);
   if (dropped?.length) {
@@ -94,6 +100,40 @@ export function Notices({
       ))}
     </div>
   );
+}
+
+/**
+ * The bar is up but could not come onto the active tab. Only one reason needs
+ * the student: letting it onto every site, which Chrome asks about once.
+ */
+function barNotice(bar: BarState): Notice | null {
+  switch (bar.blocked) {
+    case 'permission':
+      return {
+        kind: 'bar-permission',
+        icon: 'info',
+        text: `The selection bar can't follow you onto this tab yet. Let it follow you to every tab, or click ${BRAND.iconName} here.`,
+        actions: [
+          {
+            label: 'Let it follow',
+            testid: 'allow-all-sites',
+            // Must run inside the click: Chrome only asks during a user gesture.
+            onClick: () => void browser.permissions.request({ origins: ['<all_urls>'] }).catch(() => false),
+          },
+        ],
+      };
+    case 'restricted':
+      return { kind: 'bar-restricted', icon: 'info', text: "The browser doesn't let extensions onto this page, so the bar can't show here.", actions: [] };
+    case 'blocked-site':
+      return {
+        kind: 'bar-blocked-site',
+        icon: 'info',
+        text: 'The shortcut is off on this site: it is on your blocked sites.',
+        actions: [{ label: 'Settings', onClick: openSettings, testid: 'notice-settings' }],
+      };
+    default:
+      return null;
+  }
 }
 
 function connectionNotice(

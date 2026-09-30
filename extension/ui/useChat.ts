@@ -5,7 +5,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { INDEX_KEY, chatKey, getChat, listChats, type Chat, type ChatSummary } from '@/lib/chats';
-import { currentKey, getCurrent, type Current } from '@/lib/current';
+import { barKey, currentKey, getBar, getCurrent, type BarState, type Current } from '@/lib/current';
 import { getImage, isImageRef } from '@/lib/images';
 import { PANEL_PORT, type PanelPortMsg } from '@/lib/messages';
 import { STATUS_KEY, type AiStatus } from '@/lib/status';
@@ -91,6 +91,26 @@ export function usePanelSession(): { windowId: number | null; current: Current |
   }, []);
 
   return { windowId, current };
+}
+
+/** The window's selection bar: where it is, and why it cannot be on this tab if it cannot. */
+export function useBar(windowId: number | null): BarState | null {
+  const [bar, setBar] = useState<BarState | null>(null);
+  useEffect(() => {
+    if (windowId === null) return;
+    let alive = true;
+    void getBar(windowId).then((b) => alive && setBar(b));
+    const key = barKey(windowId);
+    const onChanged = (changes: Changes, area: string) => {
+      if (area === 'session' && key in changes) setBar((changes[key]!.newValue as BarState | undefined) ?? null);
+    };
+    browser.storage.onChanged.addListener(onChanged);
+    return () => {
+      alive = false;
+      browser.storage.onChanged.removeListener(onChanged);
+    };
+  }, [windowId]);
+  return bar;
 }
 
 /** One chat, live. Null until it has something in it (empty chats are not stored). */

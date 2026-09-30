@@ -55,6 +55,10 @@ export default defineConfig({
       // Permissions are kept to the store checklist: activeTab, scripting, storage, sidePanel.
       permissions: ['activeTab', 'scripting', 'storage', ...(browser === 'firefox' ? [] : ['sidePanel'])],
       host_permissions: [] as string[],
+      // Asked for only when the student wants the bar to follow them from tab
+      // to tab (the panel offers it the first time it cannot). Without it the
+      // bar still works on any tab where the icon was clicked.
+      optional_host_permissions: ['<all_urls>'],
       // Alt/Option+Shift+S is the one family free in Chrome, Edge and Firefox
       // on both Windows and Mac (checked against each browser's published
       // shortcut list); every Ctrl/Cmd+Shift letter is taken somewhere. It is

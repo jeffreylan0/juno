@@ -25,10 +25,13 @@ export class SelectionController {
   private modes: SelectionKind[];
   /** Bumped by every start(), so a superseded arming ends quietly. */
   private generation = 0;
-  /** This page's bar has added a selection to the chat in progress. */
-  private delivered = false;
-  /** The background has been told a bar is up here. */
-  private shown = false;
+  /** The mode being selected in right now, or null while the bar waits. */
+  private armed: SelectionKind | null = null;
+  /**
+   * A selection has been committed and is being captured: the bar is off the
+   * page for the screenshot, and nothing may put it back until that is done.
+   */
+  private delivering = false;
 
   constructor(private opts: SelectionControllerOptions = {}) {
     const doc = opts.doc ?? document;
@@ -41,19 +44,9 @@ export class SelectionController {
         void this.start(kind);
       },
       onClose: () => this.finish(),
+      // Escape while the bar waits: hide it (and the panel), like ✕.
+      onEscapeWhileWaiting: () => this.finish(),
     });
-    // Back from the back/forward cache with a bar still on the page: say so,
-    // and drop the bar if the chat it was waiting on finished meanwhile.
-    addEventListener('pageshow', (e) => {
-      if (e.persisted && this.overlay.active) void this.announce();
-    });
-  }
-
-  /** Tells the background a bar is up here. Resolves with whether a chat is in progress. */
-  private async announce(): Promise<void> {
-    this.shown = true;
-    const reply = (await browser.runtime.sendMessage({ type: 'bar:shown' }).catch(() => null)) as { inChat?: boolean } | null;
-    if (reply && reply.inChat === false && this.delivered && !this.overlay.selecting) this.handle('bar:end');
   }
 
   get selectionModes(): SelectionKind[] {
@@ -66,31 +59,47 @@ export class SelectionController {
   }
 
   /**
-   * Messages about the bar, from whichever channel reaches this surface.
-   * Returns the answer for those that expect one.
+   * The background places the window's one bar: here, in a mode or waiting
+   * (`bar:show`), or away (`bar:hide`: another tab is active, or the chat was
+   * finished). Returns the answer for messages that expect one.
    */
-  handle(type: string | undefined): boolean | undefined {
+  handle(type: string | undefined, mode?: SelectionKind | null): boolean | undefined {
     switch (type) {
-      case 'bar:alive':
-        return this.overlay.active;
-      case 'bar:end':
-        // The chat was finished (✕ here or on another tab): the bar goes.
+      case 'bar:show':
+        this.show(mode ?? null);
+        return undefined;
+      case 'bar:hide':
         this.generation++;
+        this.armed = null;
         this.overlay.abort();
         this.overlay.unmount();
-        this.delivered = false;
-        this.shown = false;
         return undefined;
-      case 'bar:pause':
-        // A selection started on another tab: this one waits, ready.
-        if (this.overlay.selecting) {
-          this.generation++;
-          this.overlay.ready(this.modes);
-        }
-        return undefined;
+      case 'bar:alive':
+        return this.overlay.active;
       default:
         return undefined;
     }
+  }
+
+  /** Shows the bar in this state, unless it already is. */
+  private show(mode: SelectionKind | null): void {
+    // Mid-capture the bar comes back by itself, waiting, once the shot is taken.
+    if (this.delivering) return;
+    if (mode === null) {
+      if (this.armed) {
+        // A selection started here beats a placement that set out before it:
+        // keep selecting, and put the background right.
+        void browser.runtime.sendMessage({ type: 'bar:state', mode: this.armed }).catch(() => {});
+        return;
+      }
+      if (this.overlay.active) return; // already waiting
+      this.generation++;
+      this.armed = null;
+      this.overlay.ready(this.modes);
+      return;
+    }
+    if (this.armed === mode) return; // already selecting in it (perhaps still setting up)
+    void this.start(mode, false);
   }
 
   /**
@@ -111,57 +120,52 @@ export class SelectionController {
    * everything after this point is too late.
    */
   private commit(kind: SelectionKind): void {
+    this.delivering = true;
     const msg: SelectionCommittedMsg = { type: 'selection:committed', kind };
     void browser.runtime.sendMessage(msg).catch(() => {});
   }
 
   /**
-   * Escape stopped the selection. Once this bar has added something, it waits
-   * for the next one; before that, Escape means "never mind" and the bar goes.
+   * Escape stopped the selection. The bar then waits — unless nothing has been
+   * selected in this chat yet, when Escape means "never mind" and the bar (and
+   * the panel) go. The background knows which, and says.
    */
-  private stopped(): void {
+  private async stopped(gen: number): Promise<void> {
+    this.armed = null;
     const msg: SelectionCancelMsg = { type: 'selection:cancel' };
-    void browser.runtime.sendMessage(msg).catch(() => {});
-    if (this.delivered) {
-      this.overlay.ready(this.modes);
-      return;
-    }
-    this.overlay.unmount();
-    if (this.shown) {
-      this.shown = false;
-      void browser.runtime.sendMessage({ type: 'bar:gone' }).catch(() => {});
-    }
+    const reply = (await browser.runtime.sendMessage(msg).catch(() => null)) as { end?: boolean } | null;
+    if (gen !== this.generation) return;
+    if (reply?.end) this.overlay.unmount();
+    else this.overlay.ready(this.modes);
   }
 
-  /** The bar's ✕: the chat is finished, here and on every other tab. */
+  /** ✕ on the bar, or Escape while it waits: the bar and the panel go, the chat is finished. */
   private finish(): void {
     this.generation++;
+    this.armed = null;
     this.overlay.unmount();
-    this.delivered = false;
-    this.shown = false;
     void browser.runtime.sendMessage({ type: 'chat:finish' }).catch(() => {});
   }
 
-  async start(requested: SelectionKind): Promise<void> {
+  /** Arms a selection in `kind`. `report` tells the background, so the bar follows in this mode. */
+  async start(requested: SelectionKind, report = true): Promise<void> {
     const gen = ++this.generation;
     // Switching mode re-arms; drop whatever is running first. The arming it
     // replaces resolves null, but it is not a cancel, so it must not say so.
     this.overlay.abort();
     const current = () => gen === this.generation;
     const kind = this.modes.includes(requested) ? requested : (this.modes[0] as SelectionKind);
+    this.armed = kind;
+    if (report) void browser.runtime.sendMessage({ type: 'bar:state', mode: kind }).catch(() => {});
 
-    const pending = this.select(kind, current);
-    // Every time, not just the first: a bar the background lost track of
-    // (a tab that did not answer in time, one moved to another window) is
-    // listed again.
-    void this.announce();
-    const done = await pending;
+    const done = await this.select(kind, current);
     if (!current()) return;
-    if (!done) return this.stopped();
+    if (!done) return this.stopped(gen);
+    this.armed = null;
     // Answered once the screenshot is taken, so the bar never shows in it.
     await browser.runtime.sendMessage(done).catch(() => {});
+    this.delivering = false;
     if (!current()) return;
-    this.delivered = true;
     this.overlay.ready(this.modes);
   }
 

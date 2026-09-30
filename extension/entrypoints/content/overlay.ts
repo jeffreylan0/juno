@@ -93,6 +93,8 @@ export interface OverlayHandlers {
    * selection is cancelled first. Escape does not call it.
    */
   onClose?: () => void;
+  /** Escape while the bar waits between selections (nothing armed). */
+  onEscapeWhileWaiting?: () => void;
 }
 
 export interface BoxOptions {
@@ -148,11 +150,30 @@ export class Overlay {
     return this.root !== null && this.state !== 'ready';
   }
 
-  /** Just the bar, waiting between selections. The page underneath works as usual. */
+  /** Removes the Escape listener of a waiting bar. */
+  private readyTeardown: (() => void) | null = null;
+
+  /**
+   * Just the bar, waiting between selections. The page underneath works as
+   * usual. Escape here hides it — but only an Escape the page did not want
+   * for itself: typing in a field, or a page closing its own dialog
+   * (preventDefault), is left alone.
+   */
   ready(modes: SelectionKind[]): void {
     this.abort();
     this.mount(null, modes);
     this.setState('ready');
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.repeat || e.defaultPrevented) return;
+      // The real target, inside any web component, not its shadow host.
+      if (isEditable(e.composedPath()[0] ?? e.target)) return;
+      // A page dialog open: this Escape is closing it.
+      if (document.querySelector('dialog[open], [aria-modal="true"]')) return;
+      this.handlers.onEscapeWhileWaiting?.();
+    };
+    // Bubble phase, on window: the page gets the key first.
+    addEventListener('keydown', onKey);
+    this.readyTeardown = () => removeEventListener('keydown', onKey);
   }
 
   private mount(kind: SelectionKind | null, modes: SelectionKind[]): HTMLElement {
@@ -213,6 +234,8 @@ export class Overlay {
   }
 
   unmount(): void {
+    this.readyTeardown?.();
+    this.readyTeardown = null;
     this.host?.remove();
     this.host = null;
     this.root = null;
@@ -417,6 +440,13 @@ export class Overlay {
       this.cancelCurrent = () => finish(null);
     });
   }
+}
+
+/** A text field or editable area: Escape there belongs to the page. */
+function isEditable(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || !(el instanceof HTMLElement)) return false;
+  return el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
 }
 
 /** True when the event started inside our own UI, which is never selectable. */

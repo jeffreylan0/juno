@@ -26,10 +26,10 @@ import {
 } from '@/lib/chats';
 import {
   addSelection,
-  barGone,
-  barShown,
-  barsIn,
+  allBars,
   discardOrphans,
+  getBar,
+  setBar,
   endChat,
   getCurrent,
   onTemporaryDiscarded,
@@ -231,7 +231,7 @@ describe('screenshots', () => {
   });
 });
 
-describe('a chat’s life: the bar leads, the panel follows', () => {
+describe('a chat’s life: one bar per window, shown and hidden with the panel', () => {
   const W = 7;
 
   it('the first selection starts a chat, and every later one joins it, from any page', async () => {
@@ -242,19 +242,30 @@ describe('a chat’s life: the bar leads, the panel follows', () => {
     expect(chat.title).toBe('Page a');
   });
 
-  it('the bar’s ✕ finishes the chat: it stays in the menu, the bars go, and the next selection starts a new one', async () => {
-    await barShown(1, W);
-    await barShown(2, W);
-    await barShown(3, 99);
+  it('✕ finishes the chat: it stays in the menu, the bar goes, and the next selection starts a new one', async () => {
+    await setBar(W, { mode: 'box', tabId: 1 });
+    await setBar(99, { mode: null, tabId: 3 });
     const { chat } = await addSelection(W, { plan: plan('a'), tabId: 1 });
-    expect((await endChat(W)).sort()).toEqual([1, 2]);
+    expect(await endChat(W)).toBe(1); // the tab to take the bar off
     expect(await getCurrent(W)).toBeNull();
-    expect(await barsIn(W)).toEqual([]);
-    expect(await barsIn(99)).toEqual([3]); // another window's bar is untouched
+    expect(await getBar(W)).toBeNull();
+    expect(await getBar(99)).toEqual({ mode: null, tabId: 3 }); // another window's bar is untouched
     expect((await listChats()).map((c) => c.id)).toEqual([chat.id]);
 
     const { chat: next } = await addSelection(W, { plan: plan('b') });
     expect(next.id).not.toBe(chat.id);
+  });
+
+  it('the bar is one per window: it moves between tabs and keeps its mode', async () => {
+    await setBar(W, { mode: 'freeform', tabId: 1 });
+    await setBar(W, { tabId: 2 });
+    expect(await getBar(W)).toEqual({ mode: 'freeform', tabId: 2 });
+    // Somewhere it cannot go: it is on no tab, and says why.
+    await setBar(W, { tabId: undefined, blocked: 'permission' });
+    expect(await getBar(W)).toEqual({ mode: 'freeform', blocked: 'permission' });
+    await setBar(W, { mode: null, tabId: 5, blocked: undefined });
+    expect(await getBar(W)).toEqual({ mode: null, tabId: 5 });
+    expect((await allBars()).map(([w]) => w)).toEqual([W]);
   });
 
   it('a panel shows the chat in progress, or starts one when opened by hand', async () => {
@@ -275,13 +286,6 @@ describe('a chat’s life: the bar leads, the panel follows', () => {
     await addSelection(1, { plan: plan('a') });
     await addSelection(2, { plan: plan('b') });
     expect((await getCurrent(1))!.chatId).not.toBe((await getCurrent(2))!.chatId);
-  });
-
-  it('a bar going on its own is forgotten, and says which window it was in', async () => {
-    await barShown(5, W);
-    expect(await barGone(5)).toBe(W);
-    expect(await barGone(5)).toBeUndefined();
-    expect(await barsIn(W)).toEqual([]);
   });
 
   it('a temporary chat keeps its screenshots in memory, and finishing deletes it with them', async () => {

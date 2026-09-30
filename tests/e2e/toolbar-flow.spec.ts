@@ -133,17 +133,17 @@ test('the X finishes: the bar goes and the answer panel closes', async ({ contex
   expect(panel.isClosed()).toBe(true);
 });
 
-test('Escape ends the selection but leaves the answer panel open', async ({ context, extensionId, serviceWorker }) => {
+test('Escape before anything is selected hides the bar and the panel', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
   await armed(serviceWorker, page);
   const panel = await openPanel(context, extensionId);
   await page.bringToFront();
+  await expect(page.locator(BAR)).toBeVisible({ timeout: 10_000 });
 
+  const closed = panel.waitForEvent('close', { timeout: 10_000 });
   await page.keyboard.press('Escape');
   await expect(page.locator(OVERLAY)).toHaveCount(0);
-  await page.waitForTimeout(400);
-  expect(panel.isClosed()).toBe(false);
-  expect(await getPlan(panel)).toBeNull();
+  await closed;
 });
 
 test('the page still scrolls while a selection is armed', async ({ context, serviceWorker }) => {
@@ -303,9 +303,11 @@ test('Escape while adjusting cancels the whole selection', async ({ context, ext
 
   await dragBox(page, 100, 100, 300, 200);
   await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'adjusting');
+  // Nothing selected yet, so Escape means never mind: the bar and the panel go.
+  const closed = panel.waitForEvent('close', { timeout: 10_000 });
   await page.keyboard.press('Escape');
   await expect(page.locator(OVERLAY)).toHaveCount(0);
-  expect(await getPlan(panel)).toBeNull();
+  await closed;
 });
 
 test('by default, letting go sends the box straight to the panel', async ({ context, extensionId, serviceWorker }) => {

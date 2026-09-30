@@ -9,10 +9,11 @@
  * while the student is still choosing what to select; a setting opens it on
  * the click instead.
  *
- * Chats (lib/chats.ts) collect selections from any page in the window while
- * the student is selecting; the selection bar leads and the panel follows
- * (lib/current.ts has the rules: the icon starts or joins a chat, the bar's ✕
- * finishes it). This file is the only writer, and it
+ * Chats (lib/chats.ts) collect selections from any page in the window. The
+ * selection bar and the panel are shown and hidden together: the icon brings
+ * the bar up, one per window, and it follows the student from tab to tab; ✕
+ * on either (or Escape on a waiting bar) hides both and finishes the chat
+ * (lib/current.ts has the rules). This file is the only writer, and it
  * writes one change at a time (`serial`), so a selection landing while an
  * answer streams is never overwritten by the stream's next write.
  */
@@ -46,13 +47,14 @@ import {
 } from '@/lib/chats';
 import {
   addSelection,
+  allBars,
   allCurrent,
+  getBar,
   getCurrent,
-  barGone,
-  barShown,
-  barsIn,
   discardOrphans,
   endChat,
+  setBar,
+  type BarBlocked,
   onTemporaryDiscarded,
   panelOpened,
   replaceGone,
@@ -67,7 +69,6 @@ import {
   type PanelPortMsg,
   type RuntimeMessage,
   type SelectionDoneMsg,
-  type StartSelectionMsg,
 } from '@/lib/messages';
 import { buildPlan } from '@/lib/planner';
 import { callModel, type ProviderContext } from '@/lib/providers';
@@ -101,11 +102,7 @@ const STREAM_SAVE_MS = 120;
 
 /** True when a plan is waiting and the panel could not be opened for it. */
 let panelPending = false;
-/**
- * The tab a selection is armed in. Aborting targets this rather than "the
- * active tab": the student can arm a selection and then switch tabs; arming
- * on another tab puts this one's bar back to waiting.
- */
+/** The tab a selection is armed in, for an abort sent from an extension page. */
 let armedTabId: number | undefined;
 /** One answer at a time per chat. */
 const streams = new Map<string, AbortController>();
@@ -144,7 +141,6 @@ function reply(work: Promise<unknown>, sendResponse: (value: unknown) => void): 
 
 /** Open panels, per window. Usually one; tests open the panel page as a tab too. */
 const panels = new Map<number, Set<chrome.runtime.Port>>();
-const panelOpenIn = (windowId: number) => (panels.get(windowId)?.size ?? 0) > 0;
 
 /** The free plan's limit dropped a chat: tell the panels, once. */
 async function noteDropped(dropped: ChatSummary[]): Promise<void> {
@@ -180,12 +176,10 @@ export default defineBackground(() => {
   onTemporaryDiscarded(stopStream);
   void restoreReaderTabs();
   void serial(settleStreaming);
-  // A chat whose bars and panel all went while the worker was not running, a
-  // temporary chat left behind, screenshots nobody points at: tidied once,
+  // A temporary chat left behind, screenshots nobody points at: tidied once,
   // after any panel that is still open has had a moment to reconnect.
-  setTimeout(async () => {
-    for (const [windowId] of await allCurrent()) await maybeEnd(windowId);
-    await serial(async () => {
+  setTimeout(() => {
+    void serial(async () => {
       await discardOrphans();
       await sweepImages((await allCurrent()).map(([, c]) => c.chatId));
     });
@@ -213,15 +207,26 @@ export default defineBackground(() => {
       open?.delete(port);
       if (open?.size) return;
       panels.delete(windowId);
-      // The panel follows the bar: with a bar still up, the chat carries on
-      // and the next selection brings the panel back.
-      void maybeEnd(windowId);
+      // ✕ on the side panel: the bar goes too, and the chat is finished.
+      void finishChat(windowId);
     });
   });
 
   browser.action.onClicked.addListener((tab) => {
+    // The click grants this tab, so its URL is known right here — in time to
+    // open the panel on the click's own gesture when the bar cannot go on
+    // this page (the browser's own pages, a blocked site), so the student
+    // sees why instead of nothing.
+    if (tab?.url && cannotHost(tab.url)) {
+      void openPanel(tab.id);
+      if (tab.windowId !== undefined) {
+        const w = tab.windowId;
+        void serial(() => setBar(w, { mode: null, blocked: /^(https?|file):/.test(tab.url!) ? 'blocked-site' : 'restricted' }));
+      }
+      return;
+    }
     arm(tab?.id);
-    void lastKindItem.getValue().then((kind) => startSelection(tab?.id, kind));
+    void lastKindItem.getValue().then((kind) => summon(tab, kind));
   });
 
   // The main shortcut is bound to _execute_action, which arrives as
@@ -230,7 +235,7 @@ export default defineBackground(() => {
     const kind = COMMAND_KINDS[command];
     if (!kind) return;
     arm(tab?.id);
-    void startSelection(tab?.id, kind);
+    void summon(tab, kind);
   });
 
   browser.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
@@ -238,7 +243,7 @@ export default defineBackground(() => {
     const msg: RuntimeMessage = raw;
     switch (msg.type) {
       case 'selection:arm':
-        void activeTabId().then((id) => startSelection(id, msg.kind));
+        void activeTab().then((tab) => summon(tab, msg.kind));
         return;
       case 'selection:abort':
         abortArmed();
@@ -251,36 +256,36 @@ export default defineBackground(() => {
         armedTabId = undefined;
         void openPanel(sender.tab?.id);
         if (sender.tab?.id !== undefined) committedAt.set(sender.tab.id, Date.now());
+        // From here the bar is waiting, not selecting: a tab switch during the
+        // capture must not bring it up armed somewhere else.
+        if (sender.tab?.windowId !== undefined) {
+          const w = sender.tab.windowId;
+          void serial(async () => void ((await getBar(w)) && (await setBar(w, { mode: null }))));
+        }
         return;
       case 'selection:done':
         armedTabId = undefined;
         // Answered once the capture is done, so the bar only comes back after
-        // the screenshot has been taken without it.
-        return reply(handleSelectionDone(msg, sender.tab), sendResponse);
-      case 'selection:cancel':
+        // the screenshot has been taken without it. It comes back waiting.
+        return reply(
+          handleSelectionDone(msg, sender.tab).then(() => {
+            const w = sender.tab?.windowId;
+            if (w !== undefined) return serial(async () => void ((await getBar(w)) && (await setBar(w, { mode: null }))));
+          }),
+          sendResponse,
+        );
+      case 'selection:cancel': {
         armedTabId = undefined;
-        return;
-      case 'bar:shown':
-        // Sent at every selection's start (and when a page comes back from the
-        // back/forward cache), so a bar that dropped off the list comes back.
-        // The answer says whether a chat is still in progress for it to join.
-        if (sender.tab?.id !== undefined && sender.tab.windowId !== undefined) {
-          const { id, windowId } = sender.tab;
-          return reply(
-            serial(async () => {
-              await barShown(id, windowId);
-              return { inChat: (await getCurrent(windowId)) !== null };
-            }),
-            sendResponse,
-          );
-        }
-        return;
-      case 'bar:gone':
-        if (sender.tab?.id !== undefined) {
-          const id = sender.tab.id;
-          void serial(() => barGone(id)).then((windowId) => {
-            if (windowId !== undefined) void maybeEnd(windowId);
-          });
+        const w = sender.tab?.windowId;
+        if (w === undefined) return;
+        return reply(cancelSelection(w), sendResponse);
+      }
+      case 'bar:state':
+        // The bar says what it is doing (a chip picked, a selection started by
+        // the shortcut): the next tab shows it the same way. Only the bar on
+        // the active tab speaks for the window.
+        if (sender.tab?.id !== undefined && sender.tab.windowId !== undefined && sender.tab.active !== false) {
+          void noteBar(sender.tab.windowId, sender.tab.id, msg.mode);
         }
         return;
       case 'chat:finish':
@@ -358,20 +363,28 @@ export default defineBackground(() => {
     }
   });
 
-  // A tab closing, or leaving its page, takes its bar with it. With no bar
-  // and no panel left, the chat is over.
+  // The bar follows the student: to whichever tab becomes active, and back
+  // onto a tab whose page just loaded (a navigation takes the old bar with it).
+  browser.tabs.onActivated.addListener(({ tabId, windowId }) => {
+    void getBar(windowId).then((bar) => bar && placeBar(windowId, tabId));
+  });
+  browser.tabs.onUpdated.addListener((tabId, change, tab) => {
+    if (change.status === 'loading' && readerTabs.delete(tabId)) void saveReaderTabs();
+    if (change.status !== 'complete' || !tab.active || tab.windowId === undefined) return;
+    const windowId = tab.windowId;
+    void getBar(windowId).then((bar) => bar && placeBar(windowId, tabId));
+  });
   browser.tabs.onRemoved.addListener((tabId) => {
     if (readerTabs.delete(tabId)) void saveReaderTabs();
-    void serial(() => barGone(tabId)).then((windowId) => {
-      if (windowId !== undefined) void maybeEnd(windowId);
-    });
   });
-  browser.tabs.onUpdated.addListener((tabId, change) => {
-    if (change.status !== 'loading') return;
-    void barsFor(tabId).then((windowId) => {
-      // Asked a moment later, once the old page (and its bar) is gone.
-      if (windowId !== undefined) setTimeout(() => void maybeEnd(windowId), 1_000);
-    });
+  // Allowed onto every site: the bar can now follow to the tab it could not reach.
+  browser.permissions.onAdded.addListener(() => {
+    void allBars().then((bars) =>
+      bars.forEach(async ([windowId]) => {
+        const [tab] = await browser.tabs.query({ active: true, windowId });
+        if (tab?.id !== undefined) await placeBar(windowId, tab.id);
+      }),
+    );
   });
 
   // A window closing takes everything in it along.
@@ -388,17 +401,9 @@ function arm(tabId: number | undefined): void {
   if (settings.panelOpen === 'on-click') void openPanel(tabId);
 }
 
-/** The window a tab's bar belongs to, if it has one. */
-async function barsFor(tabId: number): Promise<number | undefined> {
-  for (const [windowId] of await allCurrent()) if ((await barsIn(windowId)).includes(tabId)) return windowId;
-  return undefined;
-}
-
-/** Sends a bar-control message to a tab, reader or web page alike; resolves with its answer. */
-async function tellBar(tabId: number, type: 'bar:end' | 'bar:pause' | 'bar:alive'): Promise<unknown> {
-  const send = isOwnPage(tabId)
-    ? browser.runtime.sendMessage({ type, tabId })
-    : browser.tabs.sendMessage(tabId, { type });
+/** Sends a message to the bar's surface on a tab — the reader or a web page; resolves with its answer. */
+async function tellBar(tabId: number, msg: { type: 'bar:show' | 'bar:hide'; mode?: SelectionKind | null }): Promise<unknown> {
+  const send = isOwnPage(tabId) ? browser.runtime.sendMessage({ ...msg, tabId }) : browser.tabs.sendMessage(tabId, msg);
   return await Promise.race([send, new Promise((r) => setTimeout(() => r(undefined), 800))]).catch(() => undefined);
 }
 
@@ -406,32 +411,144 @@ async function tellBar(tabId: number, type: 'bar:end' | 'bar:pause' | 'bar:alive
 const finishedAt = new Map<number, number>();
 const committedAt = new Map<number, number>();
 
-/** The bar's ✕: the chat is finished everywhere in the window. */
+/**
+ * ✕ on the bar or on the side panel (or Escape on a waiting bar): both are
+ * hidden and the chat is finished — kept in the menu, or deleted if temporary.
+ */
 async function finishChat(windowId: number): Promise<void> {
   finishedAt.set(windowId, Date.now());
-  const tabs = await serial(() => endChat(windowId));
-  await Promise.all(tabs.map((t) => tellBar(t, 'bar:end')));
+  following.set(windowId, (following.get(windowId) ?? 0) + 1);
+  const tabId = await serial(() => endChat(windowId));
+  if (tabId !== undefined) await tellBar(tabId, { type: 'bar:hide' });
+  for (const t of [...badged]) void clearFollowBadge(t);
   closePanel(windowId);
 }
 
 /**
- * Ends the window's chat once nothing is left to carry it: no panel open and
- * no bar still up. Bars are asked, because a tab can leave its page without
- * saying so.
+ * Escape stopped a selection. With nothing selected in this chat yet it meant
+ * "never mind", so the bar (and the panel) go; otherwise the bar waits.
  */
-async function maybeEnd(windowId: number): Promise<void> {
-  if (panelOpenIn(windowId)) return;
-  const tabs = await barsIn(windowId);
-  const alive = await Promise.all(tabs.map(async (t) => (await tellBar(t, 'bar:alive')) === true));
-  const dead = tabs.filter((_, i) => !alive[i]);
-  if (dead.length) await serial(async () => void (await Promise.all(dead.map(barGone))));
-  if (alive.some(Boolean)) return;
-  await serial(async () => {
-    // Checked again in turn: a panel may have opened, or a bar appeared, while the bars were being asked.
-    if (panelOpenIn(windowId)) return;
-    if ((await barsIn(windowId)).some((t) => !tabs.includes(t))) return;
-    await endChat(windowId);
+async function cancelSelection(windowId: number): Promise<{ end: boolean }> {
+  const current = await getCurrent(windowId);
+  const chat = current ? await getChat(current.chatId) : null;
+  if (!chat?.items.length) {
+    await finishChat(windowId);
+    return { end: true };
+  }
+  await serial(async () => void ((await getBar(windowId)) && (await setBar(windowId, { mode: null }))));
+  return { end: false };
+}
+
+/** The icon or the shortcut: the bar comes up (or re-arms) on this tab, in `kind`. */
+async function summon(tab: chrome.tabs.Tab | undefined, kind: SelectionKind): Promise<void> {
+  if (tab?.id === undefined) return;
+  const windowId = tab.windowId ?? (await browser.tabs.get(tab.id).catch(() => undefined))?.windowId;
+  if (windowId === undefined) return;
+  await serial(() => setBar(windowId, { mode: kind }));
+  await placeBar(windowId, tab.id);
+}
+
+/** A bar reported its state; it is the window's bar, on that tab. */
+async function noteBar(windowId: number, tabId: number, mode: SelectionKind | null): Promise<void> {
+  // The bar's own word beats a placement still on its way here.
+  following.set(windowId, (following.get(windowId) ?? 0) + 1);
+  // In the same queue, and in order with everything else this bar sent: a
+  // report sent before its own ✕ is applied before the ✕, never after.
+  const before = await serial(async () => {
+    const bar = await getBar(windowId);
+    await setBar(windowId, { mode, tabId, blocked: undefined });
+    return bar;
   });
+  if (before?.tabId !== undefined && before.tabId !== tabId) void tellBar(before.tabId, { type: 'bar:hide' });
+  void clearFollowBadge(tabId);
+  if (mode) armedTabId = tabId;
+}
+
+/** Bumped per window by every move, so a slow injection never lands on a tab the student has left. */
+const following = new Map<number, number>();
+
+/**
+ * Puts the window's one bar on `tabId`, in the state it was in, and takes it
+ * off the tab it was on. Where it cannot go (the browser's own pages, a
+ * blocked site, a tab the extension has not been allowed onto) it stays where
+ * it was, out of sight, and the panel says why; coming back finds it as it was.
+ */
+async function placeBar(windowId: number, tabId: number): Promise<void> {
+  const move = (following.get(windowId) ?? 0) + 1;
+  following.set(windowId, move);
+  if (!(await getBar(windowId))) return;
+  const blocked = await reach(tabId);
+  const placed = await serial(async () => {
+    if (following.get(windowId) !== move) return null; // moved on meanwhile
+    const latest = await getBar(windowId);
+    if (!latest) return null; // finished meanwhile
+    await setBar(windowId, blocked ? { blocked } : { tabId, blocked: undefined });
+    return blocked ? null : latest;
+  });
+  if (blocked === 'permission') void setFollowBadge(tabId);
+  if (!placed) return;
+  if (placed.tabId !== undefined && placed.tabId !== tabId) void tellBar(placed.tabId, { type: 'bar:hide' });
+  if (following.get(windowId) !== move) return; // the next placement takes over from here
+  void clearFollowBadge(tabId);
+  await tellBar(tabId, { type: 'bar:show', mode: placed.mode });
+  if (placed.mode) armedTabId = tabId;
+}
+
+/**
+ * A tab the bar could not follow onto, for lack of permission: a "+" on the
+ * icon there says one click brings it (the click grants the tab). The panel,
+ * when open, offers to let it follow everywhere.
+ */
+const badged = new Set<number>();
+async function setFollowBadge(tabId: number): Promise<void> {
+  badged.add(tabId);
+  await browser.action.setBadgeText({ tabId, text: '+' }).catch(() => {});
+  await browser.action.setBadgeBackgroundColor({ tabId, color: '#2563eb' }).catch(() => {});
+  await browser.action.setTitle({ tabId, title: 'Click to bring the selection bar to this tab' }).catch(() => {});
+}
+async function clearFollowBadge(tabId: number): Promise<void> {
+  if (!badged.delete(tabId)) return;
+  await browser.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+  await browser.action.setTitle({ tabId, title: '' }).catch(() => {});
+}
+
+/** Gets the content script onto a tab if it can go there; otherwise says why not. */
+async function reach(tabId: number): Promise<BarBlocked | undefined> {
+  if (isOwnPage(tabId)) return undefined;
+  let url: string | undefined;
+  try {
+    url = (await browser.tabs.get(tabId)).url;
+  } catch {
+    return 'restricted';
+  }
+  // Browser pages, other extensions' pages and our own (the panel opened as a
+  // tab) take no content script. An unknown URL is a page we have not been
+  // allowed onto yet — unless the icon was clicked there, so try.
+  if (url && !/^(https?|file):/.test(url)) return 'restricted';
+  const host = safeHost(url);
+  if (host && settings.blockedSites.includes(host)) return 'blocked-site';
+  try {
+    await ensureContentScript(tabId);
+    return undefined;
+  } catch (err) {
+    // Chrome's wording tells a page we may not script at all (its own pages,
+    // the Web Store) from one we have not been allowed onto yet.
+    const lacking = /Cannot access contents of|must request permission|Missing host permission/i.test(String((err as Error)?.message ?? err));
+    return lacking && !(await hasAllSites()) ? 'permission' : 'restricted';
+  }
+}
+
+/** A page the bar can never go on: not a web page (and not our reader), or a blocked site. */
+function cannotHost(url: string): boolean {
+  if (url.startsWith(browser.runtime.getURL('/reader.html'))) return false;
+  if (!/^(https?|file):/.test(url)) return true;
+  const host = safeHost(url);
+  return !!host && settings.blockedSites.includes(host);
+}
+
+/** Whether the student let the bar onto every site (an optional permission). */
+async function hasAllSites(): Promise<boolean> {
+  return await browser.permissions.contains({ origins: ['<all_urls>'] }).catch(() => false);
 }
 
 function abortArmed(): void {
@@ -442,9 +559,9 @@ function abortArmed(): void {
   else void browser.tabs.sendMessage(target, { type: 'selection:abort' }).catch(() => {});
 }
 
-async function activeTabId(): Promise<number | undefined> {
+async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
   const [tab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
-  return tab?.id;
+  return tab as chrome.tabs.Tab | undefined;
 }
 
 /**
@@ -536,37 +653,6 @@ async function restoreReaderTabs(): Promise<void> {
 
 function isOwnPage(tabId: number | undefined): boolean {
   return tabId !== undefined && readerTabs.has(tabId);
-}
-
-async function startSelection(tabId: number | undefined, kind: SelectionKind): Promise<void> {
-  if (tabId === undefined) return;
-  // Selecting moves here: a bar still armed on another tab goes back to waiting.
-  if (armedTabId !== undefined && armedTabId !== tabId) void tellBar(armedTabId, 'bar:pause');
-  const current = await getSettings();
-  const tab = await browser.tabs.get(tabId);
-  const host = safeHost(tab.url);
-  if (host && current.blockedSites.includes(host)) {
-    console.info('[selection-ai] blocked site, ignoring', host);
-    return;
-  }
-
-  if (isOwnPage(tabId)) {
-    // Chrome refuses to inject a content script into an extension page, and
-    // tabs.sendMessage does not reach one either, so broadcast with the tab id.
-    await browser.runtime.sendMessage({ type: 'selection:start', kind, tabId }).catch(() => {});
-    armedTabId = tabId;
-    return;
-  }
-
-  try {
-    await ensureContentScript(tabId);
-  } catch (err) {
-    console.warn('[selection-ai] cannot inject into this page', err);
-    return;
-  }
-  const msg: StartSelectionMsg = { type: 'selection:start', kind };
-  await browser.tabs.sendMessage(tabId, msg);
-  armedTabId = tabId;
 }
 
 function safeHost(url: string | undefined): string | null {

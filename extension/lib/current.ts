@@ -1,27 +1,26 @@
 /**
  * Which chat each window is on, and when a chat begins and ends.
  *
- * The selection bar leads; the panel follows it. A chat is "in progress" in a
- * window while the student is selecting there, and the rules are:
+ * The selection bar and the panel are one thing that the student shows and
+ * hides. The rules:
  *
- *  - Clicking the shortcut icon (or pressing the shortcut) summons the bar on
- *    the current tab. With no chat in progress in the window, the first
- *    selection starts a new one; with a chat in progress, the bar joins it —
- *    on any tab, so one chat can gather selections across pages.
- *  - After each selection the bar stays on its page, ready for the next.
- *  - The bar's ✕ finishes the chat: every bar in the window goes, the panel
- *    closes, and the chat stays in the menu (a temporary one is deleted).
- *  - Closing only the panel leaves the chat in progress while a bar is still
- *    up; the next selection brings the panel back on the same chat. Once no
- *    bar and no panel are left (tabs closed, pages navigated away), the chat
- *    ends as if ✕ had been pressed.
+ *  - Clicking the shortcut icon (or pressing the shortcut) brings up the bar.
+ *    It is one bar per window, not per tab: it follows the student to
+ *    whichever tab is active, in whatever state it was in (selecting in a
+ *    mode, or waiting between selections).
+ *  - The first selection starts a chat; every later one joins it, whichever
+ *    tab it comes from.
+ *  - ✕ on the bar, ✕ on the side panel, or Escape while the bar is waiting
+ *    hides both and finishes the chat: a saved chat stays in the menu, a
+ *    temporary one is deleted. The next click on the icon starts a new chat.
  *
  * State lives in storage.session so it survives the service worker being torn
- * down: `current:<windowId>` names the chat, `bars` maps each tab showing a bar
- * to its window. The background calls these one at a time (it serialises every
- * chat write), so none of them has to worry about another running halfway.
+ * down: `current:<windowId>` names the chat, `bar:<windowId>` says the bar is
+ * up, what it is doing and which tab it is on. The background calls these one
+ * at a time (it serialises every chat write), so none of them has to worry
+ * about another running halfway.
  */
-import type { Plan } from '@shared/payload';
+import type { Plan, SelectionKind } from '@shared/payload';
 import { discardChat, getChat, newChat, saveChat, withSelection, type Chat, type ChatSummary, type SelectionItem } from './chats';
 import { storePlanImages } from './images';
 
@@ -32,7 +31,21 @@ export interface Current {
 
 const PREFIX = 'current:';
 export const currentKey = (windowId: number) => `${PREFIX}${windowId}`;
-export const BARS_KEY = 'bars';
+
+/** Why the bar is not on the active tab, when it cannot be. */
+export type BarBlocked = 'permission' | 'restricted' | 'blocked-site';
+
+/** The one bar of a window. */
+export interface BarState {
+  /** The mode being selected in, or null while it waits between selections. */
+  mode: SelectionKind | null;
+  /** The tab it is on now, if it could be put on the active tab. */
+  tabId?: number;
+  blocked?: BarBlocked;
+}
+
+const BAR_PREFIX = 'bar:';
+export const barKey = (windowId: number) => `${BAR_PREFIX}${windowId}`;
 
 const session = () => (browser.storage as unknown as { session: chrome.storage.StorageArea }).session;
 
@@ -77,36 +90,26 @@ async function leave(current: Current | null): Promise<void> {
   await discardChat(current.chatId);
 }
 
-// ── Bars ─────────────────────────────────────────────────────────────────
+// ── The bar ──────────────────────────────────────────────────────────────
 
-type Bars = Record<string, number>;
-
-async function getBars(): Promise<Bars> {
-  return ((await session().get(BARS_KEY))[BARS_KEY] as Bars | undefined) ?? {};
+export async function getBar(windowId: number): Promise<BarState | null> {
+  const key = barKey(windowId);
+  return ((await session().get(key))[key] as BarState | undefined) ?? null;
 }
 
-/** A bar appeared on a tab. */
-export async function barShown(tabId: number, windowId: number): Promise<void> {
-  const bars = await getBars();
-  if (bars[tabId] === windowId) return;
-  await session().set({ [BARS_KEY]: { ...bars, [tabId]: windowId } });
+/** Updates the window's bar, bringing it up if it was not. Returns the new state. */
+export async function setBar(windowId: number, patch: Partial<BarState>): Promise<BarState> {
+  const next: BarState = { mode: null, ...(await getBar(windowId)), ...patch };
+  for (const k of Object.keys(next) as (keyof BarState)[]) if (next[k] === undefined) delete next[k];
+  await session().set({ [barKey(windowId)]: next });
+  return next;
 }
 
-/** A bar went away on its own (Escape before it added anything, the page left). Returns its window. */
-export async function barGone(tabId: number): Promise<number | undefined> {
-  const bars = await getBars();
-  const windowId = bars[tabId];
-  if (windowId === undefined) return undefined;
-  delete bars[tabId];
-  await session().set({ [BARS_KEY]: bars });
-  return windowId;
-}
-
-/** Tabs showing a bar in this window. */
-export async function barsIn(windowId: number): Promise<number[]> {
-  return Object.entries(await getBars())
-    .filter(([, w]) => w === windowId)
-    .map(([t]) => Number(t));
+export async function allBars(): Promise<Array<[number, BarState]>> {
+  const all = await session().get(null);
+  return Object.entries(all)
+    .filter(([k]) => k.startsWith(BAR_PREFIX))
+    .map(([k, v]) => [Number(k.slice(BAR_PREFIX.length)), v as BarState]);
 }
 
 // ── The chat's life ──────────────────────────────────────────────────────
@@ -123,17 +126,15 @@ export async function panelOpened(windowId: number, claim?: Current): Promise<Cu
 }
 
 /**
- * Finishes the window's chat: the bar's ✕, or nothing left open. Returns the
- * tabs whose bars should be taken down.
+ * Hides the bar and the panel's chat: ✕ on either, or Escape on a waiting
+ * bar. Returns the tab the bar was on, to take it down.
  */
-export async function endChat(windowId: number): Promise<number[]> {
+export async function endChat(windowId: number): Promise<number | undefined> {
+  const bar = await getBar(windowId);
   await leave(await getCurrent(windowId));
   await setCurrent(windowId, null);
-  const tabs = await barsIn(windowId);
-  const bars = await getBars();
-  for (const t of tabs) delete bars[t];
-  await session().set({ [BARS_KEY]: bars });
-  return tabs;
+  await session().remove(barKey(windowId));
+  return bar?.tabId;
 }
 
 /** The ghost, turned on with something already in the chat: a separate, temporary chat. */

@@ -1,9 +1,10 @@
 /**
- * The panel: the chat the selection bar is filling. It follows the bar: the
- * shortcut icon summons the bar, each selection lands here, on any tab, and
- * the bar's ✕ finishes the chat (it stays in the chat menu) and closes the
- * panel. Closing only the panel keeps the chat going; the next selection
- * brings it back.
+ * The panel: the chat the selection bar is filling. The bar and the panel are
+ * shown and hidden together: the shortcut icon brings the bar up, it follows
+ * the student from tab to tab, each selection lands here, and ✕ on either
+ * (or Escape on a waiting bar) hides both and finishes the chat — it stays in
+ * the chat menu, or is deleted if temporary. The next click on the icon
+ * starts a new chat.
  *
  * Layout, top to bottom:
  *  - the top bar: chat menu (left), the chat's name (click to rename), the
@@ -34,7 +35,7 @@ import { Icon } from './icons';
 import { ModelPicker } from './ModelPicker';
 import { Notices } from './Notices';
 import { SelectionCard } from './Selection';
-import { useAiStatus, useChat, useChatList, usePanelSession } from './useChat';
+import { useAiStatus, useBar, useChat, useChatList, usePanelSession } from './useChat';
 import { useShortcut } from './useShortcut';
 
 /** How long a macro's prompt shows in the box before it is sent. */
@@ -46,6 +47,7 @@ export function Panel() {
   const { windowId, current } = usePanelSession();
   const chat = useChat(current?.chatId ?? null);
   const chats = useChatList();
+  const bar = useBar(windowId);
   const { status, recheck, checking } = useAiStatus();
   const dropped = useDropped();
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -180,7 +182,7 @@ export function Panel() {
           className={`icon ghost${temporary ? ' on' : ''}`}
           aria-label="Temporary chat"
           aria-pressed={temporary}
-          title={temporary ? 'Leave temporary chat (it will be deleted)' : 'Temporary chat: not saved, deleted when you finish it'}
+          title={temporary ? 'Leave temporary chat (it will be deleted)' : 'Temporary chat: not saved, deleted when you close the panel'}
           data-testid="temporary"
           onClick={toggleTemporary}
         >
@@ -250,6 +252,7 @@ export function Panel() {
           onRecheck={recheck}
           dropped={dropped.titles}
           onDismissDropped={dropped.dismiss}
+          bar={bar}
         />
         <div className="ask-row">
           <div className="macros" role="toolbar" aria-label="Answer macros">
@@ -358,7 +361,7 @@ function Empty({ temporary, shortcut }: { temporary: boolean; shortcut: string }
       <div className="empty temporary" data-testid="empty">
         <Icon name="ghost" className="empty-ghost" />
         <p>
-          <strong>Temporary chat.</strong> It won't appear in your chats, and it's deleted when you finish it with ✕ on the
+          <strong>Temporary chat.</strong> It won't appear in your chats, and it's deleted when you close the panel or the
           selection bar.
         </p>
         <p>{how}</p>
@@ -369,8 +372,8 @@ function Empty({ temporary, shortcut }: { temporary: boolean; shortcut: string }
     <div className="empty" data-testid="empty">
       <p>{how}</p>
       <p>
-        Keep selecting, on this page or any other tab: everything goes into this chat until you press ✕ on the selection
-        bar.
+        The bar follows you from tab to tab, and everything you select goes into this chat. Press ✕ (here or on the bar)
+        or Escape when you are done.
       </p>
     </div>
   );

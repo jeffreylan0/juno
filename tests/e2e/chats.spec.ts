@@ -118,19 +118,15 @@ test('the menu lists saved chats; search, rename and delete work in place', asyn
   expect((await savedChats(serviceWorker)).map((c) => c.title)).toEqual([secondTitle]);
 });
 
-test('a temporary chat is never listed, survives the panel closing, and is deleted when finished', async ({
-  context,
-  extensionId,
-  serviceWorker,
-}) => {
+test('a temporary chat is never listed and is deleted when the panel closes', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
-  let panel = await openPanel(context, extensionId);
+  const panel = await openPanel(context, extensionId);
 
   const ghost = panel.getByTestId('temporary');
   await ghost.click();
   await expect(ghost).toHaveAttribute('aria-pressed', 'true');
   await expect(panel.getByTestId('chat-title')).toHaveText('Temporary chat');
-  await expect(panel.getByTestId('empty')).toContainText('deleted when you finish it');
+  await expect(panel.getByTestId('empty')).toContainText('deleted when you close the panel');
 
   await selectOn(page, serviceWorker, panel, 'text.html');
   await askAndWait(panel);
@@ -145,17 +141,10 @@ test('a temporary chat is never listed, survives the panel closing, and is delet
   await expect(panel.getByTestId('chat-row')).toHaveCount(0);
   await panel.getByTestId('menu-close').click();
 
-  // Closing only the panel does not end it: the bar is still up on the page.
+  // ✕ on the side panel: the bar goes with it, and the chat is deleted, screenshots included.
   await closeSidePanels(serviceWorker);
   await panel.close();
-  await page.waitForTimeout(1_500);
-  expect(await serviceWorker.evaluate(async (id) => `chat:${id}` in (await chrome.storage.session.get(null)), chat.id)).toBe(true);
-  panel = await openPanel(context, extensionId);
-  await expect(panel.getByTestId('chat-title')).toHaveText('Temporary chat');
-  await expect(panel.getByTestId('selection')).toHaveCount(1);
-
-  // ✕ on the bar finishes it: deleted, screenshots included.
-  panel = await finishChat(page, panel, () => openPanel(context, extensionId));
+  await expect(page.locator('selection-ai-overlay')).toHaveCount(0, { timeout: 10_000 });
   await expect
     .poll(async () =>
       serviceWorker.evaluate(async (id) => {
@@ -176,8 +165,9 @@ test('a temporary chat is never listed, survives the panel closing, and is delet
     .toEqual({ inSession: false, images: 0 });
 
   // What comes next is a normal, empty chat.
-  await expect(panel.getByTestId('temporary')).toHaveAttribute('aria-pressed', 'false');
-  await expect(panel.getByTestId('chat-title')).toHaveText('New chat');
+  const next = await openPanel(context, extensionId);
+  await expect(next.getByTestId('temporary')).toHaveAttribute('aria-pressed', 'false');
+  await expect(next.getByTestId('chat-title')).toHaveText('New chat');
 });
 
 test('leaving a temporary chat with the ghost deletes it; the chat before stays saved', async ({ context, extensionId, serviceWorker }) => {
