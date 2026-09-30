@@ -5,10 +5,15 @@
  */
 import type { Env } from './index';
 
-export async function callVendor(
-  body: { model: string; messages: unknown[]; route?: 'small' | 'large' },
-  env: Env,
-): Promise<Response> {
+export interface AskBody {
+  model: string;
+  messages: unknown[];
+  route?: 'small' | 'large';
+  /** A temporary chat: logged nowhere, cached nowhere, stored nowhere we control. */
+  ephemeral?: boolean;
+}
+
+export async function callVendor(body: AskBody, env: Env): Promise<Response> {
   const [vendor, model] = body.model.includes('/') ? body.model.split('/') : ['anthropic', body.model];
   const base = env.AI_GATEWAY_ID
     ? `https://gateway.ai.cloudflare.com/v1/${env.AI_GATEWAY_ID}/selection-ai/${vendor}`
@@ -16,11 +21,14 @@ export async function callVendor(
       ? 'https://api.openai.com/v1'
       : 'https://api.anthropic.com/v1';
 
+  // The AI Gateway logs every request unless told not to, and may cache it.
+  const privacy: Record<string, string> = body.ephemeral ? { 'cf-aig-collect-log': 'false', 'cf-aig-skip-cache': 'true' } : {};
+
   if (vendor === 'openai') {
     return fetch(`${base}/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${env.OPENAI_API_KEY}` },
-      body: JSON.stringify({ model, messages: body.messages, stream: true, stream_options: { include_usage: true } }),
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${env.OPENAI_API_KEY}`, ...privacy },
+      body: JSON.stringify({ model, messages: body.messages, store: false, stream: true, stream_options: { include_usage: true } }),
     });
   }
 

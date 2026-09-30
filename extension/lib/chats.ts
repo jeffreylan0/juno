@@ -4,12 +4,13 @@
  * A chat is a timeline of items — selections as they arrive, the student's
  * questions, the model's answers. Each question takes every selection that
  * has not yet been answered with it, so "select, select, ask" sends both.
- * Opening the side panel starts a new chat; closing it ends that chat, which
- * then lives on in the chat menu.
+ * The first selection starts a chat; finishing it (✕ or Escape) leaves it in
+ * the chat menu (current.ts has the rules).
  *
  * Where things live:
  *  - saved chats: storage.local, one key per chat plus a small index for the
- *    menu. On this computer only, until accounts bring cloud storage.
+ *    menu. On this computer only; the student picks how many are kept
+ *    (Settings.chatLimit). Cloud copies are for super users, later.
  *  - temporary chats: storage.session (memory only). Never listed, and
  *    deleted when the panel closes.
  *  - screenshots: IndexedDB (images.ts), referenced from the chat; a
@@ -20,9 +21,7 @@
  */
 import type { Attachment, ChatTurn, ModelRef, Plan, Usage } from '@shared/payload';
 import { deleteChatImages, images } from './images';
-
-/** The free plan keeps this many saved chats; the oldest goes first. */
-export const MAX_SAVED_CHATS = 10;
+import { getSettings } from './storage';
 
 export interface SelectionItem {
   kind: 'selection';
@@ -52,7 +51,6 @@ export interface AssistantItem {
   streaming?: boolean;
   usage?: Usage;
   model?: ModelRef;
-  cached?: boolean;
   error?: string;
   /** The error's category (providers/errors.ts), so the panel can offer a fix. */
   errorCode?: string;
@@ -114,7 +112,7 @@ export interface SaveOptions {
 
 /**
  * Writes a chat. An empty chat is never written: a chat exists once it has
- * something in it. Saving past the free plan's limit drops the least recently
+ * something in it. Saving past the student's limit drops the least recently
  * used chats, screenshots and all; they are returned so the student can be told.
  */
 export async function saveChat(chat: Chat, opts: SaveOptions = {}): Promise<{ chat: Chat; dropped: ChatSummary[] }> {
@@ -126,11 +124,31 @@ export async function saveChat(chat: Chat, opts: SaveOptions = {}): Promise<{ ch
 
   const list = (await listChats()).filter((c) => c.id !== next.id);
   list.push(summarize(next));
-  list.sort((a, b) => b.updatedAt - a.updatedAt);
-  const dropped = list.splice(MAX_SAVED_CHATS);
+  const dropped = await overLimit(list);
   await local().set({ [INDEX_KEY]: list });
   for (const c of dropped) await discardChat(c.id);
   return { chat: next, dropped };
+}
+
+/**
+ * Keeps the newest chats up to the limit and deletes the rest. Run whenever
+ * settings change, so a lowered limit (the settings page asks first) takes
+ * effect at once; returns what went, and writes nothing when nothing did.
+ */
+export async function pruneChats(): Promise<ChatSummary[]> {
+  const list = await listChats();
+  const dropped = await overLimit(list);
+  if (!dropped.length) return [];
+  await local().set({ [INDEX_KEY]: list });
+  for (const c of dropped) await discardChat(c.id);
+  return dropped;
+}
+
+/** Sorts `list` newest first and takes off (and returns) whatever is past the limit. */
+async function overLimit(list: ChatSummary[]): Promise<ChatSummary[]> {
+  const { chatLimit } = await getSettings();
+  list.sort((a, b) => b.updatedAt - a.updatedAt);
+  return list.splice(chatLimit);
 }
 
 /**

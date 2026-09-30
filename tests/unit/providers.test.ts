@@ -191,7 +191,7 @@ describe('callModel', () => {
   it('mock replays a recorded answer for the same payload hash', async () => {
     const c = ctx();
     const req: AskRequest = { plan: plan(), model: { vendor: 'mock', model: 'mock-1' } };
-    await c.cache.set(await hashRequest(req), { text: 'recorded', model: { vendor: 'anthropic', model: 'x' }, recordedAt: 0 });
+    await c.cache!.set(await hashRequest(req), { text: 'recorded', model: { vendor: 'anthropic', model: 'x' }, recordedAt: 0 });
     const { text } = await collect(callModel({ plan: plan() }, 'small', c, { provider: 'mock', vendor: 'anthropic' }));
     expect(text).toBe('recorded');
   });
@@ -222,6 +222,25 @@ describe('callModel', () => {
     expect(second.text).toBe('Read: hi\n\nAnswer: 4');
     expect(second.done?.cached).toBe(true);
     expect(calls).toBe(1);
+  });
+
+  it('records nothing without a cache (the extension) or for a temporary chat', async () => {
+    let calls = 0;
+    const fetchMock = (async () => {
+      calls++;
+      return sseResponse([JSON.stringify({ choices: [{ delta: { content: 'Answer: 4' } }] }), '[DONE]']);
+    }) as unknown as typeof fetch;
+    const opts = { provider: 'byok' as const, vendor: 'openai' as const };
+    const keys = { anthropic: '', openai: 'sk-test', session: '' };
+
+    const bare = ctx({ fetch: fetchMock, keys, cache: undefined });
+    await collect(callModel({ plan: plan() }, 'small', bare, opts));
+    await collect(callModel({ plan: plan() }, 'small', bare, opts));
+    expect(calls).toBe(2);
+
+    const ghost = ctx({ fetch: fetchMock, keys, ephemeral: true });
+    await collect(callModel({ plan: plan() }, 'small', ghost, opts));
+    expect((ghost.cache as MemoryCacheStore).size).toBe(0);
   });
 
   it('explicit model override wins over the route table', async () => {

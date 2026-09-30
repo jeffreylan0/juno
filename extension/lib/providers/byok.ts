@@ -3,6 +3,9 @@
  * direct-browser-access header) and OpenAI (chat.completions) using the key the
  * student typed into Options. The key never leaves the background script.
  *
+ * Neither vendor trains on API traffic by default. What each keeps, and what
+ * a temporary chat changes, is noted at each call below.
+ *
  * Only standard headers plus the ones each vendor documents are sent: the
  * background's fetch is a cross-origin request, so an unexpected header means
  * a CORS preflight the vendor may refuse.
@@ -102,6 +105,13 @@ interface AnthropicEvent {
   error?: { type?: string; message?: string };
 }
 
+/**
+ * Anthropic deletes API inputs and outputs within 30 days and has no
+ * per-request setting that shortens that (zero retention is an agreement with
+ * an organisation). Its prompt cache lives in memory only, is never written to
+ * disk and expires within minutes, so a temporary chat keeps it: dropping it
+ * would cost more and keep nothing less.
+ */
 async function* streamAnthropic(
   req: AskRequest,
   model: ModelRef,
@@ -162,21 +172,37 @@ async function* streamAnthropic(
   };
 }
 
+/**
+ * Models that turned down `prompt_cache_retention: "in_memory"` (newer
+ * OpenAI models keep prompt caches for 24 hours and take no shorter setting).
+ * Remembered so a temporary chat asks once, not every time.
+ */
+const NO_MEMORY_ONLY_CACHE = new Set<string>();
+
 async function* streamOpenAI(
   req: AskRequest,
   model: ModelRef,
   ctx: ProviderContext,
 ): AsyncGenerator<string, StreamResult, void> {
   if (!ctx.keys.openai) throw new ProviderError('Add your OpenAI API key in Settings to get answers.', 'no-key');
-  // OpenAI caches long prompt prefixes by itself; nothing to mark.
-  const usage = yield* streamOpenAIChat(
-    ctx.fetch,
-    OPENAI_URL,
-    'OpenAI',
-    { authorization: `Bearer ${ctx.keys.openai}` },
-    { model: model.model, messages: toChatMessages(req), max_completion_tokens: MAX_OUTPUT_TOKENS },
-    ctx.signal,
-  );
+  // OpenAI caches long prompt prefixes by itself; nothing to mark. It never
+  // trains on API traffic unless the key's organisation opted in. `store:
+  // false` keeps the answer out of its stored completions; a temporary chat
+  // also asks for the prompt cache to stay in memory, where the model allows.
+  const base = { model: model.model, messages: toChatMessages(req), max_completion_tokens: MAX_OUTPUT_TOKENS, store: false };
+  const memoryOnly = ctx.ephemeral && !NO_MEMORY_ONLY_CACHE.has(model.model);
+  const call = (body: Record<string, unknown>) =>
+    streamOpenAIChat(ctx.fetch, OPENAI_URL, 'OpenAI', { authorization: `Bearer ${ctx.keys.openai}` }, body, ctx.signal);
+  let usage: { inputTokens: number; outputTokens: number; cacheRead?: number };
+  try {
+    usage = yield* call(memoryOnly ? { ...base, prompt_cache_retention: 'in_memory' } : base);
+  } catch (err) {
+    // Refused before a word was streamed, so asking again cannot repeat anything.
+    const e = err as ProviderError;
+    if (!memoryOnly || e.status !== 400 || !/prompt_cache_retention/.test(`${e.detail ?? ''} ${e.message}`)) throw err;
+    NO_MEMORY_ONLY_CACHE.add(model.model);
+    usage = yield* call(base);
+  }
   return {
     usage: {
       inputTokens: usage.inputTokens,

@@ -121,10 +121,9 @@ test('the tooltip takes over from the bar for the duration of the drag', async (
 
 test('the X finishes: the bar goes and the answer panel closes', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
-  await armed(serviceWorker, page);
   const panel = await openPanel(context, extensionId);
   await expect(panel.locator('.panel')).toBeVisible();
-  await page.bringToFront();
+  await armed(serviceWorker, page);
 
   const closed = panel.waitForEvent('close', { timeout: 10_000 });
   await page.locator(`${BAR} .close`).click();
@@ -135,9 +134,9 @@ test('the X finishes: the bar goes and the answer panel closes', async ({ contex
 
 test('Escape before anything is selected hides the bar and the panel', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
-  await armed(serviceWorker, page);
+  // The panel page is a tab here; opening it after the bar would be switching tabs, which takes the bar away.
   const panel = await openPanel(context, extensionId);
-  await page.bringToFront();
+  await armed(serviceWorker, page);
   await expect(page.locator(BAR)).toBeVisible({ timeout: 10_000 });
 
   const closed = panel.waitForEvent('close', { timeout: 10_000 });
@@ -170,9 +169,9 @@ test('keyboard scrolling works, so the overlay never stole focus', async ({ cont
 
 test('clicking the bar never starts a selection', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
-  await armed(serviceWorker, page);
+  // The panel page is a tab here; opening it after the bar would be switching tabs, which takes the bar away.
   const panel = await openPanel(context, extensionId);
-  await page.bringToFront();
+  await armed(serviceWorker, page);
 
   // A press and drag that begins on the bar must be inert.
   const bar = (await page.locator(BAR).boundingBox())!;
@@ -191,17 +190,20 @@ test('the gear expands the bar upwards, between the controls and the notices', a
   const bar = page.locator(BAR);
   const settings = page.locator(`${BAR} .settings`);
 
+  // The bar slides in when it comes up; measure it once it has landed.
+  await expect.poll(() => bar.evaluate((el) => el.getAnimations().length)).toBe(0);
   const closed = (await bar.boundingBox())!;
 
   await bar.locator('.gear').click();
   await expect(settings).toHaveClass(/open/);
-  // Only how selecting works; who answers is picked in the panel, and the
-  // mode is whatever chip was used last, so neither is a setting here.
-  await expect(settings.locator('select')).toHaveCount(2);
+  // Only how selecting works; who answers is picked in the panel, the mode
+  // is whatever chip was used last, and the panel always opens with the
+  // first selection, so none of those is a setting here.
+  await expect(settings.locator('select')).toHaveCount(1);
   await expect(settings).not.toContainText('Answered by');
   await expect(settings).not.toContainText('Selection mode');
   await expect(settings).toContainText('After drawing a box');
-  await expect(settings).toContainText('Open the answer panel');
+  await expect(settings).not.toContainText('Open the answer panel');
   await settled(page, BAR);
 
   const open = (await bar.boundingBox())!;
@@ -245,9 +247,9 @@ test('the wheel is ignored once a drag has started', async ({ context, serviceWo
 test('set to adjust, a drawn box waits, then Enter asks and the panel opens', async ({ context, extensionId, serviceWorker }) => {
   await setSettings(serviceWorker, { adjustBox: true });
   const page = await context.newPage();
-  await armed(serviceWorker, page);
+  // The panel page is a tab here; opening it after the bar would be switching tabs, which takes the bar away.
   const panel = await openPanel(context, extensionId);
-  await page.bringToFront();
+  await armed(serviceWorker, page);
 
   const target = (await page.locator('#problem').boundingBox())!;
   await dragBox(page, target.x - 4, target.y - 4, target.x + target.width + 4, target.y + target.height + 4);
@@ -277,9 +279,9 @@ test('set to adjust, a drawn box waits, then Enter asks and the panel opens', as
 test('dragging a corner resizes the box, and Ask sends the resized one', async ({ context, extensionId, serviceWorker }) => {
   await setSettings(serviceWorker, { adjustBox: true });
   const page = await context.newPage();
-  await armed(serviceWorker, page);
+  // The panel page is a tab here; opening it after the bar would be switching tabs, which takes the bar away.
   const panel = await openPanel(context, extensionId);
-  await page.bringToFront();
+  await armed(serviceWorker, page);
 
   await dragBox(page, 100, 100, 300, 200);
   await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'adjusting');
@@ -297,9 +299,9 @@ test('dragging a corner resizes the box, and Ask sends the resized one', async (
 test('Escape while adjusting cancels the whole selection', async ({ context, extensionId, serviceWorker }) => {
   await setSettings(serviceWorker, { adjustBox: true });
   const page = await context.newPage();
-  await armed(serviceWorker, page);
+  // The panel page is a tab here; opening it after the bar would be switching tabs, which takes the bar away.
   const panel = await openPanel(context, extensionId);
-  await page.bringToFront();
+  await armed(serviceWorker, page);
 
   await dragBox(page, 100, 100, 300, 200);
   await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'adjusting');
@@ -312,9 +314,9 @@ test('Escape while adjusting cancels the whole selection', async ({ context, ext
 
 test('by default, letting go sends the box straight to the panel', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
-  await armed(serviceWorker, page);
+  // The panel page is a tab here; opening it after the bar would be switching tabs, which takes the bar away.
   const panel = await openPanel(context, extensionId);
-  await page.bringToFront();
+  await armed(serviceWorker, page);
 
   await dragBox(page, 100, 100, 300, 200);
   // No adjusting step: the plan lands, the panel opens, and the bar waits for more.
@@ -367,34 +369,17 @@ test('when Chrome refuses the panel, the page offers a click that opens it', asy
   await expect(page.locator('selection-ai-toast')).toHaveCount(0);
 });
 
-/**
- * With the panel set to open on the toolbar click. Chromium enforces the
- * user-activation rule on sidePanel.open(): a real drag or key press
- * satisfies it, and the synthetic action dispatch a test has to use does not.
- * In a real browser the click-time open succeeds and the badge never appears;
- * here it is refused, which exercises the retry that has to be there when a
- * gesture is missing.
- */
-test('set to open on click, the panel is asked for at arm time, and again if refused', async ({ context, serviceWorker }) => {
-  await setSettings(serviceWorker, { panelOpen: 'on-click' });
+test('the icon brings up only the bar; the panel opens with the first selection', async ({ context, serviceWorker }) => {
   const page = await context.newPage();
-  const url = `${FIXTURE_ORIGIN}/text.html`;
-  await page.goto(url);
-  await page.bringToFront();
-
-  await clickToolbar(serviceWorker, url);
-  await expect(page.locator(BAR)).toBeVisible({ timeout: 10_000 });
-
-  // The attempt happened before any drag; the badge is how a refusal surfaces.
-  const badge = () => serviceWorker.evaluate(async () => chrome.action.getBadgeText({}));
-  await expect.poll(badge, { timeout: 5000 }).toBe('1');
+  await armed(serviceWorker, page);
+  await page.waitForTimeout(300);
+  expect(await sidePanelCount(serviceWorker)).toBe(0);
 
   const target = (await page.locator('#problem').boundingBox())!;
   await dragBox(page, target.x - 4, target.y - 4, target.x + target.width + 4, target.y + target.height + 4);
-
-  // The drag is a real gesture, so the retry lands and the badge clears.
-  await expect.poll(badge, { timeout: 10_000 }).toBe('');
+  // The drag is the gesture that opens it.
   await expect.poll(async () => sidePanelCount(serviceWorker), { timeout: 10_000 }).toBe(1);
+  await expect.poll(() => serviceWorker.evaluate(async () => chrome.action.getBadgeText({}))).toBe('');
 });
 
 test('the main shortcut is the icon\'s own shortcut, Alt+Shift+S', async ({ serviceWorker }) => {

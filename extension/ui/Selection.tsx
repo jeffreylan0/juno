@@ -12,8 +12,7 @@
  * gets that area with the outside painted white (capture.ts), since models
  * read transparency inconsistently.
  *
- * No token counts or routing details here; those are for a super-user view
- * once plans and pricing settle (Settings.showUsage).
+ * No token counts or routing details here.
  */
 import { useState } from 'react';
 import type { ImagePart, Part, Point } from '@shared/payload';

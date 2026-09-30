@@ -3,13 +3,19 @@
  *
  * Chrome refuses to inject content scripts into extension pages, so the reader
  * cannot be driven the usual way. Both surfaces instead own one of these and
- * feed it `selection:start` from whichever channel reaches them.
+ * feed it the background's `bar:*` messages from whichever channel reaches them.
+ *
+ * The bar lives on one tab at a time. The icon brings it up (`bar:show`);
+ * switching tabs takes it away (`bar:hide`), and the icon brings it back
+ * wherever the student is. It stays up through each selection: only the
+ * selection's own drawing leaves the page for the screenshot.
  */
-import type { SelectionKind } from '@shared/payload';
+import type { Rect, SelectionKind } from '@shared/payload';
+import { BRAND } from '@/brand';
 import { Overlay, type OverlayHost } from '@/entrypoints/content/overlay';
 import { showToast } from '@/entrypoints/content/toast';
 import { availableModes, detectPdf, readerUrlFor, type PdfContext } from './pdf-detect';
-import type { SelectionCancelMsg, SelectionCommittedMsg, SelectionDoneMsg } from './messages';
+import { extensionAlive, send, type BarControlMsg, type RuntimeMessage, type SelectionDoneMsg } from './messages';
 import { getSettings, lastKindItem } from './storage';
 
 export interface SelectionControllerOptions {
@@ -23,83 +29,75 @@ export class SelectionController {
   private overlay: Overlay;
   private pdf: PdfContext;
   private modes: SelectionKind[];
-  /** Bumped by every start(), so a superseded arming ends quietly. */
+  /** Bumped by every start() and every hide, so a superseded selection ends quietly. */
   private generation = 0;
   /** The mode being selected in right now, or null while the bar waits. */
   private armed: SelectionKind | null = null;
-  /**
-   * A selection has been committed and is being captured: the bar is off the
-   * page for the screenshot, and nothing may put it back until that is done.
-   */
+  /** A selection has been committed and its screenshot is being taken. */
   private delivering = false;
+  /** What the student asked for meanwhile (a chip, the ghost, the icon), done in order once the screenshot is taken. */
+  private queued: (() => void)[] = [];
+  /** Whether the next selection starts a temporary chat. */
+  private ghost = false;
+  /** The extension was updated or reloaded under this page: nothing more to do here. */
+  private gone = false;
+  private doc: Document;
 
-  constructor(private opts: SelectionControllerOptions = {}) {
-    const doc = opts.doc ?? document;
+  constructor(opts: SelectionControllerOptions = {}) {
+    const doc = (this.doc = opts.doc ?? document);
     this.pdf = detectPdf(doc);
     this.modes = availableModes(this.pdf);
-    this.overlay = new Overlay(opts.host ?? { onInvalidated: () => {} }, {
-      onModeChange: (kind) => {
-        // The icon starts wherever the student left off next time.
-        void lastKindItem.setValue(kind).catch(() => {});
-        void this.start(kind);
-      },
-      onClose: () => this.finish(),
+    this.overlay = new Overlay({
+      onModeChange: (kind) =>
+        this.act(() =>
+          this.soon(() => {
+            // The icon starts wherever the student left off next time.
+            void lastKindItem.setValue(kind).catch(() => {});
+            void this.start(kind);
+          }),
+        ),
+      onClose: () => this.act(() => this.finish()),
       // Escape while the bar waits: hide it (and the panel), like ✕.
-      onEscapeWhileWaiting: () => this.finish(),
+      onEscapeWhileWaiting: () => this.act(() => this.finish()),
+      onGhost: () => this.act(() => this.soon(() => void this.toggleGhost())),
     });
+    // A newer copy of this script took over, or the extension went away.
+    opts.host?.onInvalidated(() => this.destroy());
+    doc.addEventListener('visibilitychange', this.onVisibility);
   }
 
   get selectionModes(): SelectionKind[] {
     return this.modes;
   }
 
-  /** Escape from outside (the background): stop the selection being made. */
-  abort(): void {
-    this.overlay.abort();
-  }
-
-  /**
-   * The background places the window's one bar: here, in a mode or waiting
-   * (`bar:show`), or away (`bar:hide`: another tab is active, or the chat was
-   * finished). Returns the answer for messages that expect one.
-   */
-  handle(type: string | undefined, mode?: SelectionKind | null): boolean | undefined {
-    switch (type) {
+  /** A message from the background for the bar on this page. */
+  handle(msg: BarControlMsg): void {
+    if (this.gone) return;
+    switch (msg.type) {
       case 'bar:show':
-        this.show(mode ?? null);
-        return undefined;
+        this.setGhost(msg.ghost);
+        this.summoned(msg.mode);
+        return;
       case 'bar:hide':
-        this.generation++;
-        this.armed = null;
-        this.overlay.abort();
-        this.overlay.unmount();
-        return undefined;
-      case 'bar:alive':
-        return this.overlay.active;
-      default:
-        return undefined;
+        this.hide();
+        return;
+      case 'bar:ghost':
+        this.setGhost(msg.on);
+        return;
     }
   }
 
-  /** Shows the bar in this state, unless it already is. */
-  private show(mode: SelectionKind | null): void {
-    // Mid-capture the bar comes back by itself, waiting, once the shot is taken.
-    if (this.delivering) return;
-    if (mode === null) {
-      if (this.armed) {
-        // A selection started here beats a placement that set out before it:
-        // keep selecting, and put the background right.
-        void browser.runtime.sendMessage({ type: 'bar:state', mode: this.armed }).catch(() => {});
-        return;
-      }
-      if (this.overlay.active) return; // already waiting
-      this.generation++;
-      this.armed = null;
-      this.overlay.ready(this.modes);
-      return;
-    }
-    if (this.armed === mode) return; // already selecting in it (perhaps still setting up)
-    void this.start(mode, false);
+  /** The icon (or a shortcut) was pressed on this page: select in `mode`. */
+  private summoned(mode: SelectionKind): void {
+    const kind = this.modes.includes(mode) ? mode : (this.modes[0] as SelectionKind);
+    if (this.armed === kind) return; // already selecting in it (perhaps still setting up)
+    this.soon(() => void this.start(kind));
+  }
+
+  /** Runs `fn` now, or right after the screenshot being taken, if one is. */
+  private soon(fn: () => void): void {
+    if (this.delivering) this.queued.push(fn);
+    else fn();
   }
 
   /**
@@ -107,10 +105,83 @@ export class SelectionController {
    * lapsed. A click here is a fresh gesture in a page context, which it accepts.
    */
   promptForPanel(): void {
-    showToast('Your answer is ready.', {
-      label: 'Show it',
-      onClick: () => void browser.runtime.sendMessage({ type: 'panel:open' }).catch(() => {}),
-    });
+    showToast('Your answer is ready.', { label: 'Show it', onClick: () => void this.send({ type: 'panel:open' }) });
+  }
+
+  /**
+   * The bar goes (✕, or the student switched tabs), and whatever was being
+   * selected with it. The chat carries on. No slide-out on a hidden page: it
+   * would only play when the student came back.
+   */
+  private hide(animate = true): void {
+    this.generation++;
+    this.armed = null;
+    this.queued = [];
+    this.overlay.hide(animate && !this.doc.hidden);
+  }
+
+  /** ✕ on the bar, or Escape while it waits: the bar and the panel go, the chat is finished. */
+  private finish(): void {
+    this.hide();
+    void this.send({ type: 'chat:finish' });
+  }
+
+  /** Stops for good: this page's copy of the extension is no longer the live one. */
+  destroy(): void {
+    if (this.gone) return;
+    this.gone = true;
+    this.generation++;
+    this.armed = null;
+    this.queued = [];
+    this.overlay.destroy();
+    this.doc.removeEventListener('visibilitychange', this.onVisibility);
+  }
+
+  /**
+   * Coming back to a page whose extension was updated or reloaded meanwhile:
+   * the bar left on it can do nothing, so it goes at once.
+   */
+  private onVisibility = (): void => {
+    if (this.overlay.active && this.doc.visibilityState === 'visible') this.orphaned();
+  };
+
+  /** A click on the bar, unless the extension went away under this page. */
+  private act(fn: () => void): void {
+    if (!this.orphaned()) fn();
+  }
+
+  /**
+   * If the extension was updated or reloaded under this page, the bar that is
+   * left can do nothing: it goes, saying how to get a working one back.
+   */
+  private orphaned(): boolean {
+    if (extensionAlive()) return false;
+    if (!this.gone) {
+      // A newer copy already put its own bar up (and took ours down): nothing to say.
+      const replaced = this.overlay.replaced;
+      this.destroy();
+      if (!replaced) showToast(`${BRAND.name} was updated. Click its icon to start again.`, null, 6000);
+    }
+    return true;
+  }
+
+  /** Every message the bar sends. */
+  private async send<T>(msg: RuntimeMessage): Promise<T | null> {
+    const reply = await send<T>(msg);
+    if (reply === null) this.orphaned();
+    return reply;
+  }
+
+  private setGhost(on: boolean): void {
+    this.ghost = on;
+    this.overlay.setGhost(on);
+  }
+
+  /** The ghost on the bar: the next selection starts a temporary chat (or, pressed again, does not). */
+  private async toggleGhost(): Promise<void> {
+    this.setGhost(!this.ghost);
+    const reply = await this.send<{ temporary?: boolean }>({ type: 'chat:temporary', on: this.ghost });
+    if (typeof reply?.temporary === 'boolean') this.setGhost(reply.temporary);
   }
 
   /**
@@ -121,8 +192,7 @@ export class SelectionController {
    */
   private commit(kind: SelectionKind): void {
     this.delivering = true;
-    const msg: SelectionCommittedMsg = { type: 'selection:committed', kind };
-    void browser.runtime.sendMessage(msg).catch(() => {});
+    void this.send({ type: 'selection:committed', kind });
   }
 
   /**
@@ -132,41 +202,45 @@ export class SelectionController {
    */
   private async stopped(gen: number): Promise<void> {
     this.armed = null;
-    const msg: SelectionCancelMsg = { type: 'selection:cancel' };
-    const reply = (await browser.runtime.sendMessage(msg).catch(() => null)) as { end?: boolean } | null;
-    if (gen !== this.generation) return;
-    if (reply?.end) this.overlay.unmount();
-    else this.overlay.ready(this.modes);
+    this.overlay.ready(this.modes);
+    const reply = await this.send<{ end?: boolean }>({ type: 'selection:cancel' });
+    if (gen === this.generation && reply?.end) this.hide();
   }
 
-  /** ✕ on the bar, or Escape while it waits: the bar and the panel go, the chat is finished. */
-  private finish(): void {
-    this.generation++;
-    this.armed = null;
-    this.overlay.unmount();
-    void browser.runtime.sendMessage({ type: 'chat:finish' }).catch(() => {});
-  }
-
-  /** Arms a selection in `kind`. `report` tells the background, so the bar follows in this mode. */
-  async start(requested: SelectionKind, report = true): Promise<void> {
+  /** Arms a selection in `kind`, bringing the bar up if it is not. */
+  async start(requested: SelectionKind): Promise<void> {
+    if (this.gone) return;
     const gen = ++this.generation;
-    // Switching mode re-arms; drop whatever is running first. The arming it
-    // replaces resolves null, but it is not a cancel, so it must not say so.
+    // Switching mode re-arms; drop whatever is running first. The selection
+    // it replaces resolves null, but it is not a cancel, so it must not say so.
     this.overlay.abort();
     const current = () => gen === this.generation;
     const kind = this.modes.includes(requested) ? requested : (this.modes[0] as SelectionKind);
     this.armed = kind;
-    if (report) void browser.runtime.sendMessage({ type: 'bar:state', mode: kind }).catch(() => {});
 
     const done = await this.select(kind, current);
-    if (!current()) return;
-    if (!done) return this.stopped(gen);
-    this.armed = null;
-    // Answered once the screenshot is taken, so the bar never shows in it.
-    await browser.runtime.sendMessage(done).catch(() => {});
+    if (!done) {
+      if (current()) await this.stopped(gen);
+      return;
+    }
+    // Committed (commit() set `delivering`). Superseded before it could be
+    // sent — the student switched tabs or pressed ✕ in the two frames before
+    // the screenshot — it is dropped: the screenshot would not be of it.
+    if (current()) {
+      this.armed = null;
+      // Answered once the screenshot is taken; the bar waits for that, then
+      // the selection flies off to the panel.
+      await this.send(done);
+    }
     this.delivering = false;
-    if (!current()) return;
-    this.overlay.ready(this.modes);
+    if (current()) {
+      this.overlay.ready(this.modes);
+      this.overlay.flyAway(done.rect);
+    }
+    // Whatever was asked for meanwhile, even if this selection was superseded.
+    const next = this.queued;
+    this.queued = [];
+    for (const fn of next) fn();
   }
 
   /** Runs one selection in `kind`; resolves with what to send, or null if it was stopped. */
@@ -189,10 +263,9 @@ export class SelectionController {
       const rect = await armed;
       if (!rect) return null;
       this.commit('box');
-      // Overlay is gone; wait two frames so the capture does not include it.
-      await nextPaint();
       // Only the crop is sent: reading it is the model's job, and scraping
       // page text from under the box garbled real layouts (see planner.ts).
+      await this.outOfShot(rect);
       return { type: 'selection:done', kind: 'box', rect, devicePixelRatio, page };
     }
 
@@ -202,7 +275,7 @@ export class SelectionController {
       const lasso = await armed;
       if (!lasso) return null;
       this.commit('freeform');
-      await nextPaint();
+      await this.outOfShot(lasso.rect);
       return { type: 'selection:done', kind: 'freeform', rect: lasso.rect, path: lasso.path, devicePixelRatio, page };
     }
 
@@ -210,7 +283,7 @@ export class SelectionController {
     if (!picked) return null;
     // The picking click is the gesture that can open the panel.
     this.commit('element');
-    await nextPaint();
+    await this.outOfShot(picked.rect);
     return {
       type: 'selection:done',
       kind: 'element',
@@ -220,6 +293,12 @@ export class SelectionController {
       devicePixelRatio,
       page,
     };
+  }
+
+  /** The selection's drawing is gone (and the bar, if it sits over `rect`); two frames make sure the screen shows it. */
+  private async outOfShot(rect: Rect): Promise<void> {
+    this.overlay.clearFor(rect);
+    await nextPaint();
   }
 
   private async adjustBox(): Promise<boolean> {
@@ -236,10 +315,11 @@ export class SelectionController {
       "This is the browser's PDF viewer: only a screenshot can be read, and the page cannot scroll while selecting.",
       {
         label: 'Open in reader',
-        onClick: () => {
-          this.overlay.abort();
-          location.href = readerUrlFor(this.pdf.url, (p) => browser.runtime.getURL(p as `/${string}`));
-        },
+        onClick: () =>
+          this.act(() => {
+            this.overlay.abort();
+            location.href = readerUrlFor(this.pdf.url, (p) => browser.runtime.getURL(p as `/${string}`));
+          }),
       },
     );
   }

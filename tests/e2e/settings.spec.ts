@@ -65,3 +65,50 @@ test('a key can be removed, and an edit made just before switching is kept', asy
     .poll(async () => ((await serviceWorker.evaluate(async () => (await chrome.storage.local.get('settings')).settings)) as { localBaseUrl?: string; provider?: string }))
     .toMatchObject({ localBaseUrl: 'http://127.0.0.1:1234/v1', provider: 'mock' });
 });
+
+test('how many chats are kept: raising is instant, keeping fewer than there are asks first', async ({ context, extensionId, serviceWorker }) => {
+  // Twelve saved chats.
+  await serviceWorker.evaluate(async () => {
+    const index = [];
+    const items: Record<string, unknown> = {};
+    for (let i = 0; i < 12; i++) {
+      const at = Date.now() - (12 - i) * 60_000;
+      items[`chat:c${i}`] = { id: `c${i}`, title: `Chat ${i}`, createdAt: at, updatedAt: at, items: [{ kind: 'selection', id: `s${i}`, at, plan: { page: { url: 'u', title: 't' }, parts: [] } }] };
+      index.push({ id: `c${i}`, title: `Chat ${i}`, createdAt: at, updatedAt: at, search: '' });
+    }
+    await chrome.storage.local.set({ ...items, chatIndex: index });
+  });
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${extensionId}/options.html`);
+  const select = options.getByTestId('chat-limit-select');
+  await expect(select).toHaveValue('10');
+  await expect(select.locator('option')).toHaveText(['10', '25', '50', '100']);
+
+  await select.selectOption('50');
+  await expect.poll(async () => (await stored(serviceWorker))?.chatLimit).toBe(50);
+
+  // Down to 10, with 12 saved: asks, and Cancel changes nothing.
+  await select.selectOption('10');
+  await expect(options.getByTestId('chats')).toContainText('The other 2 will be deleted.');
+  await options.getByRole('button', { name: 'Cancel' }).click();
+  await expect(select).toHaveValue('50');
+  expect((await stored(serviceWorker))?.chatLimit).toBe(50);
+
+  await select.selectOption('10');
+  await options.getByTestId('confirm-chat-limit').click();
+  await expect.poll(async () => (await stored(serviceWorker))?.chatLimit).toBe(10);
+  await expect
+    .poll(async () => serviceWorker.evaluate(async () => ((await chrome.storage.local.get('chatIndex')).chatIndex as { id: string }[]).map((c) => c.id)))
+    .toEqual(['c11', 'c10', 'c9', 'c8', 'c7', 'c6', 'c5', 'c4', 'c3', 'c2']);
+  await expect.poll(async () => serviceWorker.evaluate(async () => 'chat:c0' in (await chrome.storage.local.get(null)))).toBe(false);
+});
+
+test('what is sent says what each AI keeps, and what a temporary chat changes', async ({ context, extensionId }) => {
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${extensionId}/options.html`);
+  const facts = options.getByTestId('what-is-sent');
+  await expect(facts).toContainText('is not trained on what you send');
+  await expect(facts).toContainText('Temporary chats');
+  // The bar-follows-you permission is gone.
+  await expect(options.getByTestId('all-sites')).toHaveCount(0);
+});

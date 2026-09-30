@@ -1,7 +1,7 @@
 /**
- * Mock provider: replays recorded responses by payload hash. When nothing is
- * recorded it streams a deterministic placeholder so the UI can be developed
- * with zero API spend. The development default.
+ * Mock provider: streams a deterministic placeholder so the UI can be
+ * developed with zero API spend (the development default). Given a cache
+ * (the eval), it replays what was recorded for the same payload hash instead.
  */
 import type { AskRequest, ModelRef } from '@shared/payload';
 import { partToText } from '@shared/prompts';
@@ -57,7 +57,7 @@ export const mockDriver: ProviderDriver = {
   name: 'mock',
   async *stream(req: AskRequest, _model: ModelRef, ctx: ProviderContext): AsyncGenerator<string, StreamResult, void> {
     const hash = await hashRequest(req);
-    const hit = await ctx.cache.get(hash);
+    const hit = await ctx.cache?.get(hash);
     const text = hit?.text ?? placeholder(req, hash);
     for await (const d of streamText(text)) {
       if (ctx.signal?.aborted) return {};

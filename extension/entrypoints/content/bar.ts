@@ -1,12 +1,13 @@
 /**
- * The in-page control bar: a red X that finishes the chat (every bar in the
- * window and the answer panel close), the selection modes, the current
- * instruction, an Ask button while a box is being adjusted, and a gear that
- * expands the bar upwards into a scrollable settings menu. Notices sit
- * underneath the control row.
+ * The in-page control bar: a red X that finishes the chat (the bar and the
+ * answer panel close), the selection modes, the current instruction, an Ask
+ * button while a box is being adjusted, the ghost (the next selection starts
+ * a temporary chat), and a gear that expands the bar upwards into a
+ * scrollable settings menu. Notices sit underneath the control row.
  *
- * Between selections the bar stays on the page, ready: nothing is armed, the
- * page works normally, and a chip starts the next selection in one click.
+ * The bar is built once and stays up for as long as it is on the page: while
+ * selecting, while a selection is sent, and between selections, when nothing
+ * is armed, the page works normally, and a chip starts the next selection.
  *
  * It is pinned near the bottom of the viewport. A position setting can move it
  * later; for now every surface agrees on one place so it is always findable.
@@ -17,9 +18,10 @@
  * extension page the page cannot reach.
  */
 import type { SelectionKind } from '@shared/payload';
-import { getSettings, settingsItem, type PanelOpen, type SendBehavior, type Settings } from '@/lib/storage';
-import { BRAND } from '@/brand';
+import { ICON_PATHS } from '@/lib/icons';
 import { KIND_ICON as ICONS, KIND_LABEL, KIND_ORDER } from '@/lib/kinds';
+import { send } from '@/lib/messages';
+import { getSettings, settingsItem, type Settings } from '@/lib/storage';
 import { UI_ATTR } from './scroll';
 
 export const BAR_STYLE = `
@@ -58,13 +60,16 @@ export const BAR_STYLE = `
 .ask.on { display: flex; }
 .ask:hover { background: var(--sai-accent-hover, #2563eb); }
 .ask svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.gear {
+.gear, .ghost {
   display: flex; align-items: center; justify-content: center; flex: none;
   width: 26px; height: 26px; border: 0; border-radius: 8px; cursor: pointer;
   background: rgba(255, 255, 255, 0.12); color: #fff;
 }
-.gear:hover, .gear[aria-expanded='true'] { background: rgba(255, 255, 255, 0.26); }
-.gear svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.gear:hover, .gear[aria-expanded='true'], .ghost:hover { background: rgba(255, 255, 255, 0.26); }
+.ghost[aria-pressed='true'], .ghost[aria-pressed='true']:hover { background: rgba(255, 255, 255, 0.92); color: #0f172a; }
+.gear svg, .ghost svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+/* Taken out of the screenshot when the selection runs under it; back right after. */
+.bar.out-of-shot { visibility: hidden; }
 
 .notices { display: flex; flex-direction: column; }
 .notice {
@@ -116,15 +121,17 @@ const MODE_HINT: Record<SelectionKind, string> = {
   freeform: 'Draw around what you want to ask about',
 };
 
-const GEAR =
-  '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>';
+const GHOST_OFF = 'Temporary chat: your next selection starts a chat that is never saved';
+const GHOST_ON = 'Temporary chat is on: nothing is saved. Click to leave it (it is deleted)';
 
 export interface BarHandlers {
-  /** The red X: finishes the chat, which closes every bar and the answer panel. */
+  /** The red X: finishes the chat, which closes the bar and the answer panel. */
   onClose: () => void;
   /** The Ask button, shown while a drawn box is being adjusted. */
   onConfirm: () => void;
   onModeChange: (kind: SelectionKind) => void;
+  /** The ghost, pressed. */
+  onGhost: () => void;
 }
 
 export interface NoticeAction {
@@ -139,13 +146,15 @@ export class Bar {
   private settings: HTMLElement;
   private settingsInner: HTMLElement;
   private gear: HTMLButtonElement;
+  private ghost: HTMLButtonElement;
   private ask: HTMLButtonElement;
+  private chips = new Map<SelectionKind, HTMLButtonElement>();
   private settingsBuilt = false;
   private drawing = false;
+  /** The mode being selected in, or null while the bar waits between selections. */
+  private kind: SelectionKind | null = null;
 
-  /** `kind` is the mode being selected, or null while the bar waits between selections. */
   constructor(
-    private kind: SelectionKind | null,
     private modes: SelectionKind[],
     private handlers: BarHandlers,
   ) {
@@ -182,16 +191,24 @@ export class Bar {
     this.ask.append(document.createTextNode('Ask'));
     this.ask.addEventListener('click', () => this.handlers.onConfirm());
 
+    this.ghost = document.createElement('button');
+    this.ghost.type = 'button';
+    this.ghost.className = 'ghost';
+    this.ghost.setAttribute('aria-label', 'Temporary chat');
+    this.ghost.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS.ghost}</svg>`;
+    this.ghost.addEventListener('click', () => this.handlers.onGhost());
+    this.setGhost(false);
+
     this.gear = document.createElement('button');
     this.gear.type = 'button';
     this.gear.className = 'gear';
     this.gear.title = 'Settings';
     this.gear.setAttribute('aria-label', 'Settings');
     this.gear.setAttribute('aria-expanded', 'false');
-    this.gear.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${GEAR}</svg>`;
+    this.gear.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS.gear}</svg>`;
     this.gear.addEventListener('click', () => void this.toggleSettings());
 
-    row.append(close, this.buildChips(), this.say, this.ask, this.gear);
+    row.append(close, this.buildChips(), this.say, this.ask, this.ghost, this.gear);
 
     this.notices = document.createElement('div');
     this.notices.className = 'notices';
@@ -200,6 +217,19 @@ export class Bar {
     // and whatever the page is warning about, and since the bar is anchored at
     // its bottom, the whole thing still grows upwards.
     this.el.append(row, this.settings, this.notices);
+  }
+
+  /** Which mode is being selected in; null while the bar waits. */
+  setKind(kind: SelectionKind | null): void {
+    this.kind = kind;
+    for (const [k, chip] of this.chips) chip.setAttribute('aria-pressed', String(k === kind));
+    this.say.textContent = this.hint();
+  }
+
+  /** Whether the next selection goes into a temporary chat. */
+  setGhost(on: boolean): void {
+    this.ghost.setAttribute('aria-pressed', String(on));
+    this.ghost.title = on ? GHOST_ON : GHOST_OFF;
   }
 
   /** Hides the instruction while a selection is actually being drawn. */
@@ -233,8 +263,9 @@ export class Bar {
     this.say.textContent = this.hint();
   }
 
-  /** Adds a notice row under the controls. Returns a function that removes it. */
+  /** Adds a notice row under the controls, once. Returns a function that removes it. */
   notice(text: string, action: NoticeAction | null): () => void {
+    for (const row of this.notices.children) if (row.firstChild?.textContent === text) return () => row.remove();
     const row = document.createElement('div');
     row.className = 'notice';
     const label = document.createElement('span');
@@ -260,14 +291,13 @@ export class Bar {
       chip.type = 'button';
       chip.className = 'chip';
       chip.dataset.kind = kind;
-      chip.setAttribute('aria-pressed', String(kind === this.kind));
+      chip.setAttribute('aria-pressed', 'false');
       chip.disabled = !available;
       chip.title = available ? MODE_HINT[kind] : unavailableTitle(kind);
       chip.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[kind]}</svg>`;
       chip.append(document.createTextNode(label(kind)));
-      if (available && kind !== this.kind) {
-        chip.addEventListener('click', () => this.handlers.onModeChange(kind));
-      }
+      chip.addEventListener('click', () => kind !== this.kind && this.handlers.onModeChange(kind));
+      this.chips.set(kind, chip);
       wrap.append(chip);
     }
     return wrap;
@@ -281,7 +311,11 @@ export class Bar {
   private async toggleSettings(): Promise<void> {
     if (this.settings.classList.contains('open')) return this.closeSettings();
     if (!this.settingsBuilt) {
-      await this.buildSettings();
+      try {
+        await this.buildSettings();
+      } catch {
+        return; // the extension was updated under this page; the controller notices on the next click
+      }
       this.settingsBuilt = true;
     }
     this.settings.classList.add('open');
@@ -309,16 +343,7 @@ export class Bar {
           ['adjust', 'Let me adjust it first'],
         ],
         settings.adjustBox ? 'adjust' : 'send',
-        (v) => void save({ adjustBox: v === 'adjust' }),
-      ),
-      field(
-        'Open the answer panel',
-        [
-          ['on-selection', 'When a selection is made'],
-          ['on-click', `When I click ${BRAND.iconName}`],
-        ],
-        settings.panelOpen,
-        (v) => void save({ panelOpen: v as PanelOpen }),
+        (v) => void save({ adjustBox: v === 'adjust' }).catch(() => {}),
       ),
     );
 
@@ -326,7 +351,7 @@ export class Bar {
     more.type = 'button';
     more.className = 'more';
     more.textContent = 'All settings, keys and macros';
-    more.addEventListener('click', () => void browser.runtime.sendMessage({ type: 'options:open' }).catch(() => {}));
+    more.addEventListener('click', () => void send({ type: 'options:open' }));
     this.settingsInner.append(more);
   }
 }

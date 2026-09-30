@@ -68,17 +68,18 @@ async function findWorker(context: BrowserContext, timeout: number): Promise<Wor
 }
 
 /**
- * Injects the content script into the tab showing `url` and starts a
- * selection there, as the toolbar click does. The tab is matched by URL
+ * Brings the bar up on the tab showing `url`, selecting in `kind`, the way a
+ * per-mode shortcut does: through the background, which injects the content
+ * script and keeps track of the tab the bar is on. The tab is matched by URL
  * because the panel tab, not the fixture, may be the active one.
  */
-export async function startSelection(serviceWorker: Worker, kind: 'box' | 'text' | 'element', url: string): Promise<void> {
+export async function startSelection(serviceWorker: Worker, kind: 'box' | 'text' | 'element' | 'freeform', url: string): Promise<void> {
   await serviceWorker.evaluate(
     async ({ kind, url }: { kind: string; url: string }) => {
       const [tab] = await chrome.tabs.query({ url });
       if (!tab?.id) throw new Error(`no tab for ${url}`);
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content-scripts/content.js'] });
-      await chrome.tabs.sendMessage(tab.id, { type: 'selection:start', kind });
+      // @ts-expect-error test-only dispatch; Chrome has no API to press a shortcut.
+      chrome.commands.onCommand.dispatch(`select-${kind}`, tab);
     },
     { kind, url },
   );

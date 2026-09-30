@@ -13,7 +13,6 @@
  * measures each behaviour on its own.
  */
 export type Mode = 'ask' | 'explain' | 'hint' | 'check';
-export const MODES: readonly Mode[] = ['ask', 'explain', 'hint', 'check'] as const;
 
 export type Route = 'small' | 'large';
 
@@ -68,7 +67,6 @@ export interface ImagePart {
 }
 
 export type Part = TextPart | LatexPart | TablePart | CodePart | ImagePart;
-export type PartKind = Part['kind'];
 
 /** A CSS-pixel rectangle relative to the viewport. */
 export interface Rect {

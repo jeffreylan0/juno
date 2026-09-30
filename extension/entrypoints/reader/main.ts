@@ -19,7 +19,7 @@ import {
 } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { BRAND } from '@/brand';
 import { SelectionController } from '@/lib/selection-controller';
-import type { StartSelectionMsg } from '@/lib/messages';
+import { send, type BarControlMsg } from '@/lib/messages';
 import 'pdfjs-dist/web/pdf_viewer.css';
 import './reader.css';
 
@@ -252,21 +252,14 @@ const controller = new SelectionController();
 void (async () => {
   // The hello both registers this tab with the background and tells us our own
   // id, which an extension page cannot learn without the tabs permission.
-  const reply = (await browser.runtime.sendMessage({ type: 'reader:hello' }).catch(() => null)) as
-    | { tabId?: number }
-    | null;
+  const reply = await send<{ tabId?: number }>({ type: 'reader:hello' });
   const selfTabId = reply?.tabId;
-  browser.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
-    const msg = raw as { type?: string; tabId?: number; kind?: StartSelectionMsg['kind']; mode?: StartSelectionMsg['kind'] | null };
-    if (msg?.tabId !== undefined && msg.tabId !== selfTabId) return;
-    if (msg?.type === 'selection:abort') controller.abort();
-    if (msg?.type === 'panel:needs-click') controller.promptForPanel();
-    if (msg?.type === 'selection:start' && msg.kind) void controller.start(msg.kind);
-    // Bar messages are addressed to one tab; unaddressed ones are not ours.
-    if (msg?.tabId !== undefined && msg.type?.startsWith('bar:')) {
-      const answer = controller.handle(msg.type, msg.mode);
-      if (answer !== undefined) sendResponse(answer);
-    }
+  browser.runtime.onMessage.addListener((raw: unknown) => {
+    const msg = raw as { type?: string; tabId?: number };
+    // Messages for a reader are addressed to one tab; anything else is not ours.
+    if (msg?.tabId === undefined || msg.tabId !== selfTabId) return;
+    if (msg.type === 'panel:needs-click') controller.promptForPanel();
+    else if (msg.type?.startsWith('bar:')) controller.handle(raw as BarControlMsg);
   });
 })();
 

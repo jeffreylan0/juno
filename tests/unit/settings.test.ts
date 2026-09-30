@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CHAT_LIMITS,
   DEFAULT_SETTINGS,
   SETTINGS_VERSION,
   answerChoiceOf,
@@ -19,7 +20,8 @@ describe('settings defaults', () => {
     // Which mode the icon starts is not a setting: it is the last one used.
     expect('defaultSelectionKind' in DEFAULT_SETTINGS).toBe(false);
     expect(DEFAULT_SETTINGS.adjustBox).toBe(false);
-    expect(DEFAULT_SETTINGS.panelOpen).toBe('on-selection');
+    // The panel always opens with the first selection; that is not a setting either.
+    expect('panelOpen' in DEFAULT_SETTINGS).toBe(false);
     expect(DEFAULT_SETTINGS.provider).toBe('mock');
     expect(DEFAULT_SETTINGS.sendBehavior).toBe('prefill');
   });
@@ -34,10 +36,12 @@ describe('settings defaults', () => {
     expect(DEFAULT_SETTINGS.macros[1]!.prompt).toMatch(/not the answer/);
   });
 
-  it('hides token counts from students and ships no keys or blocked sites', () => {
-    expect(DEFAULT_SETTINGS.showUsage).toBe(false);
+  it('ships no model override or blocked sites, and keeps ten chats', () => {
+    expect('showUsage' in DEFAULT_SETTINGS).toBe(false);
     expect(DEFAULT_SETTINGS.modelOverride).toBeNull();
     expect(DEFAULT_SETTINGS.blockedSites).toEqual([]);
+    expect(DEFAULT_SETTINGS.chatLimit).toBe(10);
+    expect(CHAT_LIMITS).toEqual([10, 25, 50, 100]);
   });
 });
 
@@ -47,13 +51,22 @@ describe('migrateSettings', () => {
   });
 
   it('turns adjusting off for settings saved before it became opt-in', () => {
-    const v1 = { adjustBox: true, panelOpen: 'on-click', provider: 'byok' };
+    const v1 = { adjustBox: true, sendBehavior: 'auto', provider: 'byok' };
     const s = migrateSettings(v1);
     expect(s.adjustBox).toBe(false);
     // Choices that did not change default are kept.
-    expect(s.panelOpen).toBe('on-click');
+    expect(s.sendBehavior).toBe('auto');
     expect(s.provider).toBe('byok');
     expect(s.version).toBe(SETTINGS_VERSION);
+  });
+
+  it('drops settings that no longer exist, and keeps the chat limit to the offered choices', () => {
+    const s = migrateSettings({ version: 3, panelOpen: 'on-click', showUsage: true, chatLimit: 50 });
+    expect('panelOpen' in s).toBe(false);
+    expect('showUsage' in s).toBe(false);
+    expect(s.chatLimit).toBe(50);
+    expect(migrateSettings({ version: 3, chatLimit: 7 }).chatLimit).toBe(10);
+    expect(migrateSettings({ version: 3, chatLimit: '100' }).chatLimit).toBe(10);
   });
 
   it('keeps a customised old per-mode prompt in the macro of the same name', () => {

@@ -1,6 +1,8 @@
 /**
  * Typed messages between the content script, the background, the reader and
- * the panel. Every message carries a `type` and goes through `sendMessage`.
+ * the panel. Every message carries a `type`. The content script and the
+ * reader send theirs through `send()` below, which survives the extension
+ * being reloaded under the page.
  *
  * Chats do not travel over messages at all: the background writes them to
  * storage (chats.ts) and the panel renders from storage change events.
@@ -9,18 +11,6 @@
  * open and when it closes.
  */
 import type { Point, Rect, SelectionKind } from '@shared/payload';
-
-/** Any extension page → background: inject the content script and arm a selection. */
-export interface SelectionArmMsg {
-  type: 'selection:arm';
-  kind: SelectionKind;
-}
-
-/** Background → content: start an interactive selection. */
-export interface StartSelectionMsg {
-  type: 'selection:start';
-  kind: SelectionKind;
-}
 
 /**
  * Content → background, the instant a selection is committed and before any
@@ -32,12 +22,10 @@ export interface SelectionCommittedMsg {
   kind: SelectionKind;
 }
 
-/** Background → content: tear down an armed selection (Esc). */
-export interface SelectionAbortMsg {
-  type: 'selection:abort';
-}
-
-/** Content → background: the user finished a selection. */
+/**
+ * Content → background: the user finished a selection. The reply comes as
+ * soon as the screenshot is taken, so the page can change again.
+ */
 export interface SelectionDoneMsg {
   type: 'selection:done';
   kind: SelectionKind;
@@ -65,16 +53,6 @@ export interface SelectionCancelMsg {
 }
 
 /**
- * Content/reader → background: what the bar is doing now — selecting in a
- * mode, or waiting (null). The bar is one per window and follows the active
- * tab, so the next tab shows it in the same state.
- */
-export interface BarStateMsg {
-  type: 'bar:state';
-  mode: SelectionKind | null;
-}
-
-/**
  * Content/reader → background: ✕ on the bar, or Escape while it waits. Hides
  * the bar and the panel and finishes the chat; it stays in the menu.
  */
@@ -83,14 +61,17 @@ export interface ChatFinishMsg {
 }
 
 /**
- * Background → content/reader: put the bar here in this state (`bar:show`,
- * with `mode`), or take it away (`bar:hide`: the student moved to another tab,
- * or the chat was finished).
+ * Background → content/reader. `bar:show` brings the bar up selecting in
+ * `mode` (the icon was clicked); `bar:hide` takes it away (the student
+ * switched tabs, or the chat was finished from the panel); `bar:ghost` says
+ * whether the next selection goes into a temporary chat. The reader only
+ * answers messages with its `tabId`.
  */
-export interface BarControlMsg {
-  type: 'bar:show' | 'bar:hide';
-  mode?: SelectionKind | null;
-}
+export type BarControlMsg = (
+  | { type: 'bar:show'; mode: SelectionKind; ghost: boolean }
+  | { type: 'bar:hide' }
+  | { type: 'bar:ghost'; on: boolean }
+) & { tabId?: number };
 
 /**
  * Anything → background: the newest selection in any open chat (or from one
@@ -120,16 +101,14 @@ export interface ChatStopMsg {
   chatId: string;
 }
 
-/** Start a new chat in this window. No button sends this any more; kept for diagnostics. */
-export interface ChatNewMsg {
-  type: 'chat:new';
-  windowId: number;
-}
-
-/** Panel → background: the ghost — start (or leave) a temporary chat. */
+/**
+ * Panel or bar → background: the ghost. On: the next selection goes into a
+ * temporary chat. Off: leave the temporary chat (it is deleted). The bar
+ * leaves out `windowId`; its tab says which window. Replies with the Current.
+ */
 export interface ChatTemporaryMsg {
   type: 'chat:temporary';
-  windowId: number;
+  windowId?: number;
   on: boolean;
 }
 
@@ -193,11 +172,6 @@ export interface PanelCloseMsg {
   windowId?: number;
 }
 
-/** Panel → background: the panel is alive, so nothing needs to prompt for it. */
-export interface PanelReadyMsg {
-  type: 'panel:ready';
-}
-
 /** The port a panel keeps open to the background, named this. */
 export const PANEL_PORT = 'panel';
 
@@ -223,6 +197,7 @@ export interface ReaderHelloMsg {
 /** Background → content/reader: offer a click that can open the answer panel. */
 export interface PanelNeedsClickMsg {
   type: 'panel:needs-click';
+  tabId?: number;
 }
 
 /** Content/reader → background: open the full settings page. */
@@ -231,20 +206,15 @@ export interface OptionsOpenMsg {
 }
 
 export type RuntimeMessage =
-  | SelectionArmMsg
-  | StartSelectionMsg
   | SelectionCommittedMsg
-  | SelectionAbortMsg
   | SelectionDoneMsg
   | SelectionCancelMsg
-  | BarStateMsg
   | ChatFinishMsg
   | BarControlMsg
   | PlanGetMsg
   | ChatSendMsg
   | ChatStopMsg
   | ChatRetryMsg
-  | ChatNewMsg
   | ChatTemporaryMsg
   | ChatOpenMsg
   | ChatRenameMsg
@@ -255,11 +225,38 @@ export type RuntimeMessage =
   | KeysTestMsg
   | PanelOpenMsg
   | PanelCloseMsg
-  | PanelReadyMsg
   | PanelNeedsClickMsg
   | OptionsOpenMsg
   | ReaderHelloMsg;
 
 export function isRuntimeMessage(x: unknown): x is RuntimeMessage {
   return !!x && typeof x === 'object' && typeof (x as { type?: unknown }).type === 'string';
+}
+
+/**
+ * Whether this script's extension is still there. After the extension is
+ * updated, reloaded or removed, a content script left on a page is orphaned:
+ * `runtime.id` goes away and every extension call throws.
+ */
+export function extensionAlive(): boolean {
+  try {
+    return !!browser.runtime?.id;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * runtime.sendMessage that never throws and never rejects: null when nobody
+ * answered or the extension is gone. An orphaned script's sendMessage throws
+ * "Extension context invalidated" synchronously, which a `.catch()` on its
+ * result never sees — hence the try around the call itself.
+ */
+export async function send<T = unknown>(msg: RuntimeMessage | { type: string; [k: string]: unknown }): Promise<T | null> {
+  if (!extensionAlive()) return null;
+  try {
+    return ((await browser.runtime.sendMessage(msg)) as T | undefined) ?? null;
+  } catch {
+    return null;
+  }
 }

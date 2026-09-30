@@ -7,15 +7,16 @@
  * There is no New chat button: a chat starts with the first selection after
  * the previous one was finished (✕ on the selection bar).
  *
- * The free plan keeps ten chats on this computer; the footer says so, so the
- * oldest one disappearing is never a surprise.
+ * Chats are kept on this computer, up to the number picked in settings; the
+ * footer says so, so the oldest one disappearing is never a surprise.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { MAX_SAVED_CHATS, type ChatSummary } from '@/lib/chats';
+import type { ChatSummary } from '@/lib/chats';
 import { Icon } from './icons';
 
 export function ChatMenu({
   chats,
+  limit,
   currentId,
   onClose,
   onOpen,
@@ -23,6 +24,8 @@ export function ChatMenu({
   onDelete,
 }: {
   chats: ChatSummary[];
+  /** How many chats are kept (Settings.chatLimit). */
+  limit: number;
   currentId: string | null;
   onClose: () => void;
   onOpen: (id: string) => void;
@@ -96,7 +99,11 @@ export function ChatMenu({
           )}
         </nav>
         <footer className="drawer-foot" data-testid="chat-limit">
-          Saved on this computer only. The free plan keeps your {MAX_SAVED_CHATS} most recent chats.
+          Saved on this computer only: your {limit} most recent chats. Change how many in{' '}
+          <button type="button" className="link" onClick={() => void browser.runtime.openOptionsPage()}>
+            settings
+          </button>
+          .
         </footer>
       </aside>
     </>

@@ -18,14 +18,9 @@ export type { Macro } from '@shared/prompts';
  */
 export type SendBehavior = 'prefill' | 'auto' | 'auto-box';
 
-/**
- * When the answer panel opens.
- * - `on-selection`: the moment a selection is made. It never covers the page
- *   while you are still choosing what to select. The default.
- * - `on-click`: as soon as the toolbar icon is clicked, so it is already
- *   waiting — at the cost of taking up part of the page you are selecting on.
- */
-export type PanelOpen = 'on-selection' | 'on-click';
+/** How many saved chats this computer keeps; the oldest goes first. */
+export const CHAT_LIMITS = [10, 25, 50, 100] as const;
+export const DEFAULT_CHAT_LIMIT = 10;
 
 /** Bumped when a default changes in a way stored settings must pick up. */
 export const SETTINGS_VERSION = 3;
@@ -48,17 +43,13 @@ export interface Settings {
   /** The buttons above the question box. Each fills the box and sends. */
   macros: Macro[];
   sendBehavior: SendBehavior;
-  panelOpen: PanelOpen;
   /**
    * After a box is drawn, keep it on screen with handles so an edge can be
    * nudged before anything is sent. Off (the default) sends on release.
    */
   adjustBox: boolean;
-  /**
-   * Model, token count and estimated cost under each answer. Off for
-   * students; a super-user setting once plans and pricing settle.
-   */
-  showUsage: boolean;
+  /** Saved chats kept on this computer, one of CHAT_LIMITS. */
+  chatLimit: number;
   /** Hostnames where the shortcut does nothing (exams, private portals). */
   blockedSites: string[];
   localBaseUrl: string;
@@ -73,9 +64,8 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultPrompt: DEFAULT_PROMPT,
   macros: DEFAULT_MACROS.map((m) => ({ ...m })),
   sendBehavior: 'prefill',
-  panelOpen: 'on-selection',
   adjustBox: false,
-  showUsage: false,
+  chatLimit: DEFAULT_CHAT_LIMIT,
   blockedSites: [],
   localBaseUrl: 'http://localhost:11434/v1',
   localModel: 'qwen2.5vl:7b',
@@ -139,13 +129,13 @@ export function migrateSettings(stored: unknown): Settings {
     if (s.defaultPrompt === undefined || s.defaultPrompt === V2_DEFAULT_PROMPT) merged.defaultPrompt = '';
   }
   merged.macros = sanitizeMacros(merged.macros);
+  if (!(CHAT_LIMITS as readonly number[]).includes(merged.chatLimit)) merged.chatLimit = DEFAULT_CHAT_LIMIT;
   merged.version = SETTINGS_VERSION;
-  const loose = merged as Partial<typeof s> & { gatewayUrl?: string };
-  delete loose.prompts;
-  delete loose.defaultMode;
-  delete loose.gatewayUrl;
-  // No longer a setting; the bar remembers the last mode used (lastKindItem).
-  delete (loose as { defaultSelectionKind?: unknown }).defaultSelectionKind;
+  // Settings that no longer exist: the bar remembers the last mode used
+  // (lastKindItem); the panel always opens with the first selection; usage
+  // lines were never offered.
+  const loose = merged as unknown as Record<string, unknown>;
+  for (const gone of ['prompts', 'defaultMode', 'gatewayUrl', 'defaultSelectionKind', 'panelOpen', 'showUsage']) delete loose[gone];
   return merged;
 }
 

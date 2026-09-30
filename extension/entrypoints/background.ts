@@ -4,22 +4,20 @@
  * Anything that holds keys or makes network calls lives here, never in the
  * content script.
  *
- * Clicking the toolbar action arms a selection immediately. By default the
- * answer panel opens once a selection is made, so it never covers the page
- * while the student is still choosing what to select; a setting opens it on
- * the click instead.
+ * Clicking the toolbar action brings up the selection bar on that tab, armed
+ * in the last mode used. The answer panel opens with the first selection, so
+ * it never covers the page while the student is still choosing what to
+ * select, and stays open from tab to tab. Switching to another tab takes the
+ * bar away; the icon brings it back wherever the student is.
  *
- * Chats (lib/chats.ts) collect selections from any page in the window. The
- * selection bar and the panel are shown and hidden together: the icon brings
- * the bar up, one per window, and it follows the student from tab to tab; ✕
- * on either (or Escape on a waiting bar) hides both and finishes the chat
- * (lib/current.ts has the rules). This file is the only writer, and it
- * writes one change at a time (`serial`), so a selection landing while an
+ * Chats (lib/chats.ts) collect selections from any page in the window. ✕ on
+ * the bar or the panel (or Escape on a waiting bar) hides both and finishes
+ * the chat (lib/current.ts has the rules). This file is the only writer, and
+ * it writes one change at a time (`serial`), so a selection landing while an
  * answer streams is never overwritten by the stream's next write.
  */
 import type { AskRequest, Attachment, ChatTurn, SelectionKind } from '@shared/payload';
-import { AreaCacheStore } from '@/lib/cache';
-import { captureRect, type CaptureResult } from '@/lib/capture';
+import { captureVisible, cropDataUrl, type CaptureResult } from '@/lib/capture';
 import {
   attachmentOf,
   deleteAllChats,
@@ -32,6 +30,7 @@ import {
   latestSelection,
   listChats,
   pendingSelections,
+  pruneChats,
   renameChat,
   retitle,
   saveChat,
@@ -47,25 +46,27 @@ import {
 } from '@/lib/chats';
 import {
   addSelection,
-  allBars,
   allCurrent,
-  getBar,
-  getCurrent,
   discardOrphans,
   endChat,
-  setBar,
-  type BarBlocked,
+  ensureCurrent,
+  getBarTab,
+  getCurrent,
   onTemporaryDiscarded,
   panelOpened,
   replaceGone,
+  setBarTab,
   setTemporary,
-  startChat,
+  setUnreachable,
   switchTo,
+  type Current,
+  type Unreachable,
 } from '@/lib/current';
 import { deletePartImages, hydrateParts, hydratePlan } from '@/lib/images';
 import {
   PANEL_PORT,
   isRuntimeMessage,
+  type BarControlMsg,
   type PanelPortMsg,
   type RuntimeMessage,
   type SelectionDoneMsg,
@@ -102,8 +103,6 @@ const STREAM_SAVE_MS = 120;
 
 /** True when a plan is waiting and the panel could not be opened for it. */
 let panelPending = false;
-/** The tab a selection is armed in, for an abort sent from an extension page. */
-let armedTabId: number | undefined;
 /** One answer at a time per chat. */
 const streams = new Map<string, AbortController>();
 
@@ -142,7 +141,7 @@ function reply(work: Promise<unknown>, sendResponse: (value: unknown) => void): 
 /** Open panels, per window. Usually one; tests open the panel page as a tab too. */
 const panels = new Map<number, Set<chrome.runtime.Port>>();
 
-/** The free plan's limit dropped a chat: tell the panels, once. */
+/** The chat limit dropped a chat: tell the panels, once. */
 async function noteDropped(dropped: ChatSummary[]): Promise<void> {
   if (!dropped.length) return;
   for (const c of dropped) stopStream(c.id);
@@ -151,22 +150,37 @@ async function noteDropped(dropped: ChatSummary[]): Promise<void> {
 
 /**
  * Settings, cached. The toolbar click has to call sidePanel.open() before any
- * await or Chrome drops the gesture, so "should the panel open now?" must be
- * answerable synchronously. On a cold start before the first read lands, the
- * default (open on selection) applies — which needs no answer at click time.
+ * await or Chrome drops the gesture, so "is this a blocked site?" is first
+ * answered from here — and checked again against stored settings before the
+ * bar goes on the page, since a worker just woken has not read them yet.
  */
 let settings: Settings = DEFAULT_SETTINGS;
+/**
+ * Whether the student let the extension onto file:// pages (Chrome's own
+ * switch), cached for the same reason; null until checked, when the bar is
+ * simply tried.
+ */
+let fileAccess: boolean | null = null;
 
 export default defineBackground(() => {
   // Inside main, not at module level: WXT evaluates entrypoint modules in Node
   // at build time, where there is no browser to read from.
   void getSettings().then((s) => (settings = s));
+  void checkFileAccess();
   settingsItem.watch(() =>
     void getSettings().then((s) => {
       const before = `${answerChoiceOf(settings)} ${settings.localBaseUrl}`;
       settings = s;
       // Picking another model: check the new choice right away.
       if (panels.size && before !== `${answerChoiceOf(s)} ${s.localBaseUrl}`) void aiStatus(true);
+      // Keeping fewer chats (the settings page asked first): the oldest go
+      // now. Checked on every change, since a worker that was asleep cannot
+      // tell a lowered limit from the one it just read.
+      void serial(async () => {
+        const dropped = await pruneChats();
+        await replaceGone(dropped.map((c) => c.id));
+        await noteDropped(dropped);
+      });
     }),
   );
   keysItem.watch(() => void (panels.size && aiStatus(true)));
@@ -176,6 +190,9 @@ export default defineBackground(() => {
   onTemporaryDiscarded(stopStream);
   void restoreReaderTabs();
   void serial(settleStreaming);
+  // Answers used to be kept by request hash so a rerun was free; they are no
+  // longer, so none outlives its chat. Clear what earlier versions stored.
+  browser.runtime.onInstalled.addListener(() => void clearAnswerCache());
   // A temporary chat left behind, screenshots nobody points at: tidied once,
   // after any panel that is still open has had a moment to reconnect.
   setTimeout(() => {
@@ -215,17 +232,15 @@ export default defineBackground(() => {
   browser.action.onClicked.addListener((tab) => {
     // The click grants this tab, so its URL is known right here — in time to
     // open the panel on the click's own gesture when the bar cannot go on
-    // this page (the browser's own pages, a blocked site), so the student
-    // sees why instead of nothing.
-    if (tab?.url && cannotHost(tab.url)) {
-      void openPanel(tab.id);
-      if (tab.windowId !== undefined) {
-        const w = tab.windowId;
-        void serial(() => setBar(w, { mode: null, blocked: /^(https?|file):/.test(tab.url!) ? 'blocked-site' : 'restricted' }));
-      }
+    // this page, so the student sees why instead of nothing.
+    const why = tab?.url ? unreachable(tab.url, settings) : null;
+    if (why || import.meta.env.FIREFOX) void openPanel(tab?.id);
+    if (why) {
+      if (tab.windowId !== undefined) void setUnreachable(tab.windowId, why);
+      // Turned on since the worker started? The next click will know.
+      if (why === 'file-access') void checkFileAccess();
       return;
     }
-    arm(tab?.id);
     void lastKindItem.getValue().then((kind) => summon(tab, kind));
   });
 
@@ -234,7 +249,7 @@ export default defineBackground(() => {
   browser.commands.onCommand.addListener((command, tab) => {
     const kind = COMMAND_KINDS[command];
     if (!kind) return;
-    arm(tab?.id);
+    if (import.meta.env.FIREFOX) void openPanel(tab?.id);
     void summon(tab, kind);
   });
 
@@ -242,54 +257,25 @@ export default defineBackground(() => {
     if (!isRuntimeMessage(raw)) return;
     const msg: RuntimeMessage = raw;
     switch (msg.type) {
-      case 'selection:arm':
-        void activeTab().then((tab) => summon(tab, msg.kind));
-        return;
-      case 'selection:abort':
-        abortArmed();
-        return;
       case 'selection:committed':
         // First statement, before any await: this is the drag's (or the
         // confirm click's) user activation, and Chrome only honours
         // sidePanel.open() while it is live. Opening an open panel changes
         // nothing; closed by hand, it comes back with the next selection.
-        armedTabId = undefined;
-        void openPanel(sender.tab?.id);
-        if (sender.tab?.id !== undefined) committedAt.set(sender.tab.id, Date.now());
-        // From here the bar is waiting, not selecting: a tab switch during the
-        // capture must not bring it up armed somewhere else.
-        if (sender.tab?.windowId !== undefined) {
-          const w = sender.tab.windowId;
-          void serial(async () => void ((await getBar(w)) && (await setBar(w, { mode: null }))));
-        }
+        // (Firefox opened its sidebar on the icon click instead: it counts
+        // only the browser's own UI as a gesture.)
+        if (!import.meta.env.FIREFOX) void openPanel(sender.tab?.id);
         return;
       case 'selection:done':
-        armedTabId = undefined;
-        // Answered once the capture is done, so the bar only comes back after
-        // the screenshot has been taken without it. It comes back waiting.
-        return reply(
-          handleSelectionDone(msg, sender.tab).then(() => {
-            const w = sender.tab?.windowId;
-            if (w !== undefined) return serial(async () => void ((await getBar(w)) && (await setBar(w, { mode: null }))));
-          }),
-          sendResponse,
-        );
+        // Answered as soon as the screenshot is taken: the bar waits for
+        // that, and the rest (cropping, saving, asking) carries on here.
+        return reply(handleSelectionDone(msg, sender.tab), sendResponse);
       case 'selection:cancel': {
-        armedTabId = undefined;
         const w = sender.tab?.windowId;
         if (w === undefined) return;
         return reply(cancelSelection(w), sendResponse);
       }
-      case 'bar:state':
-        // The bar says what it is doing (a chip picked, a selection started by
-        // the shortcut): the next tab shows it the same way. Only the bar on
-        // the active tab speaks for the window.
-        if (sender.tab?.id !== undefined && sender.tab.windowId !== undefined && sender.tab.active !== false) {
-          void noteBar(sender.tab.windowId, sender.tab.id, msg.mode);
-        }
-        return;
       case 'chat:finish':
-        armedTabId = undefined;
         if (sender.tab?.windowId !== undefined) return reply(finishChat(sender.tab.windowId), sendResponse);
         return;
       case 'plan:get':
@@ -304,12 +290,26 @@ export default defineBackground(() => {
       case 'chat:stop':
         streams.get(msg.chatId)?.abort();
         return;
-      case 'chat:new':
-        return reply(serial(() => startChat(msg.windowId, false)), sendResponse);
-      case 'chat:temporary':
-        return reply(serial(() => setTemporary(msg.windowId, msg.on)), sendResponse);
+      case 'chat:temporary': {
+        // From the panel (which names its window) or the bar (whose tab does).
+        const w = msg.windowId ?? sender.tab?.windowId;
+        if (w === undefined) return;
+        return reply(
+          serial(() => setTemporary(w, msg.on)).then((current) => {
+            void tellGhost(w, current.temporary);
+            return current;
+          }),
+          sendResponse,
+        );
+      }
       case 'chat:open':
-        return reply(serial(() => switchTo(msg.windowId, msg.chatId)), sendResponse);
+        return reply(
+          serial(() => switchTo(msg.windowId, msg.chatId)).then((current) => {
+            void tellGhost(msg.windowId, current.temporary);
+            return current;
+          }),
+          sendResponse,
+        );
       case 'chat:rename':
         return reply(serial(() => renameChat(msg.chatId, msg.title)), sendResponse);
       case 'chat:delete':
@@ -342,9 +342,6 @@ export default defineBackground(() => {
         // Sent from a click on the page's toast, which carries a real gesture.
         void openPanel(sender.tab?.id);
         return;
-      case 'panel:ready':
-        setPanelPending(false);
-        return;
       case 'options:open':
         void browser.runtime.openOptionsPage();
         return;
@@ -363,28 +360,15 @@ export default defineBackground(() => {
     }
   });
 
-  // The bar follows the student: to whichever tab becomes active, and back
-  // onto a tab whose page just loaded (a navigation takes the old bar with it).
+  // Switching tabs takes the bar off the one it was on. Nothing is kept for
+  // coming back: the icon brings it up wherever the student is.
   browser.tabs.onActivated.addListener(({ tabId, windowId }) => {
-    void getBar(windowId).then((bar) => bar && placeBar(windowId, tabId));
-  });
-  browser.tabs.onUpdated.addListener((tabId, change, tab) => {
-    if (change.status === 'loading' && readerTabs.delete(tabId)) void saveReaderTabs();
-    if (change.status !== 'complete' || !tab.active || tab.windowId === undefined) return;
-    const windowId = tab.windowId;
-    void getBar(windowId).then((bar) => bar && placeBar(windowId, tabId));
-  });
-  browser.tabs.onRemoved.addListener((tabId) => {
-    if (readerTabs.delete(tabId)) void saveReaderTabs();
-  });
-  // Allowed onto every site: the bar can now follow to the tab it could not reach.
-  browser.permissions.onAdded.addListener(() => {
-    void allBars().then((bars) =>
-      bars.forEach(async ([windowId]) => {
-        const [tab] = await browser.tabs.query({ active: true, windowId });
-        if (tab?.id !== undefined) await placeBar(windowId, tab.id);
-      }),
-    );
+    void (async () => {
+      const on = await getBarTab(windowId);
+      if (on === undefined || on === tabId) return;
+      await setBarTab(windowId, null);
+      await tellBar(on, { type: 'bar:hide' });
+    })();
   });
 
   // A window closing takes everything in it along.
@@ -393,34 +377,26 @@ export default defineBackground(() => {
   });
 });
 
-/**
- * A fresh arming. With `panelOpen: on-click` the panel opens right here, on the
- * click's own gesture; otherwise it waits for the selection to be committed.
- */
-function arm(tabId: number | undefined): void {
-  if (settings.panelOpen === 'on-click') void openPanel(tabId);
-}
-
 /** Sends a message to the bar's surface on a tab — the reader or a web page; resolves with its answer. */
-async function tellBar(tabId: number, msg: { type: 'bar:show' | 'bar:hide'; mode?: SelectionKind | null }): Promise<unknown> {
+async function tellBar(tabId: number, msg: BarControlMsg): Promise<unknown> {
   const send = isOwnPage(tabId) ? browser.runtime.sendMessage({ ...msg, tabId }) : browser.tabs.sendMessage(tabId, msg);
   return await Promise.race([send, new Promise((r) => setTimeout(() => r(undefined), 800))]).catch(() => undefined);
 }
 
-/** When each window's chat was last finished, and when each tab last committed a selection. */
-const finishedAt = new Map<number, number>();
-const committedAt = new Map<number, number>();
+/** The ghost changed (on the bar, the panel, or by opening a saved chat): the bar shows it. */
+async function tellGhost(windowId: number, on: boolean): Promise<void> {
+  const tabId = await getBarTab(windowId);
+  if (tabId !== undefined) await tellBar(tabId, { type: 'bar:ghost', on });
+}
 
 /**
  * ✕ on the bar or on the side panel (or Escape on a waiting bar): both are
  * hidden and the chat is finished — kept in the menu, or deleted if temporary.
  */
 async function finishChat(windowId: number): Promise<void> {
-  finishedAt.set(windowId, Date.now());
-  following.set(windowId, (following.get(windowId) ?? 0) + 1);
-  const tabId = await serial(() => endChat(windowId));
+  const tabId = await getBarTab(windowId);
+  await serial(() => endChat(windowId));
   if (tabId !== undefined) await tellBar(tabId, { type: 'bar:hide' });
-  for (const t of [...badged]) void clearFollowBadge(t);
   closePanel(windowId);
 }
 
@@ -431,137 +407,81 @@ async function finishChat(windowId: number): Promise<void> {
 async function cancelSelection(windowId: number): Promise<{ end: boolean }> {
   const current = await getCurrent(windowId);
   const chat = current ? await getChat(current.chatId) : null;
-  if (!chat?.items.length) {
-    await finishChat(windowId);
-    return { end: true };
-  }
-  await serial(async () => void ((await getBar(windowId)) && (await setBar(windowId, { mode: null }))));
-  return { end: false };
+  if (chat?.items.length) return { end: false };
+  await finishChat(windowId);
+  return { end: true };
 }
 
-/** The icon or the shortcut: the bar comes up (or re-arms) on this tab, in `kind`. */
+/** The icon or a shortcut: the bar comes up on this tab, selecting in `kind`. */
 async function summon(tab: chrome.tabs.Tab | undefined, kind: SelectionKind): Promise<void> {
   if (tab?.id === undefined) return;
-  const windowId = tab.windowId ?? (await browser.tabs.get(tab.id).catch(() => undefined))?.windowId;
+  const tabId = tab.id;
+  const known = tab.windowId !== undefined && tab.url ? tab : await browser.tabs.get(tabId).catch(() => undefined);
+  const windowId = known?.windowId;
   if (windowId === undefined) return;
-  await serial(() => setBar(windowId, { mode: kind }));
-  await placeBar(windowId, tab.id);
-}
-
-/** A bar reported its state; it is the window's bar, on that tab. */
-async function noteBar(windowId: number, tabId: number, mode: SelectionKind | null): Promise<void> {
-  // The bar's own word beats a placement still on its way here.
-  following.set(windowId, (following.get(windowId) ?? 0) + 1);
-  // In the same queue, and in order with everything else this bar sent: a
-  // report sent before its own ✕ is applied before the ✕, never after.
-  const before = await serial(async () => {
-    const bar = await getBar(windowId);
-    await setBar(windowId, { mode, tabId, blocked: undefined });
-    return bar;
-  });
-  if (before?.tabId !== undefined && before.tabId !== tabId) void tellBar(before.tabId, { type: 'bar:hide' });
-  void clearFollowBadge(tabId);
-  if (mode) armedTabId = tabId;
-}
-
-/** Bumped per window by every move, so a slow injection never lands on a tab the student has left. */
-const following = new Map<number, number>();
-
-/**
- * Puts the window's one bar on `tabId`, in the state it was in, and takes it
- * off the tab it was on. Where it cannot go (the browser's own pages, a
- * blocked site, a tab the extension has not been allowed onto) it stays where
- * it was, out of sight, and the panel says why; coming back finds it as it was.
- */
-async function placeBar(windowId: number, tabId: number): Promise<void> {
-  const move = (following.get(windowId) ?? 0) + 1;
-  following.set(windowId, move);
-  if (!(await getBar(windowId))) return;
-  const blocked = await reach(tabId);
-  const placed = await serial(async () => {
-    if (following.get(windowId) !== move) return null; // moved on meanwhile
-    const latest = await getBar(windowId);
-    if (!latest) return null; // finished meanwhile
-    await setBar(windowId, blocked ? { blocked } : { tabId, blocked: undefined });
-    return blocked ? null : latest;
-  });
-  if (blocked === 'permission') void setFollowBadge(tabId);
-  if (!placed) return;
-  if (placed.tabId !== undefined && placed.tabId !== tabId) void tellBar(placed.tabId, { type: 'bar:hide' });
-  if (following.get(windowId) !== move) return; // the next placement takes over from here
-  void clearFollowBadge(tabId);
-  await tellBar(tabId, { type: 'bar:show', mode: placed.mode });
-  if (placed.mode) armedTabId = tabId;
+  const url = known?.url;
+  if (known) noteReader({ ...tab, url });
+  // Against the stored settings, not the cache: a worker woken by this very
+  // click has not read them yet, and a blocked site must never get the bar.
+  const why = url ? unreachable(url, await getSettings()) : null;
+  if (why) {
+    await setUnreachable(windowId, why);
+    return;
+  }
+  if (!isOwnPage(tabId)) {
+    try {
+      await ensureContentScript(tabId);
+    } catch (err) {
+      console.info('[selection-ai] the bar cannot go on this page', err);
+      await setUnreachable(windowId, url?.startsWith('file:') && !import.meta.env.FIREFOX ? 'file-access' : 'restricted');
+      if (url?.startsWith('file:')) void checkFileAccess();
+      return;
+    }
+  }
+  // The student may have moved on while the script went in.
+  if ((await browser.tabs.get(tabId).catch(() => undefined))?.active === false) return;
+  await setUnreachable(windowId, null);
+  const ghost = !!(await getCurrent(windowId))?.temporary;
+  const before = await getBarTab(windowId);
+  await setBarTab(windowId, tabId);
+  if (before !== undefined && before !== tabId) void tellBar(before, { type: 'bar:hide' });
+  await tellBar(tabId, { type: 'bar:show', mode: kind, ghost });
 }
 
 /**
- * A tab the bar could not follow onto, for lack of permission: a "+" on the
- * icon there says one click brings it (the click grants the tab). The panel,
- * when open, offers to let it follow everywhere.
+ * Why the bar cannot go on a page, or null if it can: the browser's own pages
+ * and the extension stores take no content script; a blocked site is the
+ * student's choice; local files need Chrome's "Allow access to file URLs".
  */
-const badged = new Set<number>();
-async function setFollowBadge(tabId: number): Promise<void> {
-  badged.add(tabId);
-  await browser.action.setBadgeText({ tabId, text: '+' }).catch(() => {});
-  await browser.action.setBadgeBackgroundColor({ tabId, color: '#2563eb' }).catch(() => {});
-  await browser.action.setTitle({ tabId, title: 'Click to bring the selection bar to this tab' }).catch(() => {});
-}
-async function clearFollowBadge(tabId: number): Promise<void> {
-  if (!badged.delete(tabId)) return;
-  await browser.action.setBadgeText({ tabId, text: '' }).catch(() => {});
-  await browser.action.setTitle({ tabId, title: '' }).catch(() => {});
+function unreachable(url: string, s: Pick<Settings, 'blockedSites'>): Unreachable | null {
+  if (url.startsWith(browser.runtime.getURL('/reader.html'))) return null;
+  // Not known yet (a worker just woken): let the injection try, and say so only if it fails.
+  if (url.startsWith('file:')) return fileAccess !== false ? null : import.meta.env.FIREFOX ? 'restricted' : 'file-access';
+  if (!/^https?:/.test(url)) return 'restricted';
+  const host = safeHost(url);
+  if (host && STORE_HOSTS.some((h) => host === h || url.startsWith(`https://${h}/`))) return 'restricted';
+  return host && s.blockedSites.includes(host) ? 'blocked-site' : null;
 }
 
-/** Gets the content script onto a tab if it can go there; otherwise says why not. */
-async function reach(tabId: number): Promise<BarBlocked | undefined> {
-  if (isOwnPage(tabId)) return undefined;
-  let url: string | undefined;
+/** Extension galleries, where browsers let no extension run. */
+const STORE_HOSTS = ['chromewebstore.google.com', 'chrome.google.com/webstore', 'microsoftedge.microsoft.com', 'addons.mozilla.org'];
+
+async function checkFileAccess(): Promise<void> {
   try {
-    url = (await browser.tabs.get(tabId)).url;
+    fileAccess = !!(await (browser.extension as unknown as { isAllowedFileSchemeAccess(): Promise<boolean> }).isAllowedFileSchemeAccess());
   } catch {
-    return 'restricted';
-  }
-  // Browser pages, other extensions' pages and our own (the panel opened as a
-  // tab) take no content script. An unknown URL is a page we have not been
-  // allowed onto yet — unless the icon was clicked there, so try.
-  if (url && !/^(https?|file):/.test(url)) return 'restricted';
-  const host = safeHost(url);
-  if (host && settings.blockedSites.includes(host)) return 'blocked-site';
-  try {
-    await ensureContentScript(tabId);
-    return undefined;
-  } catch (err) {
-    // Chrome's wording tells a page we may not script at all (its own pages,
-    // the Web Store) from one we have not been allowed onto yet.
-    const lacking = /Cannot access contents of|must request permission|Missing host permission/i.test(String((err as Error)?.message ?? err));
-    return lacking && !(await hasAllSites()) ? 'permission' : 'restricted';
+    fileAccess = false;
   }
 }
 
-/** A page the bar can never go on: not a web page (and not our reader), or a blocked site. */
-function cannotHost(url: string): boolean {
-  if (url.startsWith(browser.runtime.getURL('/reader.html'))) return false;
-  if (!/^(https?|file):/.test(url)) return true;
-  const host = safeHost(url);
-  return !!host && settings.blockedSites.includes(host);
-}
-
-/** Whether the student let the bar onto every site (an optional permission). */
-async function hasAllSites(): Promise<boolean> {
-  return await browser.permissions.contains({ origins: ['<all_urls>'] }).catch(() => false);
-}
-
-function abortArmed(): void {
-  if (armedTabId === undefined) return;
-  const target = armedTabId;
-  armedTabId = undefined;
-  if (isOwnPage(target)) void browser.runtime.sendMessage({ type: 'selection:abort', tabId: target }).catch(() => {});
-  else void browser.tabs.sendMessage(target, { type: 'selection:abort' }).catch(() => {});
-}
-
-async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
-  const [tab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
-  return tab as chrome.tabs.Tab | undefined;
+/** Keeps the reader registry right: the click tells us what the tab shows now. */
+function noteReader(tab: chrome.tabs.Tab): void {
+  if (tab.id === undefined || !tab.url) return;
+  const reader = tab.url.startsWith(browser.runtime.getURL('/reader.html'));
+  if (reader === readerTabs.has(tab.id)) return;
+  if (reader) readerTabs.add(tab.id);
+  else readerTabs.delete(tab.id);
+  void saveReaderTabs();
 }
 
 /**
@@ -630,7 +550,7 @@ async function ensureContentScript(tabId: number): Promise<void> {
     const pong = await browser.tabs.sendMessage(tabId, { type: 'ping' });
     if (pong === 'pong') return;
   } catch {
-    /* not injected yet */
+    /* not injected yet, or injected by a copy of the extension that was since reloaded */
   }
   await browser.scripting.executeScript({ target: { tabId }, files: [CONTENT_SCRIPT] });
 }
@@ -638,7 +558,9 @@ async function ensureContentScript(tabId: number): Promise<void> {
 /**
  * Tabs showing our own reader page. They run the selection flow themselves, so
  * they must not be injected into. tabs.get only reveals a URL with the "tabs"
- * permission, which we do not ask for, so the reader announces itself instead.
+ * permission, which we do not ask for, so the reader announces itself; a click
+ * on the icon (which does reveal the URL) corrects the list if the tab has
+ * moved on since.
  */
 const readerTabs = new Set<number>();
 const READER_TABS_KEY = 'readerTabs';
@@ -663,37 +585,58 @@ function safeHost(url: string | undefined): string | null {
   }
 }
 
+/**
+ * A selection arrived. Resolves once the tab has been captured, so the page
+ * (and the bar on it) can change again; cropping, saving and any auto-ask
+ * carry on after that.
+ */
 async function handleSelectionDone(msg: SelectionDoneMsg, tab: chrome.tabs.Tab | undefined): Promise<void> {
   const tabId = tab?.id;
   const windowId = tab?.windowId;
   if (tabId === undefined || windowId === undefined) return;
-  const current = await getSettings();
+  // The chat it was made for, fixed now: whatever the student does while it
+  // is cropped and saved (the ghost, ✕, another chat) cannot move it.
+  const into = serial(() => ensureCurrent(windowId));
+  // captureVisibleTab takes whichever tab the window shows; if that is no
+  // longer this one, the screenshot would be of another page.
+  const shown = msg.kind === 'text' || (await browser.tabs.get(tabId).catch(() => undefined))?.active !== false;
+  if (!shown) return;
+  const shot = msg.kind === 'text' ? Promise.resolve(null) : captureWithRetry(windowId);
+  void keepSelection(msg, tabId, windowId, shot, into);
+  await shot.catch(() => undefined);
+}
 
+async function keepSelection(
+  msg: SelectionDoneMsg,
+  tabId: number,
+  windowId: number,
+  shot: Promise<string | null>,
+  into: Promise<Current>,
+): Promise<void> {
+  const current = await getSettings();
   let capture: CaptureResult | undefined;
   let notice: string | undefined;
-  if (msg.kind !== 'text') {
-    try {
-      capture = await captureWithRetry(windowId, msg);
-    } catch (err) {
-      console.warn('[selection-ai] capture failed', err);
-      // A box is only its screenshot now, so without one there is nothing
-      // to send. Say so, rather than quietly asking about nothing.
-      notice = "Couldn't take a screenshot of that area. Select it again; if it keeps failing, reload the page.";
-    }
+  try {
+    const full = await shot;
+    if (full) capture = await cropDataUrl(full, msg.rect, msg.devicePixelRatio, msg.path);
+  } catch (err) {
+    console.warn('[selection-ai] capture failed', err);
+    // A box is only its screenshot now, so without one there is nothing
+    // to send. Say so, rather than quietly asking about nothing.
+    notice = "Couldn't take a screenshot of that area. Select it again; if it keeps failing, reload the page.";
   }
   const plan = buildPlan({ selection: msg, mode: 'ask', capture });
-  // ✕ was pressed (on this tab or another) while this screenshot was being
-  // taken: the chat it belonged to is finished, so it does not start another.
-  if ((finishedAt.get(windowId) ?? 0) > (committedAt.get(tabId) ?? Date.now())) return;
-  // The selection joins the window's chat in progress, whatever page it came
-  // from, or starts one; an answer still streaming there carries on.
+  // The selection joins the chat it was made for, whatever page it came
+  // from; an answer still streaming there carries on.
   let added: Awaited<ReturnType<typeof addSelection>>;
   try {
-    added = await serial(() => addSelection(windowId, { plan, notice, tabId }));
+    const target = await into;
+    added = await serial(() => addSelection(windowId, { plan, notice, tabId, into: target }));
   } catch (err) {
     console.warn('[selection-ai] could not keep the selection', err);
     return;
   }
+  if (!added) return; // its chat was finished or deleted meanwhile
   const { chat, dropped } = added;
   await noteDropped(dropped);
 
@@ -707,13 +650,13 @@ async function handleSelectionDone(msg: SelectionDoneMsg, tab: chrome.tabs.Tab |
  * Chrome allows two captureVisibleTab calls a second. A student reselecting
  * quickly can hit that, so one refusal gets a single, slightly later retry.
  */
-async function captureWithRetry(windowId: number | undefined, msg: SelectionDoneMsg): Promise<CaptureResult> {
+async function captureWithRetry(windowId: number): Promise<string> {
   try {
-    return await captureRect(windowId, msg.rect, msg.devicePixelRatio, msg.path);
+    return await captureVisible(windowId);
   } catch (err) {
     if (!/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(String((err as Error)?.message ?? err))) throw err;
     await new Promise((r) => setTimeout(r, 600));
-    return await captureRect(windowId, msg.rect, msg.devicePixelRatio, msg.path);
+    return await captureVisible(windowId);
   }
 }
 
@@ -766,8 +709,9 @@ async function sendChat(chatId: string, question: string): Promise<void> {
       const user: UserItem = { kind: 'user', id: crypto.randomUUID(), at: Date.now(), text: q, selections: pending.map((s) => s.id) };
       const answer: AssistantItem = { kind: 'assistant', id: crypto.randomUUID(), at: Date.now(), text: '', streaming: true };
       const saved = await saveChat({ ...settled, items: [...settled.items, user, answer] });
+      await replaceGone(saved.dropped.map((c) => c.id));
       await noteDropped(saved.dropped);
-      return { chat: settled, pending, q, answerId: answer.id };
+      return { chat: settled, pending, q, answerId: answer.id, temporary: !!chat.temporary };
     });
     if (!setup) return;
     answerId = setup.answerId;
@@ -800,7 +744,8 @@ async function sendChat(chatId: string, question: string): Promise<void> {
         fetch: globalThis.fetch.bind(globalThis),
         keys,
         settings: { ...current, gatewayUrl: GATEWAY_URL },
-        cache: new AreaCacheStore(browser.storage.local),
+        // A temporary chat asks the vendor to keep as little as it allows.
+        ephemeral: setup.temporary,
         signal: controller.signal,
       };
       for await (const chunk of callModel(request, route, ctx, {
@@ -812,7 +757,7 @@ async function sendChat(chatId: string, question: string): Promise<void> {
           text += chunk.text;
           dirty = true;
         } else if (chunk.type === 'done') {
-          Object.assign(done, { usage: chunk.usage, model: chunk.model, cached: chunk.cached });
+          Object.assign(done, { usage: chunk.usage, model: chunk.model });
           void recordStatus(current, { ok: true });
         } else if (chunk.code === 'aborted') {
           // A stop keeps whatever arrived; only an empty stop needs saying.
@@ -912,6 +857,12 @@ async function aiStatus(force: boolean): Promise<AiStatus> {
   };
   run.then(done, done);
   return await run;
+}
+
+/** Answers earlier versions kept by request hash (`cache:<hash>`), removed on install and update. */
+async function clearAnswerCache(): Promise<void> {
+  const stale = Object.keys(await browser.storage.local.get(null)).filter((k) => k.startsWith('cache:'));
+  if (stale.length) await browser.storage.local.remove(stale);
 }
 
 /** What an answer proved about the connection, if anything. */

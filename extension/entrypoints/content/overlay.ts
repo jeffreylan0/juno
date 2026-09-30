@@ -1,8 +1,10 @@
 /**
- * Shadow-DOM overlay: the drag surface, the control bar and the cursor
- * tooltip. While a selection is armed it is all three; between selections it
- * is just the bar, waiting (`ready`), with nothing over the page. It is
- * removed entirely before the tab is captured.
+ * Shadow-DOM overlay: the control bar, and while a selection is being made,
+ * the surface it is drawn on and the cursor tooltip. The bar comes up once
+ * (sliding in) and stays for as long as it is on the page — through the
+ * selection, the screenshot and the wait for the next one — until it is
+ * dismissed (sliding out). Only the selection's own drawing is taken off the
+ * page for the screenshot, and the bar too if the selection runs under it.
  *
  * Three rules keep it out of the way. The drag surface is a sibling of the
  * bar, not its parent, so clicks on our own controls can never start a box.
@@ -66,6 +68,12 @@ const STYLE = `
   stroke-linejoin: round; stroke-linecap: round;
 }
 @media (prefers-reduced-motion: reduce) { .box.element { transition: none; } }
+/* A selection on its way to the panel (flyAway). */
+.fly {
+  position: fixed; pointer-events: none; box-sizing: border-box; border-radius: 8px;
+  border: 2px solid var(--sai-accent, #3b82f6);
+  background: color-mix(in srgb, var(--sai-accent, #3b82f6) 14%, transparent);
+}
 .tip {
   position: fixed; left: 0; top: 0; display: none; align-items: center; gap: 6px;
   font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
@@ -85,6 +93,11 @@ ${BAR_STYLE}
  * moving your eyes off the corner you are dragging. */
 const TIP_OFFSET = { x: 8, y: 10 };
 
+/** The bar's entrance and exit, and a selection flying off to the panel. */
+const ENTER_MS = 220;
+const LEAVE_MS = 160;
+const FLY_MS = 420;
+
 export interface OverlayHandlers {
   /** The user picked a different mode from the bar's chips. */
   onModeChange: (kind: SelectionKind) => void;
@@ -92,9 +105,11 @@ export interface OverlayHandlers {
    * The bar's X was pressed: the caller finishes the chat. Any armed
    * selection is cancelled first. Escape does not call it.
    */
-  onClose?: () => void;
+  onClose: () => void;
   /** Escape while the bar waits between selections (nothing armed). */
-  onEscapeWhileWaiting?: () => void;
+  onEscapeWhileWaiting: () => void;
+  /** The ghost on the bar was pressed. */
+  onGhost: () => void;
 }
 
 export interface BoxOptions {
@@ -105,53 +120,50 @@ export interface BoxOptions {
 /**
  * ready: just the bar, between selections; nothing is armed. armed: waiting
  * for the first drag. drawing: a pointer drag is in progress. adjusting: a box
- * is drawn and waits to be resized or sent.
+ * is drawn and waits to be resized or sent. sending: the selection is made
+ * and its screenshot is being taken.
  */
-type OverlayState = 'ready' | 'armed' | 'drawing' | 'adjusting';
+type OverlayState = 'ready' | 'armed' | 'drawing' | 'adjusting' | 'sending';
 
 /**
  * Just enough of WXT's ContentScriptContext to tear down cleanly. The reader is
- * an extension page and has no such context, so it passes a no-op.
+ * an extension page and has no such context.
  */
 export interface OverlayHost {
   onInvalidated(cb: () => void): void;
 }
 
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 export class Overlay {
   private host: HTMLElement | null = null;
   private root: HTMLElement | null = null;
-  private backdrop: HTMLElement | null = null;
   private tip: HTMLElement | null = null;
   private bar: Bar | null = null;
-  private state: OverlayState = 'armed';
+  /** What the selection in progress is drawn on: the drag surface with its box, lasso or highlight. */
+  private surface: HTMLElement | null = null;
+  private state: OverlayState = 'ready';
   /** Cancels whatever selection is currently armed. */
   private cancelCurrent: (() => void) | null = null;
   /** Sends the box being adjusted, if there is one. */
   private confirmCurrent: (() => void) | null = null;
-
-  constructor(
-    private ctx: OverlayHost,
-    private handlers: OverlayHandlers,
-  ) {
-    // An updated or reloaded extension invalidates this script: whatever it
-    // put on the page goes with it, the waiting bar included.
-    ctx.onInvalidated(() => {
-      this.cancelCurrent?.();
-      this.unmount();
-    });
-  }
-
-  get active(): boolean {
-    return this.root !== null;
-  }
-
-  /** Whether a selection is being made right now (not just the bar waiting). */
-  get selecting(): boolean {
-    return this.root !== null && this.state !== 'ready';
-  }
-
   /** Removes the Escape listener of a waiting bar. */
-  private readyTeardown: (() => void) | null = null;
+  private waitingKeys: (() => void) | null = null;
+  /** The bar's exit, while it plays. */
+  private leaving: Animation | null = null;
+  private ghost = false;
+
+  constructor(private handlers: OverlayHandlers) {}
+
+  /** Whether the bar is on the page (and not on its way out). */
+  get active(): boolean {
+    return !!this.host?.isConnected && this.leaving === null;
+  }
+
+  /** Our bar was taken off the page by someone else: a newer copy of this script. */
+  get replaced(): boolean {
+    return this.host !== null && !this.host.isConnected;
+  }
 
   /**
    * Just the bar, waiting between selections. The page underneath works as
@@ -161,23 +173,66 @@ export class Overlay {
    */
   ready(modes: SelectionKind[]): void {
     this.abort();
-    this.mount(null, modes);
+    this.show(modes);
+    this.clearSurface();
+    this.bar!.setKind(null);
     this.setState('ready');
+    this.backInShot();
+    if (this.waitingKeys) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.repeat || e.defaultPrevented) return;
       // The real target, inside any web component, not its shadow host.
       if (isEditable(e.composedPath()[0] ?? e.target)) return;
       // A page dialog open: this Escape is closing it.
       if (document.querySelector('dialog[open], [aria-modal="true"]')) return;
-      this.handlers.onEscapeWhileWaiting?.();
+      this.handlers.onEscapeWhileWaiting();
     };
     // Bubble phase, on window: the page gets the key first.
     addEventListener('keydown', onKey);
-    this.readyTeardown = () => removeEventListener('keydown', onKey);
+    this.waitingKeys = () => removeEventListener('keydown', onKey);
   }
 
-  private mount(kind: SelectionKind | null, modes: SelectionKind[]): HTMLElement {
-    this.unmount();
+  /** Takes the bar off the page: sliding out, or at once (`animate` false, or reduced motion). */
+  hide(animate = true): void {
+    this.abort();
+    this.quietKeys();
+    if (!this.host) return;
+    if (!animate || reducedMotion() || typeof this.bar?.el.animate !== 'function') return this.remove();
+    if (this.leaving) return;
+    this.host.setAttribute('data-leaving', '');
+    const leaving = this.bar!.el.animate(
+      [
+        { opacity: 1, transform: 'translate(-50%, 0) scale(1)' },
+        { opacity: 0, transform: 'translate(-50%, 14px) scale(0.97)' },
+      ],
+      { duration: LEAVE_MS, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' },
+    );
+    this.leaving = leaving;
+    void leaving.finished.then(
+      () => this.leaving === leaving && this.remove(),
+      () => {},
+    );
+  }
+
+  /** Gone for good (the extension was updated, or a newer copy of this script took over). */
+  destroy(): void {
+    this.hide(false);
+  }
+
+  /** Whether the next selection starts a temporary chat. */
+  setGhost(on: boolean): void {
+    this.ghost = on;
+    this.bar?.setGhost(on);
+  }
+
+  /** Puts the bar up if it is not already, sliding in; a bar on its way out comes back. */
+  private show(modes: SelectionKind[]): void {
+    if (this.leaving) {
+      this.leaving.cancel();
+      this.leaving = null;
+      this.host?.removeAttribute('data-leaving');
+    }
+    if (this.host) return;
     // A bar left by an earlier copy of this script (one the extension's update orphaned).
     document.querySelectorAll('selection-ai-overlay').forEach((el) => el.remove());
     const host = document.createElement('selection-ai-overlay');
@@ -191,11 +246,74 @@ export class Overlay {
     const root = document.createElement('div');
     root.className = 'root';
 
-    // Box and freeform draw on a surface over the page; text and element
-    // selection need the page itself to receive the pointer.
-    const backdrop = document.createElement('div');
-    backdrop.className = kind === 'box' || kind === 'freeform' ? 'backdrop interactive' : 'backdrop';
+    const tip = document.createElement('div');
+    tip.className = 'tip';
+    tip.setAttribute(UI_ATTR, 'tip');
+    tip.append(kbd('Escape'), say('to cancel'));
 
+    const bar = new Bar(modes, {
+      onClose: () => {
+        this.abort();
+        this.handlers.onClose();
+      },
+      onConfirm: () => this.confirmCurrent?.(),
+      onModeChange: (next) => this.handlers.onModeChange(next),
+      onGhost: () => this.handlers.onGhost(),
+    });
+    bar.setGhost(this.ghost);
+
+    root.append(tip, bar.el);
+    shadow.append(style, root);
+    document.documentElement.append(host);
+
+    this.host = host;
+    this.root = root;
+    this.tip = tip;
+    this.bar = bar;
+    if (!reducedMotion() && typeof bar.el.animate === 'function') {
+      bar.el.animate(
+        [
+          { opacity: 0, transform: 'translate(-50%, 16px) scale(0.96)' },
+          { opacity: 1, transform: 'translate(-50%, 0) scale(1)' },
+        ],
+        { duration: ENTER_MS, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+      );
+    }
+  }
+
+  private remove(): void {
+    this.quietKeys();
+    this.leaving = null;
+    this.host?.remove();
+    this.host = null;
+    this.root = null;
+    this.tip = null;
+    this.bar = null;
+    this.surface = null;
+    this.state = 'ready';
+    this.confirmCurrent = null;
+  }
+
+  private quietKeys(): void {
+    this.waitingKeys?.();
+    this.waitingKeys = null;
+  }
+
+  /** The bar, set up to select in `kind`, over a fresh drawing surface. Returns the surface. */
+  private beginSelection(kind: SelectionKind, modes: SelectionKind[]): HTMLElement {
+    this.show(modes);
+    this.clearSurface();
+    // While selecting, run() owns Escape.
+    this.quietKeys();
+    this.backInShot();
+    this.bar!.setKind(kind);
+
+    // Box and freeform draw on a surface over the page; text and element
+    // selection need the page itself to receive the pointer. The surface is
+    // a sibling of the bar, not its parent, so clicks on our own controls can
+    // never start a box.
+    const surface = document.createElement('div');
+    surface.className = kind === 'box' || kind === 'freeform' ? 'backdrop interactive' : 'backdrop';
     const box = document.createElement('div');
     box.className = 'box';
     for (const h of HANDLES) {
@@ -204,46 +322,18 @@ export class Overlay {
       handle.dataset.h = h;
       box.append(handle);
     }
-
-    const tip = document.createElement('div');
-    tip.className = 'tip';
-    tip.setAttribute(UI_ATTR, 'tip');
-    tip.append(kbd('Escape'), say('to cancel'));
-
-    const bar = new Bar(kind, modes, {
-      onClose: () => {
-        this.abort();
-        this.handlers.onClose?.();
-      },
-      onConfirm: () => this.confirmCurrent?.(),
-      onModeChange: (next) => this.handlers.onModeChange(next),
-    });
-
-    backdrop.append(box);
-    root.append(backdrop, tip, bar.el);
-    shadow.append(style, root);
-    document.documentElement.append(host);
-
-    this.host = host;
-    this.root = root;
-    this.backdrop = backdrop;
-    this.tip = tip;
-    this.bar = bar;
+    surface.append(box);
+    this.root!.prepend(surface);
+    this.surface = surface;
     this.setState('armed');
-    return backdrop;
+    return surface;
   }
 
-  unmount(): void {
-    this.readyTeardown?.();
-    this.readyTeardown = null;
-    this.host?.remove();
-    this.host = null;
-    this.root = null;
-    this.backdrop = null;
-    this.tip = null;
-    this.bar = null;
-    this.state = 'armed';
+  private clearSurface(): void {
+    this.surface?.remove();
+    this.surface = null;
     this.confirmCurrent = null;
+    this.host?.removeAttribute('data-highlight');
   }
 
   private setState(state: OverlayState): void {
@@ -258,6 +348,54 @@ export class Overlay {
     if (!drawing) this.bar?.setAdjusting(state === 'adjusting');
   }
 
+  /**
+   * The selection is made and is about to be captured. Its drawing is
+   * already gone; the bar stays, unless it sits over the selected area — then
+   * it steps out of the shot until the screenshot is taken.
+   */
+  clearFor(rect: Rect): void {
+    const bar = this.bar?.el;
+    if (!bar) return;
+    const b = bar.getBoundingClientRect();
+    const overlaps = b.left < rect.x + rect.width + 2 && b.right > rect.x - 2 && b.top < rect.y + rect.height + 2 && b.bottom > rect.y - 2;
+    bar.classList.toggle('out-of-shot', overlaps);
+  }
+
+  /** The bar back after a screenshot it had to stay out of, fading in. */
+  private backInShot(): void {
+    const bar = this.bar?.el;
+    if (!bar?.classList.contains('out-of-shot')) return;
+    bar.classList.remove('out-of-shot');
+    if (!reducedMotion() && typeof bar.animate === 'function') bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160 });
+  }
+
+  /**
+   * A made selection's outline flies off to the right edge, where the panel
+   * is, so the student sees where it went. Only after the screenshot, so it
+   * is never in one.
+   */
+  flyAway(rect: Rect): void {
+    if (!this.root || reducedMotion() || rect.width < 2 || rect.height < 2) return;
+    const el = document.createElement('div');
+    el.className = 'fly';
+    Object.assign(el.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+    if (typeof el.animate !== 'function') return;
+    this.root.append(el);
+    const dx = innerWidth + 16 - (rect.x + rect.width / 2);
+    const dy = innerHeight * 0.55 - (rect.y + rect.height / 2);
+    const fly = el.animate(
+      [
+        { opacity: 0.9, transform: 'translate(0, 0) scale(1)' },
+        { opacity: 0, transform: `translate(${dx}px, ${dy}px) scale(0.18)` },
+      ],
+      { duration: FLY_MS, easing: 'cubic-bezier(0.55, 0, 0.75, 0.3)', fill: 'forwards' },
+    );
+    void fly.finished.then(
+      () => el.remove(),
+      () => el.remove(),
+    );
+  }
+
   private moveTip(x: number, y: number): void {
     if (!this.tip || this.state !== 'drawing') return;
     const rect = this.tip.getBoundingClientRect();
@@ -267,7 +405,7 @@ export class Overlay {
     this.tip.style.transform = `translate(${Math.max(0, left)}px, ${Math.max(0, top)}px)`;
   }
 
-  /** Adds a notice under the bar's controls. Returns a function that removes it. */
+  /** Adds a notice under the bar's controls (once). Returns a function that removes it. */
   notice(text: string, action: NoticeAction | null): () => void {
     return this.bar?.notice(text, action) ?? (() => {});
   }
@@ -279,7 +417,7 @@ export class Overlay {
 
   /** Resolves with a viewport rect in CSS pixels, or null when cancelled. */
   async selectBox(modes: SelectionKind[], options: BoxOptions = { adjust: false }): Promise<Rect | null> {
-    const backdrop = this.mount('box', modes);
+    const backdrop = this.beginSelection('box', modes);
     const box = backdrop.querySelector<HTMLElement>('.box')!;
     return await this.run((finish) => {
       const selector = new BoxSelector(
@@ -307,7 +445,7 @@ export class Overlay {
    * kept from reaching it.
    */
   async selectElement(modes: SelectionKind[]): Promise<PickedElement | null> {
-    const backdrop = this.mount('element', modes);
+    const backdrop = this.beginSelection('element', modes);
     const box = backdrop.querySelector<HTMLElement>('.box')!;
     box.classList.add('element');
     const tag = document.createElement('div');
@@ -339,7 +477,7 @@ export class Overlay {
 
   /** Draw any closed shape; resolves with its outline and bounding box. */
   async selectFreeform(modes: SelectionKind[]): Promise<Lasso | null> {
-    const backdrop = this.mount('freeform', modes);
+    const backdrop = this.beginSelection('freeform', modes);
     return await this.run((finish) => {
       const lasso = new LassoSelector(backdrop, {
         onDragStart: () => this.setState('drawing'),
@@ -355,7 +493,7 @@ export class Overlay {
 
   /** Waits for the user to select text on the page. */
   async selectText(modes: SelectionKind[]): Promise<TextSelection | null> {
-    this.mount('text', modes);
+    this.beginSelection('text', modes);
     return await this.run((finish) => {
       const onDown = (e: MouseEvent) => {
         if (isOurUi(e)) return;
@@ -385,18 +523,23 @@ export class Overlay {
 
   /**
    * Shared plumbing: Escape handling, wheel forwarding, and a guarantee that
-   * the overlay is removed however the selection ends.
+   * the selection's drawing is removed however the selection ends. The bar
+   * stays; what happens next is the caller's to say.
    */
   private run<T>(arm: (finish: (value: T | null) => void) => () => void): Promise<T | null> {
     return new Promise<T | null>((resolve) => {
       let settled = false;
       const teardown: (() => void)[] = [];
+      const surface = this.surface;
       const finish = (value: T | null) => {
         if (settled) return;
         settled = true;
         teardown.forEach((f) => f());
         this.cancelCurrent = null;
-        this.unmount();
+        if (this.surface === surface) {
+          this.clearSurface();
+          this.setState('sending');
+        }
         resolve(value);
       };
 
@@ -428,12 +571,12 @@ export class Overlay {
         if (this.state !== 'armed') return;
         applyWheel(scrollTargetAt(e.clientX, e.clientY, this.host), e);
       };
-      this.backdrop?.addEventListener('wheel', onWheel, { passive: false });
+      surface?.addEventListener('wheel', onWheel, { passive: false });
 
       teardown.push(() => {
         document.removeEventListener('keydown', onKey, true);
         window.removeEventListener('keydown', onKey, true);
-        this.backdrop?.removeEventListener('wheel', onWheel);
+        surface?.removeEventListener('wheel', onWheel);
       });
 
       teardown.push(arm(finish));

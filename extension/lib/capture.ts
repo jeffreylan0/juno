@@ -101,8 +101,7 @@ export async function blobToDataUrl(blob: Blob): Promise<string> {
   return `data:${blob.type};base64,${btoa(bin)}`;
 }
 
-/** Captures the active tab in `windowId` and crops it. Requires activeTab. */
-export async function captureRect(windowId: number | undefined, rect: Rect, dpr: number, path?: Point[]): Promise<CaptureResult> {
-  const full = await browser.tabs.captureVisibleTab(windowId as number, { format: 'png' });
-  return cropDataUrl(full, rect, dpr, path);
+/** A screenshot of what the active tab in `windowId` shows, as a PNG data URL. Requires activeTab. */
+export async function captureVisible(windowId: number): Promise<string> {
+  return await browser.tabs.captureVisibleTab(windowId, { format: 'png' });
 }

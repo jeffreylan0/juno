@@ -6,10 +6,10 @@
  *     and a model, or a server address. Nothing else is on screen.
  *  2. Asking — the macros above the question box, the default prompt, and
  *     whether a selection is asked about straight away.
- *  3. Selecting — the shortcut, what happens after drawing a box, and when
- *     the answer panel opens (the same two the bar's gear offers).
- *  4. Chats & privacy — where chats are kept and how to delete them, blocked
- *     sites, and what is ever sent.
+ *  3. Selecting — the shortcut, and what happens after drawing a box (which
+ *     the bar's gear offers too).
+ *  4. Chats & privacy — how many chats are kept and how to delete them,
+ *     blocked sites, and what is ever sent and kept.
  *
  * Every change saves as it is made — there is no Save button to forget — and
  * a small "Saved" confirms it. Writes read the latest stored settings first,
@@ -21,10 +21,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { DEFAULT_MACROS, DEFAULT_PROMPT } from '@shared/prompts';
 import { BRAND } from '@/brand';
-import { MAX_SAVED_CHATS, listChats } from '@/lib/chats';
+import { listChats } from '@/lib/chats';
 import { MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
 import type { KeyModel, KeyTestResult } from '@/lib/providers/byok';
 import {
+  CHAT_LIMITS,
   getKeys,
   getSettings,
   keysItem,
@@ -32,7 +33,6 @@ import {
   settingsItem,
   type Keys,
   type Macro,
-  type PanelOpen,
   type SendBehavior,
   type Settings,
 } from '@/lib/storage';
@@ -61,11 +61,6 @@ const SEND: { id: SendBehavior; label: string; help: string }[] = [
   { id: 'prefill', label: 'Wait for me', help: 'The default prompt goes in the box; nothing is asked (or spent) until you press Enter or a macro.' },
   { id: 'auto', label: 'Ask straight away', help: 'Asks the default prompt, or the first macro when that is empty. Every selection is a paid question.' },
   { id: 'auto-box', label: 'Ask straight away for screenshots only', help: 'Box, Freeform and Element are asked about at once; Text waits for you.' },
-];
-
-const PANEL: { id: PanelOpen; label: string; help: string }[] = [
-  { id: 'on-selection', label: 'When a selection is made', help: 'The page stays full width while you choose what to select.' },
-  { id: 'on-click', label: `When I click ${BRAND.iconName}`, help: 'Already open while you select, at the cost of a narrower page.' },
 ];
 
 const SECTIONS = [
@@ -211,8 +206,8 @@ export function Options() {
               {' '}or press <kbd>{shortcut}</kbd>
             </>
           ) : null}{' '}
-          to bring up the selection bar; it follows you from tab to tab, and everything you select goes into one chat until
-          you close it (✕ or Escape). Changes here save as you make them.
+          to bring up the selection bar. The answer panel opens with your first selection and stays open from tab to tab;
+          everything you select goes into one chat until you close it (✕ or Escape). Changes here save as you make them.
         </p>
 
         <AnswersSection settings={settings} keys={keys} models={models} save={save} saveKey={saveKey} rememberModels={rememberModels} />
@@ -603,7 +598,7 @@ function AskingSection({ settings, save }: { settings: Settings; save: (patch: P
 
 function SelectingSection({ settings, save, shortcut }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void>; shortcut: string }) {
   return (
-    <Section id="selecting" title="Selecting" lede="The bar's gear changes the last two as well.">
+    <Section id="selecting" title="Selecting">
       <div className="field" data-testid="shortcuts">
         <span className="field-label">Keyboard shortcut</span>
         <span className="key-row shortcut-row">
@@ -617,8 +612,6 @@ function SelectingSection({ settings, save, shortcut }: { settings: Settings; sa
         <small className="help">Does the same as clicking {BRAND.iconName}. The browser owns shortcuts, so they are changed on its own page.</small>
       </div>
 
-      <AllSitesField />
-
       <div className="field">
         <span className="field-label">After drawing a box</span>
         <Radios
@@ -630,11 +623,7 @@ function SelectingSection({ settings, save, shortcut }: { settings: Settings; sa
           ]}
           onChange={(v) => void save({ adjustBox: v === 'adjust' })}
         />
-      </div>
-
-      <div className="field">
-        <span className="field-label">Open the answer panel</span>
-        <Radios name="panel" value={settings.panelOpen} options={PANEL} onChange={(v) => void save({ panelOpen: v })} />
+        <small className="help">The gear on the selection bar changes this too.</small>
       </div>
 
       <p className="help">
@@ -642,48 +631,6 @@ function SelectingSection({ settings, save, shortcut }: { settings: Settings; sa
         where every mode does.
       </p>
     </Section>
-  );
-}
-
-/**
- * The bar follows the student from tab to tab only where the extension may
- * go. Chrome grants that per tab when the icon is clicked; this lets it onto
- * every site at once (asked once by Chrome, and removable here).
- */
-function AllSitesField() {
-  const [allowed, setAllowed] = useState<boolean | null>(null);
-  useEffect(() => {
-    const refresh = () => void browser.permissions.contains({ origins: ['<all_urls>'] }).then(setAllowed, () => setAllowed(false));
-    refresh();
-    browser.permissions.onAdded.addListener(refresh);
-    browser.permissions.onRemoved.addListener(refresh);
-    return () => {
-      browser.permissions.onAdded.removeListener(refresh);
-      browser.permissions.onRemoved.removeListener(refresh);
-    };
-  }, []);
-  if (allowed === null) return null;
-  return (
-    <div className="field" data-testid="all-sites">
-      <span className="field-label">The bar on every tab</span>
-      <span className="key-row shortcut-row">
-        <span className={allowed ? 'help ok' : 'help'}>
-          {allowed ? '✓ The bar follows you to every tab.' : 'Off: the bar goes only to tabs where you click the shortcut icon.'}
-        </span>
-        {allowed ? (
-          <button type="button" className="secondary" onClick={() => void browser.permissions.remove({ origins: ['<all_urls>'] })}>
-            Turn off
-          </button>
-        ) : (
-          <button type="button" className="secondary" data-testid="allow-all-sites" onClick={() => void browser.permissions.request({ origins: ['<all_urls>'] })}>
-            Allow
-          </button>
-        )}
-      </span>
-      <small className="help">
-        Chrome asks once. {BRAND.name} still touches a page only while the bar is up, and sends nothing until you select.
-      </small>
-    </div>
   );
 }
 
@@ -702,7 +649,7 @@ function PrivacySection({ settings, save }: { settings: Settings; save: (patch: 
 
   return (
     <Section id="privacy" title="Chats & privacy">
-      <ChatsField />
+      <ChatsField limit={settings.chatLimit} save={save} />
 
       <label className="field">
         <span className="field-label">Blocked sites</span>
@@ -719,21 +666,43 @@ function PrivacySection({ settings, save }: { settings: Settings; save: (patch: 
         <small className="help">One hostname per line. The shortcut does nothing on these sites — for exams and private portals.</small>
       </label>
 
-      <div className="field">
-        <span className="field-label">What is sent</span>
+      <div className="field" data-testid="what-is-sent">
+        <span className="field-label">What is sent, and what is kept</span>
         <p className="help">
           Nothing leaves the page until you select something, and then only the selection — the screenshot of what you
           selected, or the text — goes to the AI you chose, never the rest of the page. Keys and chats stay in this browser.
         </p>
+        <ul className="help facts">
+          <li>
+            <b>Claude</b> (Anthropic's API) is not trained on what you send, and Anthropic deletes it within 30 days — kept
+            longer only if it is flagged for breaking their usage policy.
+          </li>
+          <li>
+            <b>ChatGPT</b> (OpenAI's API) is not trained on what you send unless your OpenAI organization opted in to sharing
+            data (check its data controls); OpenAI keeps abuse-monitoring logs for up to 30 days. Answers are asked with
+            storing turned off.
+          </li>
+          <li>
+            <b>A local model</b> never sends anything off this computer.
+          </li>
+          <li>
+            <b>Temporary chats</b> (the ghost, on the bar or the panel) are never saved on this computer and are deleted when
+            you finish. They also ask ChatGPT to keep its prompt cache in memory only, where the model allows it; Claude's
+            is always memory-only.
+          </li>
+        </ul>
       </div>
     </Section>
   );
 }
 
-/** Where chats live, and a way to clear them. Asks first, since it cannot be undone. */
-function ChatsField() {
+/**
+ * How many chats are kept, and a way to clear them. Keeping fewer than there
+ * are, or deleting them all, asks first, since neither can be undone.
+ */
+function ChatsField({ limit, save }: { limit: number; save: (patch: Partial<Settings>) => Promise<void> }) {
   const [count, setCount] = useState<number | null>(null);
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<{ kind: 'all' } | { kind: 'limit'; to: number } | null>(null);
   useEffect(() => {
     const refresh = () => void listChats().then((l) => setCount(l.length));
     refresh();
@@ -741,30 +710,75 @@ function ChatsField() {
     browser.storage.onChanged.addListener(onChanged);
     return () => browser.storage.onChanged.removeListener(onChanged);
   }, []);
+  const pickLimit = (to: number) => {
+    if (count !== null && to < count) setConfirming({ kind: 'limit', to });
+    else {
+      setConfirming(null);
+      void save({ chatLimit: to });
+    }
+  };
   return (
     <div className="field" data-testid="chats">
       <span className="field-label">Chats</span>
       <p className="help">
-        Saved on this computer only, with their screenshots. The free plan keeps your {MAX_SAVED_CHATS} most recent; the
-        oldest goes when you start another. Temporary chats are never saved.
+        Saved on this computer only, with their screenshots. When there are more than you keep, the one used longest ago
+        is deleted. Temporary chats are never saved.
       </p>
-      {confirming ? (
+      <label className="key-row limit-row">
+        <span>Keep my</span>
+        <select
+          value={confirming?.kind === 'limit' ? confirming.to : limit}
+          data-testid="chat-limit-select"
+          // Until the chats are counted there is no telling whether a lower limit deletes any.
+          disabled={count === null}
+          onChange={(e) => pickLimit(Number(e.target.value))}
+        >
+          {CHAT_LIMITS.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+        <span>most recent chats</span>
+      </label>
+      {confirming?.kind === 'limit' ? (
+        <div className="confirm-row">
+          <span>
+            Keep only your {confirming.to} most recent chats? The other {(count ?? 0) - confirming.to} will be deleted. This
+            cannot be undone.
+          </span>
+          <button
+            type="button"
+            className="danger"
+            data-testid="confirm-chat-limit"
+            onClick={() => {
+              void save({ chatLimit: confirming.to });
+              setConfirming(null);
+            }}
+          >
+            Delete {(count ?? 0) - confirming.to}
+          </button>
+          <button type="button" className="secondary" onClick={() => setConfirming(null)}>
+            Cancel
+          </button>
+        </div>
+      ) : confirming?.kind === 'all' ? (
         <div className="confirm-row">
           <span>Delete all {count} saved chats? This cannot be undone.</span>
           <button
             type="button"
             className="danger"
             data-testid="confirm-delete-chats"
-            onClick={() => void browser.runtime.sendMessage({ type: 'chats:delete-all' }).then(() => setConfirming(false))}
+            onClick={() => void browser.runtime.sendMessage({ type: 'chats:delete-all' }).then(() => setConfirming(null))}
           >
             Delete all
           </button>
-          <button type="button" className="secondary" onClick={() => setConfirming(false)}>
+          <button type="button" className="secondary" onClick={() => setConfirming(null)}>
             Cancel
           </button>
         </div>
       ) : (
-        <button type="button" className="secondary" data-testid="delete-chats" disabled={!count} onClick={() => setConfirming(true)}>
+        <button type="button" className="secondary" data-testid="delete-chats" disabled={!count} onClick={() => setConfirming({ kind: 'all' })}>
           {count ? `Delete all chats (${count})` : 'No saved chats'}
         </button>
       )}

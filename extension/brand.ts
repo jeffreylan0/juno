@@ -31,6 +31,3 @@ export const BRAND = {
 
 /** Firefox add-on id. Stable forever; see above. */
 export const GECKO_ID = 'selection-ai@amcpmn.org';
-
-/** Sizes generated from assets/brand/icon.svg by `pnpm brand:icons`. */
-export const ICON_SIZES = [16, 32, 48, 96, 128] as const;

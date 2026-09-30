@@ -5,7 +5,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { INDEX_KEY, chatKey, getChat, listChats, type Chat, type ChatSummary } from '@/lib/chats';
-import { barKey, currentKey, getBar, getCurrent, type BarState, type Current } from '@/lib/current';
+import { currentKey, getCurrent, unreachableKey, type Current, type Unreachable } from '@/lib/current';
 import { getImage, isImageRef } from '@/lib/images';
 import { PANEL_PORT, type PanelPortMsg } from '@/lib/messages';
 import { STATUS_KEY, type AiStatus } from '@/lib/status';
@@ -93,16 +93,21 @@ export function usePanelSession(): { windowId: number | null; current: Current |
   return { windowId, current };
 }
 
-/** The window's selection bar: where it is, and why it cannot be on this tab if it cannot. */
-export function useBar(windowId: number | null): BarState | null {
-  const [bar, setBar] = useState<BarState | null>(null);
+/**
+ * Why the icon brought no bar on the page it was clicked on (the browser's own
+ * pages, a blocked site, files without access), until the bar comes up
+ * somewhere or it is dismissed.
+ */
+export function useUnreachable(windowId: number | null): { why: Unreachable | null; dismiss: () => void } {
+  const [why, setWhy] = useState<Unreachable | null>(null);
   useEffect(() => {
     if (windowId === null) return;
     let alive = true;
-    void getBar(windowId).then((b) => alive && setBar(b));
-    const key = barKey(windowId);
+    const key = unreachableKey(windowId);
+    const read = (v: unknown) => (v as { why?: Unreachable } | undefined)?.why ?? null;
+    void browser.storage.session.get(key).then((got) => alive && setWhy(read(got[key])));
     const onChanged = (changes: Changes, area: string) => {
-      if (area === 'session' && key in changes) setBar((changes[key]!.newValue as BarState | undefined) ?? null);
+      if (area === 'session' && key in changes) setWhy(read(changes[key]!.newValue));
     };
     browser.storage.onChanged.addListener(onChanged);
     return () => {
@@ -110,7 +115,7 @@ export function useBar(windowId: number | null): BarState | null {
       browser.storage.onChanged.removeListener(onChanged);
     };
   }, [windowId]);
-  return bar;
+  return { why, dismiss: () => setWhy(null) };
 }
 
 /** One chat, live. Null until it has something in it (empty chats are not stored). */

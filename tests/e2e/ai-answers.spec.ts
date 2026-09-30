@@ -267,10 +267,10 @@ test('every selection in the chat reaches the model: all new ones with the quest
   await b.goto(`${FIXTURE_ORIGIN}/table.html`);
   const panel = await openPanel(context, extensionId);
   await selectProblem(a, serviceWorker, panel, `${FIXTURE_ORIGIN}/katex.html`);
-  // The bar follows to tab B; one chip click and a second selection, from another page.
+  // On to tab B, where the icon brings the bar up again: a second selection, from another page.
   await b.bringToFront();
-  await expect(b.locator('selection-ai-overlay')).toHaveAttribute('data-state', 'ready', { timeout: 10_000 });
-  await b.locator('selection-ai-overlay .bar .chip[data-kind="box"]').click();
+  await startSelection(serviceWorker, 'box', `${FIXTURE_ORIGIN}/table.html`);
+  await expect(b.locator('selection-ai-overlay')).toHaveAttribute('data-state', 'armed', { timeout: 10_000 });
   await boxAndAsk(b, 'table');
   await expect(panel.getByTestId('selection')).toHaveCount(2, { timeout: 15_000 });
 

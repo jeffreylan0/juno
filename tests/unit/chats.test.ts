@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import type { Plan } from '@shared/payload';
 import {
-  MAX_SAVED_CHATS,
   autoTitle,
   deleteAllChats,
   deleteChat,
@@ -12,6 +11,7 @@ import {
   listChats,
   newChat,
   pendingSelections,
+  pruneChats,
   renameChat,
   retitle,
   saveChat,
@@ -26,10 +26,7 @@ import {
 } from '@/lib/chats';
 import {
   addSelection,
-  allBars,
   discardOrphans,
-  getBar,
-  setBar,
   endChat,
   getCurrent,
   onTemporaryDiscarded,
@@ -37,9 +34,14 @@ import {
   replaceGone,
   setCurrent,
   setTemporary,
+  getBarTab,
+  setBarTab,
+  setUnreachable,
   startChat,
   switchTo,
+  unreachableKey,
 } from '@/lib/current';
+import { settingsItem, DEFAULT_SETTINGS } from '@/lib/storage';
 import { MemoryImageStore, deletePartImages, hydratePlan, setImageStore, storePlanImages } from '@/lib/images';
 import { groupByDay, search } from '@/ui/ChatMenu';
 
@@ -138,14 +140,14 @@ describe('saved chats', () => {
     expect(await listChats()).toEqual([]);
   });
 
-  it('keeps the ten most recently used, dropping the oldest with its screenshots', async () => {
-    for (let i = 0; i < MAX_SAVED_CHATS; i++) {
+  it('keeps the ten most recently used by default, dropping the oldest with its screenshots', async () => {
+    for (let i = 0; i < 10; i++) {
       const chat = withSelection(newChat(false, `c${i}`), sel(`s${i}`));
       await saveChat({ ...chat });
       await new Promise((r) => setTimeout(r, 2));
     }
     await store.put({ id: 'img0', chatId: 'c0', dataUrl: 'data:x', createdAt: 0 });
-    expect(await listChats()).toHaveLength(MAX_SAVED_CHATS);
+    expect(await listChats()).toHaveLength(10);
 
     // Using an old chat moves it up, so it is not the one dropped.
     await updateChat('c0', (c) => withSelection(c, sel('again')));
@@ -156,6 +158,21 @@ describe('saved chats', () => {
 
     await deleteChat('c0');
     expect(store.map.size).toBe(0);
+  });
+
+  it('keeps as many as the student chose, and keeps fewer once the limit is lowered', async () => {
+    await settingsItem.setValue({ ...DEFAULT_SETTINGS, chatLimit: 25 });
+    for (let i = 0; i < 12; i++) {
+      await saveChat(withSelection(newChat(false, `c${i}`), sel(`s${i}`)));
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    expect(await listChats()).toHaveLength(12);
+
+    await settingsItem.setValue({ ...DEFAULT_SETTINGS, chatLimit: 10 });
+    const dropped = await pruneChats();
+    expect(dropped.map((c) => c.id).sort()).toEqual(['c0', 'c1']);
+    expect(await listChats()).toHaveLength(10);
+    expect(await getChat('c0')).toBeNull();
   });
 
   it('does not count or list temporary chats, and keeps them out of local storage', async () => {
@@ -231,41 +248,72 @@ describe('screenshots', () => {
   });
 });
 
-describe('a chat’s life: one bar per window, shown and hidden with the panel', () => {
+describe('a chat’s life', () => {
   const W = 7;
 
   it('the first selection starts a chat, and every later one joins it, from any page', async () => {
-    const { chat: first } = await addSelection(W, { plan: plan('a'), tabId: 1 });
+    const { chat: first } = (await addSelection(W, { plan: plan('a'), tabId: 1 }))!;
     const { chat } = await addSelection(W, { plan: plan('b'), tabId: 2 });
     expect(chat.id).toBe(first.id);
     expect(chat.items.map((i) => (i.kind === 'selection' ? i.plan.page.title : ''))).toEqual(['Page a', 'Page b']);
     expect(chat.title).toBe('Page a');
   });
 
-  it('✕ finishes the chat: it stays in the menu, the bar goes, and the next selection starts a new one', async () => {
-    await setBar(W, { mode: 'box', tabId: 1 });
-    await setBar(99, { mode: null, tabId: 3 });
+  it('✕ finishes the chat: it stays in the menu, and the next selection starts a new one', async () => {
     const { chat } = await addSelection(W, { plan: plan('a'), tabId: 1 });
-    expect(await endChat(W)).toBe(1); // the tab to take the bar off
+    await addSelection(99, { plan: plan('z'), tabId: 3 });
+    await setUnreachable(W, 'restricted');
+    await setBarTab(W, 1);
+    await setBarTab(99, 3);
+    await endChat(W);
     expect(await getCurrent(W)).toBeNull();
-    expect(await getBar(W)).toBeNull();
-    expect(await getBar(99)).toEqual({ mode: null, tabId: 3 }); // another window's bar is untouched
-    expect((await listChats()).map((c) => c.id)).toEqual([chat.id]);
+    expect(await getBarTab(W)).toBeUndefined(); // the bar is down
+    expect(await getBarTab(99)).toBe(3); // another window's is not
+    expect(await getCurrent(99)).not.toBeNull(); // another window's chat is untouched
+    expect(await fakeBrowser.storage.session.get(unreachableKey(W))).toEqual({}); // and its notice is gone
+    expect((await listChats()).map((c) => c.id)).toContain(chat.id);
 
     const { chat: next } = await addSelection(W, { plan: plan('b') });
     expect(next.id).not.toBe(chat.id);
   });
 
-  it('the bar is one per window: it moves between tabs and keeps its mode', async () => {
-    await setBar(W, { mode: 'freeform', tabId: 1 });
-    await setBar(W, { tabId: 2 });
-    expect(await getBar(W)).toEqual({ mode: 'freeform', tabId: 2 });
-    // Somewhere it cannot go: it is on no tab, and says why.
-    await setBar(W, { tabId: undefined, blocked: 'permission' });
-    expect(await getBar(W)).toEqual({ mode: 'freeform', blocked: 'permission' });
-    await setBar(W, { mode: null, tabId: 5, blocked: undefined });
-    expect(await getBar(W)).toEqual({ mode: null, tabId: 5 });
-    expect((await allBars()).map(([w]) => w)).toEqual([W]);
+  it('a selection goes to the chat it was made for, even if the student moved on while it was captured', async () => {
+    const { chat: saved } = (await addSelection(W, { plan: plan('a') }))!;
+    const made = (await getCurrent(W))!;
+    await setTemporary(W, true); // the ghost, pressed while the screenshot was cropped
+    const late = (await addSelection(W, { plan: plan('b'), into: made }))!;
+    expect(late.chat.id).toBe(saved.id);
+    expect(late.chat.items).toHaveLength(2);
+    expect(late.chat.temporary).toBeUndefined();
+    expect((await getCurrent(W))!.temporary).toBe(true); // and the ghost chat stays empty
+  });
+
+  it('a selection whose chat is gone meanwhile is dropped, not saved somewhere else', async () => {
+    // Made in a temporary chat that the ghost then left (and deleted).
+    const temp = await setTemporary(W, true);
+    await addSelection(W, { plan: plan('a') });
+    await setTemporary(W, false);
+    expect(await addSelection(W, { plan: plan('b'), into: temp })).toBeNull();
+    expect(await listChats()).toEqual([]);
+
+    // The first selection of a chat finished (✕) before it landed.
+    await endChat(W);
+    const fresh = await panelOpened(W);
+    await endChat(W);
+    expect(await addSelection(W, { plan: plan('c'), into: fresh })).toBeNull();
+    expect(await listChats()).toEqual([]);
+  });
+
+  it('the ghost before any chat (the bar up, the panel not yet open) makes the first selection temporary', async () => {
+    expect(await getCurrent(W)).toBeNull();
+    const pending = await setTemporary(W, true);
+    expect(pending.temporary).toBe(true);
+    const { chat } = await addSelection(W, { plan: plan('a') });
+    expect(chat.id).toBe(pending.chatId);
+    expect(chat.temporary).toBe(true);
+    expect(await listChats()).toEqual([]);
+    // The panel opening for that selection shows the same temporary chat.
+    expect(await panelOpened(W)).toEqual(pending);
   });
 
   it('a panel shows the chat in progress, or starts one when opened by hand', async () => {

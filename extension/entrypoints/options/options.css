@@ -105,9 +105,11 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4p
 .key-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .key-row input { flex: 1; min-width: 12em; }
 .shortcut-row { justify-content: space-between; }
+.limit-row { font-size: 14px; }
+.help.facts { padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px; }
+.help.facts b { color: var(--fg); font-weight: 600; }
 
-button.primary, button.secondary, button.danger { font: inherit; padding: 7px 14px; border-radius: var(--radius); cursor: pointer; align-self: flex-start; }
-button.primary { border: 0; background: var(--accent); color: #fff; }
+button.secondary, button.danger { font: inherit; padding: 7px 14px; border-radius: var(--radius); cursor: pointer; align-self: flex-start; }
 button.secondary { border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
 button.secondary:hover:not(:disabled) { border-color: var(--muted); }
 button.danger { border: 0; background: #b91c1c; color: #fff; }

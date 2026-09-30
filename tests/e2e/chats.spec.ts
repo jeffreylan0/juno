@@ -1,7 +1,7 @@
 /**
  * Chat management: the menu (search, rename, delete), temporary chats, the
- * free plan's ten-chat limit, and the notices above the macros. Mock answers
- * throughout, so nothing here costs anything.
+ * chat limit (ten unless the student keeps more), and the notices above the
+ * macros. Mock answers throughout, so nothing here costs anything.
  */
 import type { Page, Route, Worker } from '@playwright/test';
 import {
@@ -126,7 +126,7 @@ test('a temporary chat is never listed and is deleted when the panel closes', as
   await ghost.click();
   await expect(ghost).toHaveAttribute('aria-pressed', 'true');
   await expect(panel.getByTestId('chat-title')).toHaveText('Temporary chat');
-  await expect(panel.getByTestId('empty')).toContainText('deleted when you close the panel');
+  await expect(panel.getByTestId('empty')).toContainText('deleted when you finish');
 
   await selectOn(page, serviceWorker, panel, 'text.html');
   await askAndWait(panel);
@@ -191,7 +191,7 @@ test('leaving a temporary chat with the ghost deletes it; the chat before stays 
   expect((await savedChats(serviceWorker)).map((c) => c.id)).toEqual([saved.id]);
 });
 
-test('the free plan keeps ten chats: the oldest goes, and the panel says so', async ({ context, extensionId, serviceWorker }) => {
+test('ten chats are kept unless the student keeps more: the oldest goes, and the panel says so', async ({ context, extensionId, serviceWorker }) => {
   // Ten older chats, as earlier sessions would have left them.
   await serviceWorker.evaluate(async () => {
     const index = [];
@@ -223,9 +223,16 @@ test('the free plan keeps ten chats: the oldest goes, and the panel says so', as
   expect(list.map((c) => c.id)).not.toContain('old-0');
   expect(await serviceWorker.evaluate(async () => 'chat:old-0' in (await chrome.storage.local.get(null)))).toBe(false);
   const notice = panel.locator('[data-testid="notice"][data-kind="dropped"]');
-  await expect(notice).toContainText('The free plan keeps 10 chats, so the oldest, “Old chat 0”, was deleted.');
+  await expect(notice).toContainText('You keep 10 chats, so the oldest, “Old chat 0”, was deleted.');
+  await expect(notice.getByTestId('notice-settings')).toHaveText('Keep more');
   await notice.getByRole('button', { name: 'Dismiss' }).click();
   await expect(notice).toHaveCount(0);
+
+  // Keeping 25: the next chat drops nothing.
+  await setSettings(serviceWorker, { chatLimit: 25 });
+  const again = await finishChat(page, panel, () => openPanel(context, extensionId));
+  await selectOn(page, serviceWorker, again, 'table.html', 'table');
+  await expect.poll(async () => (await savedChats(serviceWorker)).length).toBe(11);
 });
 
 test('notices sit above the macros: no key, and a disconnected AI with a retry', async ({ context, extensionId, serviceWorker }) => {

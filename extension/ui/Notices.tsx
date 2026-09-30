@@ -2,14 +2,14 @@
  * Notices, just above the macros: anything that would make the next answer
  * fail or be fake, said before the student asks rather than after. Placeholder
  * answers, no key, a rejected key, and the chosen AI being unreachable
- * ("Disconnected"); also the free plan dropping an old chat.
+ * ("Disconnected"); also the chat limit dropping an old chat, and why the
+ * icon brought no bar on a page.
  *
  * Placeholder and no-key are known here at once. The rest come from the
  * background's check (lib/status.ts), shown only when it was made for the
  * choice currently picked.
  */
-import { MAX_SAVED_CHATS } from '@/lib/chats';
-import type { BarState } from '@/lib/current';
+import type { Unreachable } from '@/lib/current';
 import { BRAND } from '@/brand';
 import type { AiStatus } from '@/lib/status';
 import { answerChoiceOf, type Keys, type Settings } from '@/lib/storage';
@@ -42,7 +42,8 @@ export function Notices({
   onRecheck,
   dropped,
   onDismissDropped,
-  bar,
+  unreachable,
+  onDismissUnreachable,
 }: {
   settings: Settings | null;
   keys: Keys | null;
@@ -51,22 +52,23 @@ export function Notices({
   onRecheck: () => void;
   dropped: string[] | null;
   onDismissDropped: () => void;
-  bar: BarState | null;
+  unreachable: Unreachable | null;
+  onDismissUnreachable: () => void;
 }) {
   const notices: Notice[] = [];
-  const where = bar ? barNotice(bar) : null;
-  if (where) notices.push(where);
+  if (unreachable) notices.push({ ...unreachableNotice(unreachable), onDismiss: onDismissUnreachable });
   const connection = settings && connectionNotice(settings, keys, status, checking, onRecheck);
   if (connection) notices.push(connection);
-  if (dropped?.length) {
+  if (dropped?.length && settings) {
+    const limit = settings.chatLimit;
     notices.push({
       kind: 'dropped',
       icon: 'info',
       text:
         dropped.length === 1
-          ? `The free plan keeps ${MAX_SAVED_CHATS} chats, so the oldest, “${dropped[0]}”, was deleted.`
-          : `The free plan keeps ${MAX_SAVED_CHATS} chats, so the ${dropped.length} oldest were deleted.`,
-      actions: [],
+          ? `You keep ${limit} chats, so the oldest, “${dropped[0]}”, was deleted.`
+          : `You keep ${limit} chats, so the ${dropped.length} oldest were deleted.`,
+      actions: [{ label: 'Keep more', onClick: openSettings, testid: 'notice-settings' }],
       onDismiss: onDismissDropped,
     });
   }
@@ -102,37 +104,31 @@ export function Notices({
   );
 }
 
-/**
- * The bar is up but could not come onto the active tab. Only one reason needs
- * the student: letting it onto every site, which Chrome asks about once.
- */
-function barNotice(bar: BarState): Notice | null {
-  switch (bar.blocked) {
-    case 'permission':
-      return {
-        kind: 'bar-permission',
-        icon: 'info',
-        text: `The selection bar can't follow you onto this tab yet. Let it follow you to every tab, or click ${BRAND.iconName} here.`,
-        actions: [
-          {
-            label: 'Let it follow',
-            testid: 'allow-all-sites',
-            // Must run inside the click: Chrome only asks during a user gesture.
-            onClick: () => void browser.permissions.request({ origins: ['<all_urls>'] }).catch(() => false),
-          },
-        ],
-      };
+/** Why the icon brought no bar on the page it was clicked on. */
+function unreachableNotice(why: Unreachable): Notice {
+  switch (why) {
     case 'restricted':
-      return { kind: 'bar-restricted', icon: 'info', text: "The browser doesn't let extensions onto this page, so the bar can't show here.", actions: [] };
+      return { kind: 'bar-restricted', icon: 'info', text: "The browser doesn't let extensions onto this page, so the selection bar can't open here.", actions: [] };
     case 'blocked-site':
       return {
         kind: 'bar-blocked-site',
         icon: 'info',
-        text: 'The shortcut is off on this site: it is on your blocked sites.',
+        text: `${BRAND.name} is off on this site: it is on your blocked sites.`,
         actions: [{ label: 'Settings', onClick: openSettings, testid: 'notice-settings' }],
       };
-    default:
-      return null;
+    case 'file-access':
+      return {
+        kind: 'bar-file-access',
+        icon: 'info',
+        text: `To select in files on this computer, turn on “Allow access to file URLs” for ${BRAND.name}, then click ${BRAND.iconName} again.`,
+        actions: [
+          {
+            label: 'Open extension settings',
+            // Extension pages may open the browser's own extension page for us.
+            onClick: () => void browser.tabs.create({ url: `chrome://extensions/?id=${browser.runtime.id}` }),
+          },
+        ],
+      };
   }
 }
 

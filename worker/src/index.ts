@@ -12,7 +12,7 @@
  */
 import { verifySession, type Session } from './auth';
 import { checkAndCount, quotaFor } from './quota';
-import { callVendor } from './models';
+import { callVendor, type AskBody } from './models';
 
 export interface Env {
   ENVIRONMENT: string;
@@ -55,7 +55,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 async function handleAsk(request: Request, session: Session, env: Env): Promise<Response> {
-  const body = (await request.json()) as { model: string; messages: unknown[]; route?: 'small' | 'large' };
+  const body = (await request.json()) as AskBody;
   const allowed = await checkAndCount(session, env);
   if (!allowed.ok) return json({ error: allowed.reason }, 429);
   return await callVendor(body, env);

@@ -148,6 +148,40 @@ describe('OpenAI requests', () => {
     expect(body.max_completion_tokens).toBe(4096);
   });
 
+  it('never asks OpenAI to store the answer; a temporary chat also asks for an in-memory prompt cache', async () => {
+    const calls: Call[] = [];
+    const ok = () => sse([{ data: { choices: [{ delta: { content: 'hi' } }] } }, { data: '[DONE]' }]);
+    await collect(callModel({ plan: plan() }, 'large', ctx(ok, calls), { provider: 'byok', vendor: 'openai' }));
+    const saved = JSON.parse(String(calls[0]!.init.body)) as Record<string, unknown>;
+    expect(saved.store).toBe(false);
+    expect('prompt_cache_retention' in saved).toBe(false);
+
+    await collect(callModel({ plan: plan() }, 'large', { ...ctx(ok, calls), ephemeral: true }, { provider: 'byok', vendor: 'openai' }));
+    const ghost = JSON.parse(String(calls[1]!.init.body)) as Record<string, unknown>;
+    expect(ghost).toMatchObject({ store: false, prompt_cache_retention: 'in_memory' });
+  });
+
+  it('asks again without the in-memory cache when a model only offers the 24-hour one, and remembers', async () => {
+    const calls: Call[] = [];
+    const c = {
+      ...ctx(({ init }) => {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        if (body.prompt_cache_retention) {
+          return json(400, { error: { message: "Invalid value for 'prompt_cache_retention': this model supports only '24h'.", type: 'invalid_request_error', param: 'prompt_cache_retention' } });
+        }
+        return sse([{ data: { choices: [{ delta: { content: 'fine' } }] } }, { data: '[DONE]' }]);
+      }, calls),
+      ephemeral: true,
+    };
+    const opts = { provider: 'byok' as const, vendor: 'openai' as const, model: { vendor: 'openai' as const, model: 'gpt-6-sol-24h-only' } };
+    const first = await collect(callModel({ plan: plan() }, 'large', c, opts));
+    expect(first.text).toBe('fine');
+    expect(calls).toHaveLength(2);
+    const second = await collect(callModel({ plan: plan() }, 'large', c, opts));
+    expect(second.text).toBe('fine');
+    expect(calls).toHaveLength(3); // straight to the plain request this time
+  });
+
   it('says "out of credit" for insufficient_quota rather than "rate limited"', async () => {
     const c = ctx(() => json(429, { error: { message: 'You exceeded your current quota', type: 'insufficient_quota', code: 'insufficient_quota' } }));
     const { error } = await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'openai' }));

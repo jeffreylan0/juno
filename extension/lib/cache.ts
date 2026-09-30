@@ -1,7 +1,7 @@
 /**
- * SHA-256 payload hash → stored response. Used by the mock provider for
- * record/replay and by every paid provider to write answers so reruns are free.
- * The store is pluggable: extension storage in the browser, a JSON file in eval.
+ * SHA-256 payload hash → stored response, so an eval rerun replays for free
+ * (eval/lib.ts keeps them as JSON files). The extension keeps none: no answer
+ * outlives its chat.
  */
 import { canonicalizeRequest, stableStringify, type AskRequest, type ModelRef, type Usage } from '@shared/payload';
 
@@ -38,24 +38,5 @@ export class MemoryCacheStore implements CacheStore {
   }
   get size() {
     return this.map.size;
-  }
-}
-
-/** Backed by a `chrome.storage`-like area; keys are prefixed to avoid clashes. */
-export class AreaCacheStore implements CacheStore {
-  constructor(
-    private area: {
-      get(keys: string | string[]): Promise<Record<string, unknown>>;
-      set(items: Record<string, unknown>): Promise<void>;
-    },
-    private prefix = 'cache:',
-  ) {}
-  async get(hash: string) {
-    const key = this.prefix + hash;
-    const out = await this.area.get(key);
-    return out[key] as CachedResponse | undefined;
-  }
-  async set(hash: string, value: CachedResponse) {
-    await this.area.set({ [this.prefix + hash]: value });
   }
 }

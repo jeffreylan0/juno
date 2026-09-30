@@ -1,26 +1,27 @@
 /**
  * Which chat each window is on, and when a chat begins and ends.
  *
- * The selection bar and the panel are one thing that the student shows and
- * hides. The rules:
+ * The rules:
  *
- *  - Clicking the shortcut icon (or pressing the shortcut) brings up the bar.
- *    It is one bar per window, not per tab: it follows the student to
- *    whichever tab is active, in whatever state it was in (selecting in a
- *    mode, or waiting between selections).
- *  - The first selection starts a chat; every later one joins it, whichever
- *    tab it comes from.
+ *  - Clicking the shortcut icon (or pressing the shortcut) brings up the
+ *    selection bar on that tab. Leaving the tab takes the bar away; the icon
+ *    brings it back wherever the student is. Nothing about it is remembered.
+ *  - The panel opens with the first selection, and that selection starts a
+ *    chat; every later one joins it, whichever tab it comes from. The panel
+ *    stays open from tab to tab.
+ *  - The ghost (on the bar or the panel) makes the next selection start a
+ *    temporary chat, which is never saved.
  *  - ✕ on the bar, ✕ on the side panel, or Escape while the bar is waiting
  *    hides both and finishes the chat: a saved chat stays in the menu, a
  *    temporary one is deleted. The next click on the icon starts a new chat.
  *
  * State lives in storage.session so it survives the service worker being torn
- * down: `current:<windowId>` names the chat, `bar:<windowId>` says the bar is
- * up, what it is doing and which tab it is on. The background calls these one
- * at a time (it serialises every chat write), so none of them has to worry
+ * down: `current:<windowId>` names the chat, and `bar:<windowId>` the one tab
+ * the bar is on, so switching away can take it off. The background calls these
+ * one at a time (it serialises every chat write), so none of them has to worry
  * about another running halfway.
  */
-import type { Plan, SelectionKind } from '@shared/payload';
+import type { Plan } from '@shared/payload';
 import { discardChat, getChat, newChat, saveChat, withSelection, type Chat, type ChatSummary, type SelectionItem } from './chats';
 import { storePlanImages } from './images';
 
@@ -31,21 +32,6 @@ export interface Current {
 
 const PREFIX = 'current:';
 export const currentKey = (windowId: number) => `${PREFIX}${windowId}`;
-
-/** Why the bar is not on the active tab, when it cannot be. */
-export type BarBlocked = 'permission' | 'restricted' | 'blocked-site';
-
-/** The one bar of a window. */
-export interface BarState {
-  /** The mode being selected in, or null while it waits between selections. */
-  mode: SelectionKind | null;
-  /** The tab it is on now, if it could be put on the active tab. */
-  tabId?: number;
-  blocked?: BarBlocked;
-}
-
-const BAR_PREFIX = 'bar:';
-export const barKey = (windowId: number) => `${BAR_PREFIX}${windowId}`;
 
 const session = () => (browser.storage as unknown as { session: chrome.storage.StorageArea }).session;
 
@@ -92,24 +78,32 @@ async function leave(current: Current | null): Promise<void> {
 
 // ── The bar ──────────────────────────────────────────────────────────────
 
-export async function getBar(windowId: number): Promise<BarState | null> {
-  const key = barKey(windowId);
-  return ((await session().get(key))[key] as BarState | undefined) ?? null;
+const barKey = (windowId: number) => `bar:${windowId}`;
+
+/** The tab the window's bar is on, if it is up. */
+export async function getBarTab(windowId: number): Promise<number | undefined> {
+  return (await session().get(barKey(windowId)))[barKey(windowId)] as number | undefined;
 }
 
-/** Updates the window's bar, bringing it up if it was not. Returns the new state. */
-export async function setBar(windowId: number, patch: Partial<BarState>): Promise<BarState> {
-  const next: BarState = { mode: null, ...(await getBar(windowId)), ...patch };
-  for (const k of Object.keys(next) as (keyof BarState)[]) if (next[k] === undefined) delete next[k];
-  await session().set({ [barKey(windowId)]: next });
-  return next;
+export async function setBarTab(windowId: number, tabId: number | null): Promise<void> {
+  if (tabId === null) await session().remove(barKey(windowId));
+  else await session().set({ [barKey(windowId)]: tabId });
 }
 
-export async function allBars(): Promise<Array<[number, BarState]>> {
-  const all = await session().get(null);
-  return Object.entries(all)
-    .filter(([k]) => k.startsWith(BAR_PREFIX))
-    .map(([k, v]) => [Number(k.slice(BAR_PREFIX.length)), v as BarState]);
+// ── Pages the bar cannot go on ───────────────────────────────────────────
+
+/**
+ * Why a click on the icon brought no bar: the browser's own pages and the
+ * extension stores take none, a blocked site is the student's own choice,
+ * and files need a switch turned on first. The panel says which.
+ */
+export type Unreachable = 'restricted' | 'blocked-site' | 'file-access';
+export const unreachableKey = (windowId: number) => `unreachable:${windowId}`;
+
+/** Stored with the time, so the same reason twice still reaches a panel that dismissed the first. */
+export async function setUnreachable(windowId: number, why: Unreachable | null): Promise<void> {
+  if (why) await session().set({ [unreachableKey(windowId)]: { why, at: Date.now() } });
+  else await session().remove(unreachableKey(windowId));
 }
 
 // ── The chat's life ──────────────────────────────────────────────────────
@@ -125,19 +119,15 @@ export async function panelOpened(windowId: number, claim?: Current): Promise<Cu
   return current;
 }
 
-/**
- * Hides the bar and the panel's chat: ✕ on either, or Escape on a waiting
- * bar. Returns the tab the bar was on, to take it down.
- */
-export async function endChat(windowId: number): Promise<number | undefined> {
-  const bar = await getBar(windowId);
+/** Finishes the window's chat: ✕ on the bar or the panel, or Escape on a waiting bar. */
+export async function endChat(windowId: number): Promise<void> {
   await leave(await getCurrent(windowId));
   await setCurrent(windowId, null);
-  await session().remove(barKey(windowId));
-  return bar?.tabId;
+  await setUnreachable(windowId, null);
+  await setBarTab(windowId, null);
 }
 
-/** The ghost, turned on with something already in the chat: a separate, temporary chat. */
+/** Leaves the chat in progress for a new, empty one. */
 export async function startChat(windowId: number, temporary: boolean): Promise<Current> {
   await leave(await getCurrent(windowId));
   const next = fresh(temporary);
@@ -146,9 +136,10 @@ export async function startChat(windowId: number, temporary: boolean): Promise<C
 }
 
 /**
- * The ghost. Turning it on with nothing in the chat yet makes this chat
- * temporary; with something in it, it starts a temporary chat and the other
- * one stays in the menu. Turning it off deletes the temporary chat.
+ * The ghost. Turning it on with nothing in the chat yet (or no chat at all:
+ * the bar is up, the panel not yet open) makes the chat the next selection
+ * starts temporary; with something in it, it starts a temporary chat and the
+ * other one stays in the menu. Turning it off deletes the temporary chat.
  */
 export async function setTemporary(windowId: number, on: boolean): Promise<Current> {
   const current = await getCurrent(windowId);
@@ -182,18 +173,29 @@ export async function replaceGone(ids: Iterable<string>): Promise<void> {
   }
 }
 
-/** A selection arrived from a tab in this window: it joins the chat in progress, or starts one. */
+/**
+ * A selection arrived from a tab in this window: it joins the chat in
+ * progress, or starts one. `into` is the chat it was made for, fixed when it
+ * was committed: if the student moved on while it was being captured (✕, the
+ * ghost, another chat from the menu), it still goes there — unless that chat
+ * is gone (finished before anything was in it, or temporary and deleted),
+ * which is not brought back. Then it is dropped and null returned.
+ */
 export async function addSelection(
   windowId: number,
-  { plan, notice, tabId }: { plan: Plan; notice?: string; tabId?: number },
-): Promise<{ chat: Chat; item: SelectionItem; dropped: ChatSummary[] }> {
-  const current = await ensureCurrent(windowId);
-  const base = (await getChat(current.chatId)) ?? newChat(current.temporary, current.chatId);
+  { plan, notice, tabId, into }: { plan: Plan; notice?: string; tabId?: number; into?: Current },
+): Promise<{ chat: Chat; item: SelectionItem; dropped: ChatSummary[] } | null> {
+  const now = into ? await getCurrent(windowId) : await ensureCurrent(windowId);
+  const target = into ?? now!;
+  const existing = await getChat(target.chatId);
+  const stillHere = now?.chatId === target.chatId;
+  if (!stillHere && !existing) return null;
+  const base = existing ?? newChat(stillHere ? now!.temporary : target.temporary, target.chatId);
   const item: SelectionItem = {
     kind: 'selection',
     id: crypto.randomUUID(),
     at: Date.now(),
-    plan: await storePlanImages(plan, current.chatId, current.temporary),
+    plan: await storePlanImages(plan, base.id, !!base.temporary),
     ...(notice ? { notice } : {}),
     ...(tabId !== undefined ? { tabId } : {}),
   };

@@ -1,10 +1,10 @@
 /**
- * The panel: the chat the selection bar is filling. The bar and the panel are
- * shown and hidden together: the shortcut icon brings the bar up, it follows
- * the student from tab to tab, each selection lands here, and ✕ on either
- * (or Escape on a waiting bar) hides both and finishes the chat — it stays in
- * the chat menu, or is deleted if temporary. The next click on the icon
- * starts a new chat.
+ * The panel: the chat the selection bar is filling. The shortcut icon brings
+ * the bar up on a tab; the first selection opens the panel, which then stays
+ * open from tab to tab while every selection lands here. ✕ on either (or
+ * Escape on a waiting bar) hides both and finishes the chat — it stays in the
+ * chat menu, or is deleted if temporary. The next click on the icon starts a
+ * new chat.
  *
  * Layout, top to bottom:
  *  - the top bar: chat menu (left), the chat's name (click to rename), the
@@ -24,7 +24,6 @@
  * inside the Safari in-page overlay.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ModelRef } from '@shared/payload';
 import { BRAND } from '@/brand';
 import { autoTitle, hasUsableSelection, isRemovable, pendingSelections, type AssistantItem, type Chat } from '@/lib/chats';
 import { isTransient, needsSettings } from '@/lib/providers/errors';
@@ -35,7 +34,7 @@ import { Icon } from './icons';
 import { ModelPicker } from './ModelPicker';
 import { Notices } from './Notices';
 import { SelectionCard } from './Selection';
-import { useAiStatus, useBar, useChat, useChatList, usePanelSession } from './useChat';
+import { useAiStatus, useChat, useChatList, usePanelSession, useUnreachable } from './useChat';
 import { useShortcut } from './useShortcut';
 
 /** How long a macro's prompt shows in the box before it is sent. */
@@ -47,7 +46,7 @@ export function Panel() {
   const { windowId, current } = usePanelSession();
   const chat = useChat(current?.chatId ?? null);
   const chats = useChatList();
-  const bar = useBar(windowId);
+  const unreachable = useUnreachable(windowId);
   const { status, recheck, checking } = useAiStatus();
   const dropped = useDropped();
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -72,8 +71,6 @@ export function Panel() {
   const newest = pending.at(-1)?.id;
 
   useEffect(() => {
-    // Clears the toolbar badge the background sets when it could not open us.
-    void send({ type: 'panel:ready' });
     void getSettings().then(setSettings);
     void getKeys().then(setKeys);
     const unwatch = settingsItem.watch(() => void getSettings().then(setSettings));
@@ -182,7 +179,7 @@ export function Panel() {
           className={`icon ghost${temporary ? ' on' : ''}`}
           aria-label="Temporary chat"
           aria-pressed={temporary}
-          title={temporary ? 'Leave temporary chat (it will be deleted)' : 'Temporary chat: not saved, deleted when you close the panel'}
+          title={temporary ? 'Leave temporary chat (it will be deleted)' : 'Temporary chat: never saved, deleted when you finish'}
           data-testid="temporary"
           onClick={toggleTemporary}
         >
@@ -196,6 +193,7 @@ export function Panel() {
       {menuOpen && (
         <ChatMenu
           chats={chats}
+          limit={settings?.chatLimit ?? 10}
           currentId={chatId}
           onClose={() => setMenuOpen(false)}
           onOpen={(id) => {
@@ -208,7 +206,7 @@ export function Panel() {
       )}
 
       <div className="thread" ref={threadRef} data-testid="thread">
-        {items.length === 0 && <Empty temporary={temporary} shortcut={shortcut} />}
+        {items.length === 0 && <Empty temporary={temporary} shortcut={shortcut} provider={settings?.provider} />}
         {chat &&
           items.map((item) => {
             switch (item.kind) {
@@ -236,7 +234,6 @@ export function Panel() {
                     ) : (
                       <Answer text={item.text} streaming={!!item.streaming} />
                     )}
-                    {settings?.showUsage && !item.streaming && !item.error && <Usage model={item.model} usage={item.usage} cached={item.cached} />}
                   </div>
                 );
             }
@@ -252,7 +249,8 @@ export function Panel() {
           onRecheck={recheck}
           dropped={dropped.titles}
           onDismissDropped={dropped.dismiss}
-          bar={bar}
+          unreachable={unreachable.why}
+          onDismissUnreachable={unreachable.dismiss}
         />
         <div className="ask-row">
           <div className="macros" role="toolbar" aria-label="Answer macros">
@@ -344,7 +342,7 @@ function ChatTitle({ chat, temporary, onRename }: { chat: Chat | null; temporary
   );
 }
 
-function Empty({ temporary, shortcut }: { temporary: boolean; shortcut: string }) {
+function Empty({ temporary, shortcut, provider }: { temporary: boolean; shortcut: string; provider?: Settings['provider'] }) {
   const how = (
     <>
       Click {BRAND.iconName}
@@ -361,8 +359,14 @@ function Empty({ temporary, shortcut }: { temporary: boolean; shortcut: string }
       <div className="empty temporary" data-testid="empty">
         <Icon name="ghost" className="empty-ghost" />
         <p>
-          <strong>Temporary chat.</strong> It won't appear in your chats, and it's deleted when you close the panel or the
-          selection bar.
+          <strong>Temporary chat.</strong> Never saved on this computer, and deleted when you finish (✕ or Escape).
+        </p>
+        <p className="privacy" data-testid="ghost-privacy">
+          {provider === 'local'
+            ? 'Your local model answers, so nothing leaves this computer.'
+            : provider === 'mock'
+              ? 'Placeholder answers are made up here, so nothing is sent.'
+              : "Claude and ChatGPT don't train on what is sent through their APIs, and this chat asks them to keep as little as they allow."}
         </p>
         <p>{how}</p>
       </div>
@@ -372,16 +376,16 @@ function Empty({ temporary, shortcut }: { temporary: boolean; shortcut: string }
     <div className="empty" data-testid="empty">
       <p>{how}</p>
       <p>
-        The bar follows you from tab to tab, and everything you select goes into this chat. Press ✕ (here or on the bar)
-        or Escape when you are done.
+        Everything you select goes into this chat, from any tab: click {BRAND.iconName} on the next one to bring the bar
+        there. Press ✕ (here or on the bar) or Escape when you are done.
       </p>
     </div>
   );
 }
 
 /**
- * When the free plan's limit drops an old chat, say so once. Only drops that
- * happen while this panel is open count; dismissing hides it.
+ * When the chat limit drops an old chat, say so once. Only drops that happen
+ * while this panel is open count; dismissing hides it.
  */
 function useDropped(): { titles: string[] | null; dismiss: () => void } {
   const [titles, setTitles] = useState<string[] | null>(null);
@@ -416,17 +420,6 @@ function ErrorTurn({ item, last, onRetry }: { item: AssistantItem; last: boolean
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-function Usage({ model, usage, cached }: { model?: ModelRef; usage?: { inputTokens: number; outputTokens: number; costUsd?: number }; cached?: boolean }) {
-  return (
-    <div className="usage">
-      {model ? `${model.vendor}/${model.model}` : ''}
-      {cached ? ' · replayed' : ''}
-      {usage ? ` · ${usage.inputTokens}→${usage.outputTokens} tok` : ''}
-      {usage?.costUsd !== undefined ? ` · $${usage.costUsd.toFixed(4)}` : ''}
     </div>
   );
 }

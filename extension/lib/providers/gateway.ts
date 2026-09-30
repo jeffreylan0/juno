@@ -16,7 +16,13 @@ export const gatewayDriver: ProviderDriver = {
       `${ctx.settings.gatewayUrl.replace(/\/$/, '')}/ask`,
       'the hosted service',
       { authorization: `Bearer ${ctx.keys.session}` },
-      { model: `${model.vendor}/${model.model}`, messages: toChatMessages(req), route: req.plan.route },
+      {
+        model: `${model.vendor}/${model.model}`,
+        messages: toChatMessages(req),
+        route: req.plan.route,
+        // A temporary chat: the Worker keeps no log of it (see worker/src/models.ts).
+        ...(ctx.ephemeral ? { ephemeral: true } : {}),
+      },
       ctx.signal,
     );
     return { usage };

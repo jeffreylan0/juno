@@ -5,7 +5,16 @@ export interface ProviderContext {
   fetch: typeof fetch;
   keys: { anthropic: string; openai: string; session: string };
   settings: { localBaseUrl: string; localModel: string; gatewayUrl: string };
-  cache: CacheStore;
+  /**
+   * Answers recorded by request hash, so a rerun replays for free. The eval
+   * uses one; the extension does not, so no answer outlives its chat.
+   */
+  cache?: CacheStore;
+  /**
+   * A temporary chat: ask the vendor to keep as little as it allows (see
+   * byok.ts and the Worker), and record nothing.
+   */
+  ephemeral?: boolean;
   signal?: AbortSignal;
 }
 
