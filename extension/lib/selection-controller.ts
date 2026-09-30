@@ -228,15 +228,11 @@ export class SelectionController {
     // the screenshot — it is dropped: the screenshot would not be of it.
     if (current()) {
       this.armed = null;
-      // Answered once the screenshot is taken; the bar waits for that, then
-      // the selection flies off to the panel.
+      // Answered once the screenshot is taken; the bar waits for that.
       await this.send(done);
     }
     this.delivering = false;
-    if (current()) {
-      this.overlay.ready(this.modes);
-      this.overlay.flyAway(done.rect);
-    }
+    if (current()) this.overlay.ready(this.modes);
     // Whatever was asked for meanwhile, even if this selection was superseded.
     const next = this.queued;
     this.queued = [];

@@ -66,8 +66,8 @@ test('the bar stays up through a selection and waits; a chip starts the next one
   await expect(panel.getByTestId('selection')).toHaveCount(1, { timeout: 15_000 });
 
   // Never taken off the page, nor out of view: the box was nowhere near it.
-  // And the selection flew off towards the panel.
-  expect(await seen()).toEqual({ removed: 0, hidden: 0, flew: 1 });
+  // And nothing is animated for the selection itself.
+  expect(await seen()).toEqual({ removed: 0, hidden: 0, flew: 0 });
 
   // Waiting: no mode pressed, nothing over the page, the page takes clicks.
   const overlay = page.locator(OVERLAY);

@@ -68,12 +68,6 @@ const STYLE = `
   stroke-linejoin: round; stroke-linecap: round;
 }
 @media (prefers-reduced-motion: reduce) { .box.element { transition: none; } }
-/* A selection on its way to the panel (flyAway). */
-.fly {
-  position: fixed; pointer-events: none; box-sizing: border-box; border-radius: 8px;
-  border: 2px solid var(--sai-accent, #3b82f6);
-  background: color-mix(in srgb, var(--sai-accent, #3b82f6) 14%, transparent);
-}
 .tip {
   position: fixed; left: 0; top: 0; display: none; align-items: center; gap: 6px;
   font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
@@ -93,10 +87,9 @@ ${BAR_STYLE}
  * moving your eyes off the corner you are dragging. */
 const TIP_OFFSET = { x: 8, y: 10 };
 
-/** The bar's entrance and exit, and a selection flying off to the panel. */
+/** The bar's entrance and exit. */
 const ENTER_MS = 220;
 const LEAVE_MS = 160;
-const FLY_MS = 420;
 
 export interface OverlayHandlers {
   /** The user picked a different mode from the bar's chips. */
@@ -367,33 +360,6 @@ export class Overlay {
     if (!bar?.classList.contains('out-of-shot')) return;
     bar.classList.remove('out-of-shot');
     if (!reducedMotion() && typeof bar.animate === 'function') bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160 });
-  }
-
-  /**
-   * A made selection's outline flies off to the right edge, where the panel
-   * is, so the student sees where it went. Only after the screenshot, so it
-   * is never in one.
-   */
-  flyAway(rect: Rect): void {
-    if (!this.root || reducedMotion() || rect.width < 2 || rect.height < 2) return;
-    const el = document.createElement('div');
-    el.className = 'fly';
-    Object.assign(el.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px` });
-    if (typeof el.animate !== 'function') return;
-    this.root.append(el);
-    const dx = innerWidth + 16 - (rect.x + rect.width / 2);
-    const dy = innerHeight * 0.55 - (rect.y + rect.height / 2);
-    const fly = el.animate(
-      [
-        { opacity: 0.9, transform: 'translate(0, 0) scale(1)' },
-        { opacity: 0, transform: `translate(${dx}px, ${dy}px) scale(0.18)` },
-      ],
-      { duration: FLY_MS, easing: 'cubic-bezier(0.55, 0, 0.75, 0.3)', fill: 'forwards' },
-    );
-    void fly.finished.then(
-      () => el.remove(),
-      () => el.remove(),
-    );
   }
 
   private moveTip(x: number, y: number): void {
