@@ -18,6 +18,7 @@ import { useState } from 'react';
 import type { ImagePart, Part, Point } from '@shared/payload';
 import type { SelectionItem } from '@/lib/chats';
 import { KIND_ICON, KIND_LABEL } from '@/lib/kinds';
+import { ShapesIcon } from './icons';
 import { useImage } from './useChat';
 
 /** Lines of captured text shown before "Show all". */
@@ -29,7 +30,7 @@ export function SelectionCard({ item, onRemove, showPage = true }: { item: Selec
   return (
     <section className="selection" data-testid="selection" data-kind={kind}>
       <div className="selection-head">
-        <svg viewBox="0 0 24 24" aria-hidden="true" dangerouslySetInnerHTML={{ __html: KIND_ICON[kind] }} />
+        <ShapesIcon shapes={KIND_ICON[kind]} />
         <span className="selection-kind" data-testid="selection-kind">
           {KIND_LABEL[kind]}
         </span>

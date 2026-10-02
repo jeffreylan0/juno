@@ -18,7 +18,7 @@
  * extension page the page cannot reach.
  */
 import type { SelectionKind } from '@shared/payload';
-import { ICON_PATHS } from '@/lib/icons';
+import { ICON_PATHS, svgIcon } from '@/lib/icons';
 import { KIND_ICON as ICONS, KIND_LABEL, KIND_ORDER } from '@/lib/kinds';
 import { send } from '@/lib/messages';
 import { getSettings, settingsItem, type Settings } from '@/lib/storage';
@@ -187,15 +187,14 @@ export class Bar {
     this.ask.type = 'button';
     this.ask.className = 'ask';
     this.ask.title = 'Ask about this box (Enter)';
-    this.ask.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
-    this.ask.append(document.createTextNode('Ask'));
+    this.ask.append(svgIcon(ICON_PATHS.check), document.createTextNode('Ask'));
     this.ask.addEventListener('click', () => this.handlers.onConfirm());
 
     this.ghost = document.createElement('button');
     this.ghost.type = 'button';
     this.ghost.className = 'ghost';
     this.ghost.setAttribute('aria-label', 'Temporary chat');
-    this.ghost.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS.ghost}</svg>`;
+    this.ghost.append(svgIcon(ICON_PATHS.ghost));
     this.ghost.addEventListener('click', () => this.handlers.onGhost());
     this.setGhost(false);
 
@@ -205,7 +204,7 @@ export class Bar {
     this.gear.title = 'Settings';
     this.gear.setAttribute('aria-label', 'Settings');
     this.gear.setAttribute('aria-expanded', 'false');
-    this.gear.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS.gear}</svg>`;
+    this.gear.append(svgIcon(ICON_PATHS.gear));
     this.gear.addEventListener('click', () => void this.toggleSettings());
 
     row.append(close, this.buildChips(), this.say, this.ask, this.ghost, this.gear);
@@ -294,8 +293,7 @@ export class Bar {
       chip.setAttribute('aria-pressed', 'false');
       chip.disabled = !available;
       chip.title = available ? MODE_HINT[kind] : unavailableTitle(kind);
-      chip.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[kind]}</svg>`;
-      chip.append(document.createTextNode(label(kind)));
+      chip.append(svgIcon(ICONS[kind]), document.createTextNode(label(kind)));
       chip.addEventListener('click', () => kind !== this.kind && this.handlers.onModeChange(kind));
       this.chips.set(kind, chip);
       wrap.append(chip);

@@ -1,6 +1,7 @@
 import { defineConfig } from 'wxt';
 import { resolve } from 'node:path';
 import { BRAND, GECKO_ID } from './brand';
+import { hardenLibraries } from './harden-libs';
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -16,6 +17,11 @@ export default defineConfig({
   vite: () => ({
     // KaTeX ships fonts; keep them inline-free and let WXT copy them.
     build: { target: 'es2022' },
+    // React and pdf.js without their innerHTML, eval and computed-import
+    // paths (see harden-libs.ts), in the page bundles and in the worker
+    // bundle Vite builds separately.
+    plugins: [hardenLibraries()],
+    worker: { plugins: () => [hardenLibraries()] },
     server: {
       // Vite 8 restricts dev-server CORS to http(s) localhost origins, so an
       // extension page asking for a module gets no Access-Control-Allow-Origin
@@ -55,6 +61,9 @@ export default defineConfig({
       // Permissions are kept to the store checklist: activeTab, scripting, storage, sidePanel.
       permissions: ['activeTab', 'scripting', 'storage', ...(browser === 'firefox' ? [] : ['sidePanel'])],
       host_permissions: [] as string[],
+      // The default for extension pages, plus WebAssembly for the PDF
+      // reader's image decoders (pdf.js). No remote code, no eval.
+      content_security_policy: { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';" },
       // Alt/Option+Shift+S is the one family free in Chrome, Edge and Firefox
       // on both Windows and Mac (checked against each browser's published
       // shortcut list); every Ctrl/Cmd+Shift letter is taken somewhere. It is
@@ -95,8 +104,17 @@ export default defineConfig({
         browser_specific_settings: {
           gecko: {
             id: GECKO_ID,
-            strict_min_version: '128.0',
+            // 140: the first Firefox that shows data-collection consent at install.
+            strict_min_version: '140.0',
+            // Firefox asks for consent to this at install. What leaves the
+            // browser is what the student selects (text or a screenshot of
+            // part of a page) and that page's title, sent to the AI they
+            // picked; nothing else, and nothing to us. Without it the
+            // extension cannot answer, so it is required, not optional.
+            data_collection_permissions: { required: ['websiteContent', 'browsingActivity'] },
           },
+          // Firefox for Android takes the consent key from 142.
+          gecko_android: { strict_min_version: '142.0' },
         },
       };
     }

@@ -51,10 +51,17 @@ const frames = new Map<number, HTMLElement>();
 const rendered = new Set<number>();
 const rendering = new Set<number>();
 
-function status(html: string, isError = false): void {
-  els.status.innerHTML = html;
+/** Shows a status line. Built from nodes, so an error message can never be read as markup. */
+function status(content: string | (string | Node)[], isError = false): void {
+  els.status.replaceChildren(...(typeof content === 'string' ? [content] : content));
   els.status.hidden = false;
   els.status.classList.toggle('error', isError);
+}
+
+function h(tag: string, ...children: (string | Node)[]): HTMLElement {
+  const el = document.createElement(tag);
+  el.append(...children);
+  return el;
 }
 
 function clearStatus(): void {
@@ -101,20 +108,22 @@ async function main(): Promise<void> {
 
 function failed(url: string, err: Error): void {
   const fileUrl = url.startsWith('file://');
+  const detail = [h('br'), h('br'), h('small', err.message)];
   if (fileUrl) {
     status(
-      'Chrome blocks extensions from reading local files until you allow it. Open <code>chrome://extensions</code>, ' +
-        `find ${escapeHtml(BRAND.name)}, and turn on <b>Allow access to file URLs</b>, then reload this page.` +
-        `<br><br><small>${escapeHtml(err.message)}</small>`,
+      [
+        'Chrome blocks extensions from reading local files until you allow it. Open ',
+        h('code', 'chrome://extensions'),
+        `, find ${BRAND.name}, and turn on `,
+        h('b', 'Allow access to file URLs'),
+        ', then reload this page.',
+        ...detail,
+      ],
       true,
     );
     return;
   }
-  status(`Could not open this PDF.<br><br><small>${escapeHtml(err.message)}</small>`, true);
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
+  status(['Could not open this PDF.', ...detail], true);
 }
 
 /** Builds (or resizes) one placeholder per page at the current scale. */

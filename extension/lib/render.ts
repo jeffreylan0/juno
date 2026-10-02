@@ -37,8 +37,22 @@ export function renderMath(tex: string, display: boolean): string {
   }
 }
 
-/** Replaces math with placeholders, renders Markdown, then restores KaTeX HTML. */
+/** Replaces math with placeholders, renders Markdown, then restores KaTeX HTML; sanitized. */
 export function renderMarkdown(src: string): string {
+  return DOMPurify.sanitize(markdownHtml(src), SANITIZE);
+}
+
+/**
+ * The same, as DOM nodes ready to append: the panel never assigns HTML to an
+ * element (innerHTML), it inserts what DOMPurify has already parsed and cleaned.
+ */
+export function renderMarkdownFragment(src: string): DocumentFragment {
+  return DOMPurify.sanitize(markdownHtml(src), { ...SANITIZE, RETURN_DOM_FRAGMENT: true });
+}
+
+const SANITIZE = { USE_PROFILES: { html: true, mathMl: true, svg: true }, FORBID_TAGS };
+
+function markdownHtml(src: string): string {
   const math: string[] = [];
   let text = src;
   // Display math first: $$...$$ and \[...\]
@@ -52,8 +66,7 @@ export function renderMarkdown(src: string): string {
     return PLACEHOLDER(math.length - 1);
   });
   let html = marked.parse(text, { async: false }) as string;
-  html = html.replace(/\u0000MATH(\d+)\u0000/g, (_m, i: string) => math[Number(i)] ?? '');
-  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true, mathMl: true, svg: true }, FORBID_TAGS });
+  return html.replace(/\u0000MATH(\d+)\u0000/g, (_m, i: string) => math[Number(i)] ?? '');
 }
 
 export function escapeHtml(s: string): string {
