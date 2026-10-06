@@ -8,6 +8,7 @@
  */
 import { MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE, SHORT_NAMES } from '@/lib/router';
 import { answerChoiceOf, settingsItem, withAnswerChoice, type AnswerChoice, type Keys, type Settings } from '@/lib/storage';
+import { hasHosted, useAccount } from './useAccount';
 
 const SETTINGS = '__settings';
 
@@ -19,13 +20,17 @@ const VENDOR: Record<'anthropic' | 'openai', { name: string; key: keyof Keys }> 
 export function ModelPicker({ settings, keys }: { settings: Settings; keys: Keys | null }) {
   const value = answerChoiceOf(settings);
   const has = (vendor: 'anthropic' | 'openai') => !!keys?.[VENDOR[vendor].key];
+  const hosted = hasHosted(useAccount());
 
   const choose = async (next: string) => {
     if (next === SETTINGS) {
       void browser.runtime.openOptionsPage();
       return;
     }
-    await settingsItem.setValue(withAnswerChoice(settings, next as AnswerChoice));
+    const choice = next as AnswerChoice;
+    // Hosted answers use Claude, with the automatic model choice.
+    const base = choice === 'hosted' ? { ...settings, vendor: 'anthropic' as const, modelOverride: null } : settings;
+    await settingsItem.setValue(withAnswerChoice(base, choice));
   };
 
   return (
@@ -70,7 +75,7 @@ export function ModelPicker({ settings, keys }: { settings: Settings; keys: Keys
           <option value="placeholder" title="Placeholder answers, no AI">
             Placeholder
           </option>
-          {value === 'hosted' && <option value="hosted">Hosted plan</option>}
+          {(hosted || value === 'hosted') && <option value="hosted">Hosted</option>}
         </optgroup>
         <option value={SETTINGS}>Add or change API keys…</option>
       </select>
@@ -81,7 +86,7 @@ export function ModelPicker({ settings, keys }: { settings: Settings; keys: Keys
 function describe(value: AnswerChoice, settings: Settings): string {
   if (value === 'placeholder') return 'placeholder answers, no AI';
   if (value === 'local') return `local model ${settings.localModel}`;
-  if (value === 'hosted') return 'hosted plan';
+  if (value === 'hosted') return 'hosted answers (Claude, through your plan)';
   const [vendor, model] = value.split(':') as ['anthropic' | 'openai', string];
   if (model === 'auto') {
     const t = MODEL_TABLE[vendor];
@@ -94,7 +99,7 @@ function describe(value: AnswerChoice, settings: Settings): string {
 function short(value: AnswerChoice): string {
   if (value === 'placeholder') return 'Placeholder';
   if (value === 'local') return 'Local model';
-  if (value === 'hosted') return 'Hosted plan';
+  if (value === 'hosted') return 'Hosted';
   const [vendor, model] = value.split(':') as ['anthropic' | 'openai', string];
   if (model === 'auto') return `${VENDOR[vendor].name} Auto`;
   return SHORT_NAMES[model] ?? model;

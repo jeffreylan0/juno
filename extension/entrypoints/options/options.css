@@ -38,7 +38,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 72px; }
 /* Chrome gives extension pages `body { font-size: 75% }`; the size is set on :root. */
 body { margin: 0; background: var(--bg); color: var(--fg); font-size: 1rem; }
 
-/* A sticky header: the name, the four sections, and "Saved". */
+/* A sticky header: the name, the sections, and "Saved". */
 .top { position: sticky; top: 0; z-index: 2; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
 .top-inner { max-width: 680px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 h1 { font-size: 16px; margin: 0; }
@@ -60,8 +60,8 @@ h2 { font-size: 15px; margin: 0; }
 .section-lede { margin-top: -10px; }
 .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 
-/* Who answers: four cards, one choice. */
-.cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+/* Who answers: one card per choice. */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
 .card {
   position: relative; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; cursor: pointer;
   background: var(--bg); border: 1.5px solid var(--line); border-radius: 10px;
@@ -122,3 +122,7 @@ button:disabled { opacity: .5; cursor: default; }
 .tool { font: inherit; width: 30px; height: 34px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 6px; cursor: pointer; }
 .tool:hover { color: var(--fg); }
 @media (max-width: 520px) { .macro-row { grid-template-columns: 1fr auto; } .macro-row textarea { grid-column: 1 / -1; } }
+
+/* A checkbox with its label. */
+label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+label.check input { margin: 0; padding: 0; }

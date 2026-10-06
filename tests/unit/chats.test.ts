@@ -36,10 +36,8 @@ import {
   setTemporary,
   getBarTab,
   setBarTab,
-  setUnreachable,
   startChat,
   switchTo,
-  unreachableKey,
 } from '@/lib/current';
 import { settingsItem, DEFAULT_SETTINGS } from '@/lib/storage';
 import { MemoryImageStore, deletePartImages, hydratePlan, setImageStore, storePlanImages } from '@/lib/images';
@@ -262,7 +260,6 @@ describe('a chat’s life', () => {
   it('✕ finishes the chat: it stays in the menu, and the next selection starts a new one', async () => {
     const { chat } = await addSelection(W, { plan: plan('a'), tabId: 1 });
     await addSelection(99, { plan: plan('z'), tabId: 3 });
-    await setUnreachable(W, 'restricted');
     await setBarTab(W, 1);
     await setBarTab(99, 3);
     await endChat(W);
@@ -270,7 +267,6 @@ describe('a chat’s life', () => {
     expect(await getBarTab(W)).toBeUndefined(); // the bar is down
     expect(await getBarTab(99)).toBe(3); // another window's is not
     expect(await getCurrent(99)).not.toBeNull(); // another window's chat is untouched
-    expect(await fakeBrowser.storage.session.get(unreachableKey(W))).toEqual({}); // and its notice is gone
     expect((await listChats()).map((c) => c.id)).toContain(chat.id);
 
     const { chat: next } = await addSelection(W, { plan: plan('b') });

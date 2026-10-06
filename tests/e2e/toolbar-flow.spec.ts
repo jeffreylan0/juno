@@ -61,7 +61,7 @@ test('one toolbar click arms a box selection with the bar in place', async ({ co
   await expect(bar.locator('.close')).toBeVisible();
   await expect(bar.locator('.ask')).toBeHidden();
   await expect(bar.locator('.gear')).toBeVisible();
-  await expect(bar.locator('.say')).toHaveText('Drag to select an area');
+  await expect(bar.locator('.say')).toHaveText('Drag over an area');
 
   // The bar sits near the bottom of the viewport, out of the reading line.
   const box = (await bar.boundingBox())!;
@@ -218,7 +218,7 @@ test('the gear expands the bar upwards, between the controls and the notices', a
 
   // No secrets in page-reachable DOM.
   await expect(page.locator(`${BAR} input[type="password"]`)).toHaveCount(0);
-  await expect(settings).toContainText('All settings, keys and macros');
+  await expect(settings).toContainText('All settings');
 });
 
 test('the wheel is ignored once a drag has started', async ({ context, serviceWorker }) => {
@@ -259,7 +259,7 @@ test('set to adjust, a drawn box waits, then Enter asks and the panel opens', as
   await expect(page.locator(`${OVERLAY} .box.adjusting`)).toBeVisible();
   await expect(page.locator(`${OVERLAY} .handle`)).toHaveCount(8);
   await expect(page.locator(`${BAR} .ask`)).toBeVisible();
-  await expect(page.locator(`${BAR} .say`)).toHaveText('Drag the edges to adjust · Enter to ask');
+  await expect(page.locator(`${BAR} .say`)).toHaveText('Drag the edges to adjust · Enter to send');
   expect(await getPlan(panel)).toBeNull();
   expect(await sidePanelCount(serviceWorker)).toBe(0);
 
@@ -363,10 +363,14 @@ test('when Chrome refuses the panel, the page offers a click that opens it', asy
     await chrome.tabs.sendMessage(tab!.id!, { type: 'panel:needs-click' });
   }, `${FIXTURE_ORIGIN}/text.html`);
 
-  const toast = page.locator('selection-ai-toast .toast');
-  await expect(toast).toBeVisible();
-  await toast.locator('button', { hasText: 'Show it' }).click();
-  await expect(page.locator('selection-ai-toast')).toHaveCount(0);
+  // The yellow tooltip at the top of the page, with a button to open it.
+  const tip = page.locator('selection-ai-tooltip .sai-tip');
+  await expect(tip).toBeVisible();
+  await expect(tip).toContainText('Your answer is ready.');
+  const box = (await tip.boundingBox())!;
+  expect(box.y).toBeLessThan(40);
+  await tip.locator('button', { hasText: 'Show it' }).click();
+  await expect(page.locator('selection-ai-tooltip')).toHaveCount(0);
 });
 
 test('the icon brings up only the bar; the panel opens with the first selection', async ({ context, serviceWorker }) => {

@@ -303,24 +303,49 @@ test('an Escape the page uses for itself, or one typed in a field, leaves the wa
   expect(await chatCount(serviceWorker)).toBe(1);
 });
 
-test('on a blocked site the icon brings up no bar, and the panel says why', async ({ context, extensionId, serviceWorker }) => {
+test('on a blocked site the icon brings up no bar, and the tooltip under the icon says why', async ({ context, extensionId, serviceWorker }) => {
   await serviceWorker.evaluate(async () => {
     const { settings } = await chrome.storage.local.get('settings');
     await chrome.storage.local.set({ settings: { ...(settings ?? {}), version: 3, blockedSites: ['localhost'] } });
+    // Record what the icon's popup is opened with; headless Chrome cannot show it.
+    const g = globalThis as unknown as { opened: string[] };
+    g.opened = [];
+    chrome.action.openPopup = async () => {
+      g.opened.push(await chrome.action.getPopup({}));
+    };
   });
   await new Promise((r) => setTimeout(r, 200));
   const page = await context.newPage();
   const url = await open(page, 'text.html');
-  const panel = await openPanel(context, extensionId);
   await page.bringToFront();
   await clickIcon(serviceWorker, url);
-  await expect(panel.locator('[data-testid="notice"][data-kind="bar-blocked-site"]')).toContainText('blocked sites', { timeout: 10_000 });
+  await expect
+    .poll(() => serviceWorker.evaluate(() => (globalThis as unknown as { opened: string[] }).opened))
+    .toEqual([`chrome-extension://${extensionId}/notice.html?kind=blocked-site`]);
+  // And the popup goes back to nothing, so the next click is a click.
+  await expect.poll(() => serviceWorker.evaluate(() => chrome.action.getPopup({}))).toBe('');
   await expect(page.locator(OVERLAY)).toHaveCount(0);
 
   // Nor does a per-mode shortcut, which goes around the icon's own check.
   await startSelection(serviceWorker, 'box', url);
   await page.waitForTimeout(500);
   await expect(page.locator(OVERLAY)).toHaveCount(0);
+
+  // What the tooltip says, and its way to the setting.
+  const tip = await context.newPage();
+  await tip.goto(`chrome-extension://${extensionId}/notice.html?kind=blocked-site`);
+  await expect(tip.getByTestId('notice-blocked-site')).toContainText('Selection AI is off on this site.');
+  await expect(tip.locator('.sai-tip-x')).toBeVisible();
+  await expect(tip.locator('.sai-tip-actions button')).toHaveText(['Change']);
+});
+
+test('the first install asks once to pin the icon, and shows how', async ({ context, extensionId }) => {
+  const tip = await context.newPage();
+  await tip.goto(`chrome-extension://${extensionId}/notice.html?kind=pin`);
+  await expect(tip.getByTestId('pin-tip')).toContainText('Pin Selection AI');
+  await tip.getByTestId('pin-how').click();
+  await expect(tip.getByTestId('pin-tip')).toContainText('Click the puzzle piece');
+  await expect(tip.locator('.sai-tip-actions button')).toHaveCount(0);
 });
 
 test('a bar left behind by a reloaded extension goes quietly at the first click, and says how to get it back', async ({
@@ -340,5 +365,5 @@ test('a bar left behind by a reloaded extension goes quietly at the first click,
 
   await page.locator(`${BAR} .chip[data-kind="text"]`).click();
   await expect(page.locator(OVERLAY)).toHaveCount(0);
-  await expect(page.locator('selection-ai-toast .toast')).toContainText('was updated. Click its icon to start again.');
+  await expect(page.locator('selection-ai-tooltip .sai-tip')).toContainText('was updated. Click its icon to start again.');
 });

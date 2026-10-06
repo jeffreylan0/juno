@@ -9,8 +9,9 @@
  *
  * Where things live:
  *  - saved chats: storage.local, one key per chat plus a small index for the
- *    menu. On this computer only; the student picks how many are kept
- *    (Settings.chatLimit). Cloud copies are for super users, later.
+ *    menu. The student picks how many are kept (Settings.chatLimit). With
+ *    an account that has cloud storage, account/sync.ts keeps a copy of
+ *    each in the cloud as well.
  *  - temporary chats: storage.session (memory only). Never listed, and
  *    deleted when the panel closes.
  *  - screenshots: IndexedDB (images.ts), referenced from the chat; a
@@ -65,9 +66,18 @@ export interface Chat {
   titleEdited?: boolean;
   temporary?: boolean;
   createdAt: number;
+  /** When it was last used: the menu's order, and what the limit keeps. */
   updatedAt: number;
+  /**
+   * When anything in it last changed (a rename, an answer), for the cloud
+   * copy: the newer version wins. Older chats have none; updatedAt stands in.
+   */
+  editedAt?: number;
   items: ChatItem[];
 }
+
+/** The chat's version, for the cloud copy. */
+export const versionOf = (chat: Pick<Chat, 'editedAt' | 'updatedAt'>): number => chat.editedAt ?? chat.updatedAt;
 
 /** What the chat menu lists and searches, without loading every chat. */
 export interface ChatSummary {
@@ -118,7 +128,12 @@ export interface SaveOptions {
 export async function saveChat(chat: Chat, opts: SaveOptions = {}): Promise<{ chat: Chat; dropped: ChatSummary[] }> {
   const { touch = true, index = true } = opts;
   if (!chat.items.length) return { chat, dropped: [] };
-  const next: Chat = touch ? { ...chat, updatedAt: Date.now() } : chat;
+  const now = Date.now();
+  const next: Chat = {
+    ...chat,
+    ...(touch ? { updatedAt: now } : {}),
+    ...(chat.temporary ? {} : { editedAt: Math.max(now, versionOf(chat) + 1) }),
+  };
   await areaFor(next).set({ [chatKey(next.id)]: next });
   if (next.temporary || !index) return { chat: next, dropped: [] };
 
@@ -166,10 +181,23 @@ export async function updateChat(
   return await saveChat(change(chat), opts);
 }
 
+/**
+ * The student deleted these chats (not the limit, not a temporary chat
+ * ending): the cloud copy is deleted too. account/sync.ts listens.
+ */
+type DeletedListener = (ids: string[]) => void;
+const deletedListeners = new Set<DeletedListener>();
+export function onChatsDeleted(fn: DeletedListener): () => void {
+  deletedListeners.add(fn);
+  return () => deletedListeners.delete(fn);
+}
+const deleted = (ids: string[]) => ids.length && deletedListeners.forEach((fn) => fn(ids));
+
 export async function deleteChat(id: string): Promise<void> {
   const index = (await listChats()).filter((c) => c.id !== id);
   await local().set({ [INDEX_KEY]: index });
   await discardChat(id);
+  deleted([id]);
 }
 
 export async function renameChat(id: string, title: string): Promise<void> {
@@ -181,8 +209,51 @@ export async function renameChat(id: string, title: string): Promise<void> {
 
 /** Removes every saved chat and its screenshots (the settings page's "Delete all chats"). */
 export async function deleteAllChats(): Promise<void> {
-  for (const c of await listChats()) await discardChat(c.id);
+  const list = await listChats();
+  for (const c of list) await discardChat(c.id);
   await local().set({ [INDEX_KEY]: [] });
+  deleted(list.map((c) => c.id));
+}
+
+/** A saved chat, from this computer only (never a temporary one). */
+export async function getSavedChat(id: string): Promise<Chat | null> {
+  const key = chatKey(id);
+  return ((await local().get(key))[key] as Chat | undefined) ?? null;
+}
+
+/**
+ * Whether a chat last used at `updatedAt` would be kept under the limit,
+ * so the cloud does not download one only to drop it.
+ */
+export async function wouldKeep(id: string, updatedAt: number): Promise<boolean> {
+  const list = (await listChats()).filter((c) => c.id !== id);
+  const { chatLimit } = await getSettings();
+  return list.length < chatLimit || updatedAt > (list[chatLimit - 1]?.updatedAt ?? 0);
+}
+
+/**
+ * Writes a chat that came from the cloud, as it came (no new version), and
+ * keeps the limit. Returns what the limit dropped.
+ */
+export async function putSyncedChat(chat: Chat): Promise<ChatSummary[]> {
+  const clean: Chat = { ...chat, temporary: undefined };
+  delete clean.temporary;
+  const list = (await listChats()).filter((c) => c.id !== chat.id);
+  list.push(summarize(clean));
+  const dropped = await overLimit(list);
+  if (!dropped.some((d) => d.id === chat.id)) await local().set({ [chatKey(chat.id)]: clean });
+  await local().set({ [INDEX_KEY]: list });
+  for (const c of dropped) await discardChat(c.id);
+  return dropped;
+}
+
+/** Removes a chat another computer deleted (no tombstone back: it is one). */
+export async function removeSyncedChat(id: string): Promise<boolean> {
+  const list = await listChats();
+  if (!list.some((c) => c.id === id) && !(await getSavedChat(id))) return false;
+  await local().set({ [INDEX_KEY]: list.filter((c) => c.id !== id) });
+  await discardChat(id);
+  return true;
 }
 
 /** Removes a chat's data without touching the menu: a temporary chat, or one already unlisted. */

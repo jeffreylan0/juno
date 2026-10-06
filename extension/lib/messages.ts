@@ -158,7 +158,7 @@ export interface KeysTestMsg {
   key: string;
 }
 
-/** Content/toast → background: open the answer panel from a real user gesture. */
+/** Content (the tooltip's Show it) → background: open the answer panel from a real user gesture. */
 export interface PanelOpenMsg {
   type: 'panel:open';
 }
@@ -200,6 +200,21 @@ export interface PanelNeedsClickMsg {
   tabId?: number;
 }
 
+/** Notice popup → background: the student is pinning the icon; confirm when it is done. */
+export interface PinWatchMsg {
+  type: 'pin:watch';
+}
+
+/** Copy chats to and from the cloud now (a panel or the settings page opened). */
+export interface SyncNowMsg {
+  type: 'sync:now';
+}
+
+/** Delete the signed-in account and its cloud copies; chats here stay. Replies { ok } or { error }. */
+export interface AccountDeleteMsg {
+  type: 'account:delete';
+}
+
 /** Content/reader → background: open the full settings page. */
 export interface OptionsOpenMsg {
   type: 'options:open';
@@ -227,6 +242,9 @@ export type RuntimeMessage =
   | PanelCloseMsg
   | PanelNeedsClickMsg
   | OptionsOpenMsg
+  | PinWatchMsg
+  | SyncNowMsg
+  | AccountDeleteMsg
   | ReaderHelloMsg;
 
 export function isRuntimeMessage(x: unknown): x is RuntimeMessage {

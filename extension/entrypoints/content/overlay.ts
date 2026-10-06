@@ -1,9 +1,9 @@
 /**
  * Shadow-DOM overlay: the control bar, and while a selection is being made,
  * the surface it is drawn on and the cursor tooltip. The bar comes up once
- * (sliding in) and stays for as long as it is on the page — through the
+ * (opening from its middle) and stays for as long as it is on the page — through the
  * selection, the screenshot and the wait for the next one — until it is
- * dismissed (sliding out). Only the selection's own drawing is taken off the
+ * dismissed (closing into its middle). Only the selection's own drawing is taken off the
  * page for the screenshot, and the bar too if the selection runs under it.
  *
  * Three rules keep it out of the way. The drag surface is a sibling of the
@@ -14,7 +14,7 @@
  * document in capture, which never needed focus in the first place.
  */
 import type { Rect, SelectionKind } from '@shared/payload';
-import { Bar, BAR_STYLE, type NoticeAction } from './bar';
+import { Bar, BAR_STYLE } from './bar';
 import { BoxSelector, HANDLES } from './select-box';
 import { ElementPicker, type PickedElement } from './select-element';
 import { LassoSelector, type Lasso } from './select-freeform';
@@ -87,7 +87,14 @@ ${BAR_STYLE}
  * moving your eyes off the corner you are dragging. */
 const TIP_OFFSET = { x: 8, y: 10 };
 
-/** The bar's entrance and exit. */
+/**
+ * The bar's entrance and exit: it opens outwards from its middle, left and
+ * right at once, and closes back into it. A clip, not a scale, so nothing in
+ * it is squashed on the way; the clip reaches past the edges so the shadow
+ * comes with it.
+ */
+const CLOSED = 'inset(-40px 50% -40px 50% round 14px)';
+const OPEN = 'inset(-40px -40px -40px -40px round 14px)';
 const ENTER_MS = 220;
 const LEAVE_MS = 160;
 
@@ -185,7 +192,7 @@ export class Overlay {
     this.waitingKeys = () => removeEventListener('keydown', onKey);
   }
 
-  /** Takes the bar off the page: sliding out, or at once (`animate` false, or reduced motion). */
+  /** Takes the bar off the page: closing into its middle, or at once (`animate` false, or reduced motion). */
   hide(animate = true): void {
     this.abort();
     this.quietKeys();
@@ -195,8 +202,8 @@ export class Overlay {
     this.host.setAttribute('data-leaving', '');
     const leaving = this.bar!.el.animate(
       [
-        { opacity: 1, transform: 'translate(-50%, 0) scale(1)' },
-        { opacity: 0, transform: 'translate(-50%, 14px) scale(0.97)' },
+        { clipPath: OPEN, opacity: 1 },
+        { clipPath: CLOSED, opacity: 0.6 },
       ],
       { duration: LEAVE_MS, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' },
     );
@@ -218,7 +225,7 @@ export class Overlay {
     this.bar?.setGhost(on);
   }
 
-  /** Puts the bar up if it is not already, sliding in; a bar on its way out comes back. */
+  /** Puts the bar up if it is not already, opening from its middle; a bar on its way out comes back. */
   private show(modes: SelectionKind[]): void {
     if (this.leaving) {
       this.leaving.cancel();
@@ -266,8 +273,8 @@ export class Overlay {
     if (!reducedMotion() && typeof bar.el.animate === 'function') {
       bar.el.animate(
         [
-          { opacity: 0, transform: 'translate(-50%, 16px) scale(0.96)' },
-          { opacity: 1, transform: 'translate(-50%, 0) scale(1)' },
+          { clipPath: CLOSED, opacity: 0.6 },
+          { clipPath: OPEN, opacity: 1 },
         ],
         { duration: ENTER_MS, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
       );
@@ -371,11 +378,6 @@ export class Overlay {
     this.tip.style.transform = `translate(${Math.max(0, left)}px, ${Math.max(0, top)}px)`;
   }
 
-  /** Adds a notice under the bar's controls (once). Returns a function that removes it. */
-  notice(text: string, action: NoticeAction | null): () => void {
-    return this.bar?.notice(text, action) ?? (() => {});
-  }
-
   /** Cancels an armed selection, resolving its promise with null. */
   abort(): void {
     this.cancelCurrent?.();
@@ -394,7 +396,7 @@ export class Overlay {
           onDragEnd: (usable) => this.setState(usable && options.adjust ? 'adjusting' : 'armed'),
           onMove: (x, y) => this.moveTip(x, y),
           onClamped: (clamped) =>
-            this.bar?.setInstruction(clamped ? 'The selection stops at the edge of the screen' : ''),
+            this.bar?.setInstruction(clamped ? 'Selections stop at the screen edge' : ''),
           onAdjust: () => this.setState('adjusting'),
           onDone: finish,
         },
@@ -450,7 +452,7 @@ export class Overlay {
         onDragEnd: () => this.setState('armed'),
         onMove: (x, y) => this.moveTip(x, y),
         onClamped: (clamped) =>
-          this.bar?.setInstruction(clamped ? 'The selection stops at the edge of the screen' : ''),
+          this.bar?.setInstruction(clamped ? 'Selections stop at the screen edge' : ''),
         onDone: finish,
       });
       return lasso.attach();

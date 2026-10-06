@@ -126,7 +126,7 @@ test('a temporary chat is never listed and is deleted when the panel closes', as
   await ghost.click();
   await expect(ghost).toHaveAttribute('aria-pressed', 'true');
   await expect(panel.getByTestId('chat-title')).toHaveText('Temporary chat');
-  await expect(panel.getByTestId('empty')).toContainText('deleted when you finish');
+  await expect(panel.getByTestId('empty')).toContainText("deleted when you're done");
 
   await selectOn(page, serviceWorker, panel, 'text.html');
   await askAndWait(panel);
@@ -223,7 +223,7 @@ test('ten chats are kept unless the student keeps more: the oldest goes, and the
   expect(list.map((c) => c.id)).not.toContain('old-0');
   expect(await serviceWorker.evaluate(async () => 'chat:old-0' in (await chrome.storage.local.get(null)))).toBe(false);
   const notice = panel.locator('[data-testid="notice"][data-kind="dropped"]');
-  await expect(notice).toContainText('You keep 10 chats, so the oldest, “Old chat 0”, was deleted.');
+  await expect(notice).toContainText('Deleted your oldest chat, “Old chat 0”, to stay at 10.');
   await expect(notice.getByTestId('notice-settings')).toHaveText('Keep more');
   await notice.getByRole('button', { name: 'Dismiss' }).click();
   await expect(notice).toHaveCount(0);
@@ -248,7 +248,7 @@ test('notices sit above the macros: no key, and a disconnected AI with a retry',
 
   // Claude picked, but no key yet.
   const noKey = panel.locator('[data-testid="notice"][data-kind="no-key"]');
-  await expect(noKey).toContainText('No Claude API key yet');
+  await expect(noKey).toContainText('Add a Claude API key to get answers.');
   // Yellow, and above the macros.
   const bg = await noKey.evaluate((el) => getComputedStyle(el).backgroundColor);
   const [r, g, b] = bg.match(/\d+/g)!.map(Number);

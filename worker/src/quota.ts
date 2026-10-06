@@ -1,58 +1,58 @@
-/** Per-user monthly question count in a Supabase table; refuses past the plan limit. */
+/**
+ * Hosted answers a month, counted in Supabase (public.usage) with the secret
+ * key. The count and the check are one statement (public.use_answer), so two
+ * answers at once cannot both take the last one; a failed answer is given
+ * back (public.refund_answer).
+ */
 import type { Env } from './index';
 import type { Session } from './auth';
 
-export const PLAN_LIMITS: Record<string, number> = { free: 20, student: 600, unlimited: Number.POSITIVE_INFINITY };
-
-export interface QuotaState {
-  plan: string;
+export interface Use {
+  ok: boolean;
   used: number;
-  limit: number;
-  periodStart: string;
+  quota: number;
+  /** The month counted against, to refund into the same one. */
+  period: string;
 }
 
-function periodStart(now = new Date()): string {
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;
+function service(env: Env): Record<string, string> {
+  // A secret key (sb_secret_…) goes in apikey alone; a legacy service_role
+  // JWT is also a bearer token.
+  const key = env.SUPABASE_SECRET_KEY;
+  return { apikey: key, 'content-type': 'application/json', ...(key.startsWith('eyJ') ? { authorization: `Bearer ${key}` } : {}) };
 }
 
-export async function quotaFor(session: Session, env: Env): Promise<QuotaState> {
-  const row = await select(env, session.userId);
-  const plan = row?.plan ?? 'free';
-  return { plan, used: row?.used ?? 0, limit: PLAN_LIMITS[plan] ?? PLAN_LIMITS.free!, periodStart: periodStart() };
+async function rpc<T>(env: Env, fn: string, args: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: 'POST', headers: service(env), body: JSON.stringify(args) });
+  if (!res.ok) throw new Error(`${fn} failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
+  return (await res.json()) as T;
 }
 
-export async function checkAndCount(session: Session, env: Env): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const state = await quotaFor(session, env);
-  if (state.used >= state.limit) {
-    return { ok: false, reason: `You have used all ${state.limit} questions on the ${state.plan} plan this month.` };
-  }
-  await increment(env, session.userId, state.periodStart);
-  return { ok: true };
+/** Takes one answer from this month's allowance, if any is left. */
+export async function useAnswer(session: Session, env: Env): Promise<Use> {
+  return await rpc<Use>(env, 'use_answer', { p_user: session.userId });
 }
 
-interface UsageRow {
-  plan: string;
+export async function refundAnswer(session: Session, period: string, env: Env): Promise<void> {
+  await rpc(env, 'refund_answer', { p_user: session.userId, p_period: period }).catch(() => {});
+}
+
+export interface Me {
+  plan: string | null;
+  cloud: boolean;
+  quota: number;
   used: number;
 }
 
-async function select(env: Env, userId: string): Promise<UsageRow | null> {
-  const res = await fetch(
-    `${env.SUPABASE_URL}/rest/v1/usage?user_id=eq.${userId}&period_start=eq.${periodStart()}&select=plan,used`,
-    { headers: headers(env) },
-  );
-  if (!res.ok) return null;
-  const rows = (await res.json()) as UsageRow[];
-  return rows[0] ?? null;
-}
-
-async function increment(env: Env, userId: string, period: string): Promise<void> {
-  await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/increment_usage`, {
-    method: 'POST',
-    headers: { ...headers(env), 'content-type': 'application/json' },
-    body: JSON.stringify({ p_user_id: userId, p_period_start: period }),
-  });
-}
-
-function headers(env: Env): Record<string, string> {
-  return { apikey: env.SUPABASE_SERVICE_KEY, authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` };
+/** The plan and this month's count, for the extension's status check. */
+export async function me(session: Session, env: Env): Promise<Me> {
+  const period = new Date().toISOString().slice(0, 7) + '-01';
+  const [ent, usage] = await Promise.all([
+    fetch(`${env.SUPABASE_URL}/rest/v1/entitlements?user_id=eq.${session.userId}&select=cloud,plan,monthly_questions`, { headers: service(env) }),
+    fetch(`${env.SUPABASE_URL}/rest/v1/usage?user_id=eq.${session.userId}&period=eq.${period}&select=used`, { headers: service(env) }),
+  ]);
+  const row = ent.ok ? ((await ent.json()) as { cloud: boolean; plan: string | null; monthly_questions: number | null }[])[0] : undefined;
+  const used = usage.ok ? (((await usage.json()) as { used: number }[])[0]?.used ?? 0) : 0;
+  const quota = row?.monthly_questions ?? (row?.plan === 'student' ? 600 : row?.plan === 'unlimited' ? 100_000 : 0);
+  return { plan: row?.plan ?? null, cloud: !!row?.cloud, quota, used };
 }

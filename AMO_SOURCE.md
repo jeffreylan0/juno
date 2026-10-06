@@ -29,11 +29,11 @@ The add-on is written to `extension/.output/extension-0.1.0-firefox.zip` (the un
 Notes:
 
 - pnpm prints "Ignored build scripts: esbuild, workerd". That is expected; the build does not need those install scripts.
-- Build with no `.env` / `.env.local` file and no `E2E` or `WXT_*` environment variables set. (`E2E=1` produces a test-only build with extra host permissions; it is never submitted.)
+- Build with no `E2E` or `WXT_*` environment variables set. If the archive contains `extension/.env.local`, leave it in place: it holds the two public account-service settings (`WXT_SUPABASE_URL`, `WXT_SUPABASE_KEY`) the submitted build was made with. (`E2E=1` produces a test-only build with extra host permissions; it is never submitted.)
 
 ## Where the code is
 
 - `extension/entrypoints/` — background script, content script, side panel/sidebar, options page, PDF reader.
 - `extension/lib/`, `extension/ui/`, `extension/extract/` — the extension's own modules.
 - `shared/` — the request schema and prompts shared with the (not shipped) server and eval code.
-- `worker/`, `eval/`, `tests/` — a server, an evaluation harness and tests; none of it is part of the add-on.
+- `worker/`, `supabase/`, `eval/`, `tests/` — the hosted-answer server, the account database schema, an evaluation harness and tests; none of it is part of the add-on.

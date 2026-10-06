@@ -13,7 +13,7 @@
 import type { Rect, SelectionKind } from '@shared/payload';
 import { BRAND } from '@/brand';
 import { Overlay, type OverlayHost } from '@/entrypoints/content/overlay';
-import { showToast } from '@/entrypoints/content/toast';
+import { dismissPageTooltip, showPageTooltip } from './tooltip';
 import { availableModes, detectPdf, readerUrlFor, type PdfContext } from './pdf-detect';
 import { extensionAlive, send, type BarControlMsg, type RuntimeMessage, type SelectionDoneMsg } from './messages';
 import { getSettings, lastKindItem } from './storage';
@@ -105,7 +105,18 @@ export class SelectionController {
    * lapsed. A click here is a fresh gesture in a page context, which it accepts.
    */
   promptForPanel(): void {
-    showToast('Your answer is ready.', { label: 'Show it', onClick: () => void this.send({ type: 'panel:open' }) });
+    showPageTooltip({
+      text: 'Your answer is ready.',
+      actions: [
+        {
+          label: 'Show it',
+          onClick: () => {
+            void this.send({ type: 'panel:open' });
+            dismissPageTooltip();
+          },
+        },
+      ],
+    });
   }
 
   /**
@@ -160,7 +171,7 @@ export class SelectionController {
       // A newer copy already put its own bar up (and took ours down): nothing to say.
       const replaced = this.overlay.replaced;
       this.destroy();
-      if (!replaced) showToast(`${BRAND.name} was updated. Click its icon to start again.`, null, 6000);
+      if (!replaced) showPageTooltip({ text: `${BRAND.name} was updated. Click its icon to start again.` });
     }
     return true;
   }
@@ -305,19 +316,28 @@ export class SelectionController {
     }
   }
 
-  /** On a browser PDF viewer, only a screenshot is possible — offer the reader. */
+  /**
+   * On a browser PDF viewer, only a screenshot is possible, and the page cannot
+   * scroll while selecting: said once per page, with the reader on offer.
+   */
+  private offeredReader = false;
   private offerReader(): void {
-    this.overlay.notice(
-      "This is the browser's PDF viewer: only a screenshot can be read, and the page cannot scroll while selecting.",
-      {
-        label: 'Open in reader',
-        onClick: () =>
-          this.act(() => {
-            this.overlay.abort();
-            location.href = readerUrlFor(this.pdf.url, (p) => browser.runtime.getURL(p as `/${string}`));
-          }),
-      },
-    );
+    if (this.offeredReader) return;
+    this.offeredReader = true;
+    showPageTooltip({
+      text: "In this PDF view, only Box and Freeform work and the page can't scroll.",
+      testid: 'pdf-tip',
+      actions: [
+        {
+          label: 'Open in reader',
+          onClick: () =>
+            this.act(() => {
+              this.overlay.abort();
+              location.href = readerUrlFor(this.pdf.url, (p) => browser.runtime.getURL(p as `/${string}`));
+            }),
+        },
+      ],
+    });
   }
 }
 

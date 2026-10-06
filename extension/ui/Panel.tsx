@@ -25,6 +25,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BRAND } from '@/brand';
+import { ACCOUNTS } from '@/lib/account/config';
 import { autoTitle, hasUsableSelection, isRemovable, pendingSelections, type AssistantItem, type Chat } from '@/lib/chats';
 import { isTransient, needsSettings } from '@/lib/providers/errors';
 import { getKeys, getSettings, keysItem, settingsItem, type Keys, type Macro, type Settings } from '@/lib/storage';
@@ -34,25 +35,27 @@ import { Icon } from './icons';
 import { ModelPicker } from './ModelPicker';
 import { Notices } from './Notices';
 import { SelectionCard } from './Selection';
-import { useAiStatus, useChat, useChatList, usePanelSession, useUnreachable } from './useChat';
-import { useShortcut } from './useShortcut';
+import { useAccount } from './useAccount';
+import { useAiStatus, useChat, useChatList, usePanelSession } from './useChat';
+import { formatShortcut, useShortcut } from './useShortcut';
 
 /** How long a macro's prompt shows in the box before it is sent. */
 const MACRO_FILL_MS = 140;
 
 const send = (msg: Record<string, unknown>) => browser.runtime.sendMessage(msg).catch(() => undefined);
+const SYNC_EVERY_MS = 5 * 60_000;
 
 export function Panel() {
   const { windowId, current } = usePanelSession();
   const chat = useChat(current?.chatId ?? null);
   const chats = useChatList();
-  const unreachable = useUnreachable(windowId);
   const { status, recheck, checking } = useAiStatus();
   const dropped = useDropped();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [keys, setKeys] = useState<Keys | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const shortcut = useShortcut();
+  const account = useAccount();
   /** Unsent drafts per chat, so switching chats does not lose what you typed. */
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   /** Selections already greeted with the default prompt and the cursor. */
@@ -80,6 +83,24 @@ export function Panel() {
       unwatchKeys();
     };
   }, []);
+
+  // Chats from the student's other computers (cloud storage): caught up when
+  // the panel opens, comes back into view, opens the chat menu, and every few
+  // minutes while it stays open. The background does nothing if not signed in.
+  useEffect(() => {
+    if (!ACCOUNTS) return;
+    const catchUp = () => document.visibilityState === 'visible' && void send({ type: 'sync:now' });
+    catchUp();
+    const timer = setInterval(catchUp, SYNC_EVERY_MS);
+    document.addEventListener('visibilitychange', catchUp);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', catchUp);
+    };
+  }, []);
+  useEffect(() => {
+    if (ACCOUNTS && menuOpen) void send({ type: 'sync:now' });
+  }, [menuOpen]);
 
   // The bar's X closes everything. Chrome 141+ closes us with
   // sidePanel.close(); older browsers need the document to close itself.
@@ -155,16 +176,16 @@ export function Panel() {
   };
 
   const placeholder = !askable
-    ? 'Select something on the page first'
+    ? 'Select something first'
     : pending.length === 0
       ? 'Ask a follow-up…'
       : asked
         ? pending.length > 1
-          ? 'Ask about the new selections…'
-          : 'Ask about the new selection…'
+          ? 'Ask about the new ones…'
+          : 'Ask about the new one…'
         : pending.length > 1
-          ? 'Ask about these selections…'
-          : 'Ask about this selection…';
+          ? 'Ask about these…'
+          : 'Ask about this…';
   const canSend = askable && !!draft.trim();
 
   return (
@@ -179,7 +200,7 @@ export function Panel() {
           className={`icon ghost${temporary ? ' on' : ''}`}
           aria-label="Temporary chat"
           aria-pressed={temporary}
-          title={temporary ? 'Leave temporary chat (it will be deleted)' : 'Temporary chat: never saved, deleted when you finish'}
+          title={temporary ? 'Leave temporary chat (deletes it)' : 'Temporary chat (not saved)'}
           data-testid="temporary"
           onClick={toggleTemporary}
         >
@@ -194,6 +215,7 @@ export function Panel() {
         <ChatMenu
           chats={chats}
           limit={settings?.chatLimit ?? 10}
+          cloud={!!settings?.cloudSync && !!account.user && !!account.entitlement?.cloud}
           currentId={chatId}
           onClose={() => setMenuOpen(false)}
           onOpen={(id) => {
@@ -249,8 +271,6 @@ export function Panel() {
           onRecheck={recheck}
           dropped={dropped.titles}
           onDismissDropped={dropped.dismiss}
-          unreachable={unreachable.why}
-          onDismissUnreachable={unreachable.dismiss}
         />
         <div className="ask-row">
           <div className="macros" role="toolbar" aria-label="Answer macros">
@@ -287,7 +307,7 @@ export function Panel() {
             disabled={!askable}
           />
           <div className="composer-row">
-            <span className="composer-hint">Shift+Enter for a new line</span>
+            <span className="composer-hint">Shift + Enter for a new line</span>
             {busy ? (
               <button type="button" className="send stop" onClick={stop}>
                 Stop
@@ -342,16 +362,13 @@ function ChatTitle({ chat, temporary, onRename }: { chat: Chat | null; temporary
   );
 }
 
+/** What an empty chat says. Default text, so it is set in italics. */
 function Empty({ temporary, shortcut, provider }: { temporary: boolean; shortcut: string; provider?: Settings['provider'] }) {
+  const keys = formatShortcut(shortcut);
   const how = (
     <>
       Click {BRAND.iconName}
-      {shortcut ? (
-        <>
-          {' '}or press <kbd>{shortcut}</kbd>
-        </>
-      ) : null}
-      , then select what you want to ask about.
+      {keys ? <> or use {keys}</> : null} to select what you want to ask about.
     </>
   );
   if (temporary) {
@@ -359,14 +376,14 @@ function Empty({ temporary, shortcut, provider }: { temporary: boolean; shortcut
       <div className="empty temporary" data-testid="empty">
         <Icon name="ghost" className="empty-ghost" />
         <p>
-          <strong>Temporary chat.</strong> Never saved on this computer, and deleted when you finish (✕ or Escape).
+          <strong>Temporary chat.</strong> Not saved, and deleted when you're done.
         </p>
         <p className="privacy" data-testid="ghost-privacy">
           {provider === 'local'
-            ? 'Your local model answers, so nothing leaves this computer.'
+            ? 'Your local model answers, so nothing leaves your computer.'
             : provider === 'mock'
               ? 'Placeholder answers are made up here, so nothing is sent.'
-              : "Claude and ChatGPT don't train on what is sent through their APIs, and this chat asks them to keep as little as they allow."}
+              : "Claude and ChatGPT don't train on API data, and this chat asks them to keep as little as they can."}
         </p>
         <p>{how}</p>
       </div>
@@ -375,10 +392,7 @@ function Empty({ temporary, shortcut, provider }: { temporary: boolean; shortcut
   return (
     <div className="empty" data-testid="empty">
       <p>{how}</p>
-      <p>
-        Everything you select goes into this chat, from any tab: click {BRAND.iconName} on the next one to bring the bar
-        there. Press ✕ (here or on the bar) or Escape when you are done.
-      </p>
+      <p>Selections from any tab go into this chat. Press ✕ or Escape when you're done.</p>
     </div>
   );
 }

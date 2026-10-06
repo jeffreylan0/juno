@@ -2,15 +2,13 @@
  * Notices, just above the macros: anything that would make the next answer
  * fail or be fake, said before the student asks rather than after. Placeholder
  * answers, no key, a rejected key, and the chosen AI being unreachable
- * ("Disconnected"); also the chat limit dropping an old chat, and why the
- * icon brought no bar on a page.
+ * ("Disconnected"); also the chat limit dropping an old chat. Warnings
+ * about the page itself go on the page, as a tooltip (lib/tooltip.ts).
  *
  * Placeholder and no-key are known here at once. The rest come from the
  * background's check (lib/status.ts), shown only when it was made for the
  * choice currently picked.
  */
-import type { Unreachable } from '@/lib/current';
-import { BRAND } from '@/brand';
 import type { AiStatus } from '@/lib/status';
 import { answerChoiceOf, type Keys, type Settings } from '@/lib/storage';
 import { Icon, type IconName } from './icons';
@@ -33,6 +31,8 @@ interface Notice {
 
 const WHO = { anthropic: 'Claude', openai: 'ChatGPT' } as const;
 const openSettings = () => void browser.runtime.openOptionsPage();
+/** Settings, at the Account section. */
+const openAccount = () => void browser.tabs.create({ url: browser.runtime.getURL('/options.html#account') });
 
 export function Notices({
   settings,
@@ -42,8 +42,6 @@ export function Notices({
   onRecheck,
   dropped,
   onDismissDropped,
-  unreachable,
-  onDismissUnreachable,
 }: {
   settings: Settings | null;
   keys: Keys | null;
@@ -52,11 +50,8 @@ export function Notices({
   onRecheck: () => void;
   dropped: string[] | null;
   onDismissDropped: () => void;
-  unreachable: Unreachable | null;
-  onDismissUnreachable: () => void;
 }) {
   const notices: Notice[] = [];
-  if (unreachable) notices.push({ ...unreachableNotice(unreachable), onDismiss: onDismissUnreachable });
   const connection = settings && connectionNotice(settings, keys, status, checking, onRecheck);
   if (connection) notices.push(connection);
   if (dropped?.length && settings) {
@@ -66,8 +61,8 @@ export function Notices({
       icon: 'info',
       text:
         dropped.length === 1
-          ? `You keep ${limit} chats, so the oldest, “${dropped[0]}”, was deleted.`
-          : `You keep ${limit} chats, so the ${dropped.length} oldest were deleted.`,
+          ? `Deleted your oldest chat, “${dropped[0]}”, to stay at ${limit}.`
+          : `Deleted your ${dropped.length} oldest chats to stay at ${limit}.`,
       actions: [{ label: 'Keep more', onClick: openSettings, testid: 'notice-settings' }],
       onDismiss: onDismissDropped,
     });
@@ -104,34 +99,6 @@ export function Notices({
   );
 }
 
-/** Why the icon brought no bar on the page it was clicked on. */
-function unreachableNotice(why: Unreachable): Notice {
-  switch (why) {
-    case 'restricted':
-      return { kind: 'bar-restricted', icon: 'info', text: "The browser doesn't let extensions onto this page, so the selection bar can't open here.", actions: [] };
-    case 'blocked-site':
-      return {
-        kind: 'bar-blocked-site',
-        icon: 'info',
-        text: `${BRAND.name} is off on this site: it is on your blocked sites.`,
-        actions: [{ label: 'Settings', onClick: openSettings, testid: 'notice-settings' }],
-      };
-    case 'file-access':
-      return {
-        kind: 'bar-file-access',
-        icon: 'info',
-        text: `To select in files on this computer, turn on “Allow access to file URLs” for ${BRAND.name}, then click ${BRAND.iconName} again.`,
-        actions: [
-          {
-            label: 'Open extension settings',
-            // Extension pages may open the browser's own extension page for us.
-            onClick: () => void browser.tabs.create({ url: `chrome://extensions/?id=${browser.runtime.id}` }),
-          },
-        ],
-      };
-  }
-}
-
 function connectionNotice(
   settings: Settings,
   keys: Keys | null,
@@ -143,15 +110,15 @@ function connectionNotice(
     return {
       kind: 'placeholder',
       icon: 'info',
-      text: 'Placeholder answers — no AI is connected.',
-      actions: [{ label: 'Connect Claude or ChatGPT', onClick: openSettings, testid: 'notice-settings' }],
+      text: 'Placeholder answers. No AI is connected.',
+      actions: [{ label: 'Connect an AI', onClick: openSettings, testid: 'notice-settings' }],
     };
   }
   if (settings.provider === 'byok' && keys && !keys[settings.vendor].trim()) {
     return {
       kind: 'no-key',
       icon: 'warning',
-      text: `No ${WHO[settings.vendor]} API key yet, so nothing can be asked.`,
+      text: `Add a ${WHO[settings.vendor]} API key to get answers.`,
       actions: [{ label: 'Add a key', onClick: openSettings, testid: 'notice-settings' }],
     };
   }
@@ -159,11 +126,18 @@ function connectionNotice(
 
   const retry: Action = { label: 'Retry', onClick: onRecheck, testid: 'notice-retry', busy: checking };
   const fix: Action = { label: 'Settings', onClick: openSettings, testid: 'notice-settings' };
+  // Hosted answers have no key: what is missing is a sign-in.
+  const hosted = settings.provider === 'gateway';
   switch (status.state) {
     case 'no-key':
-      return { kind: 'no-key', icon: 'warning', text: status.message ?? 'No API key yet.', actions: [{ ...fix, label: 'Add a key' }] };
+      return { kind: 'no-key', icon: 'warning', text: status.message ?? 'No API key yet.', actions: [hosted ? { ...fix, label: 'Sign in', onClick: openAccount } : { ...fix, label: 'Add a key' }] };
     case 'bad-key':
-      return { kind: 'bad-key', icon: 'warning', text: status.message ?? 'The API key was rejected.', actions: [{ ...fix, label: 'Fix the key' }] };
+      return {
+        kind: 'bad-key',
+        icon: 'warning',
+        text: status.message ?? 'That API key was rejected.',
+        actions: [hosted ? { ...fix, label: 'Sign in', onClick: openAccount } : { ...fix, label: 'Fix it' }],
+      };
     case 'disconnected':
       return {
         kind: 'disconnected',
@@ -175,6 +149,6 @@ function connectionNotice(
     case 'unavailable':
       return { kind: 'unavailable', icon: 'warning', text: status.message ?? 'Not available yet.', actions: [fix] };
     case 'error':
-      return { kind: 'error', icon: 'warning', text: status.message ?? 'Something is wrong with the connection.', actions: [retry, fix] };
+      return { kind: 'error', icon: 'warning', text: status.message ?? 'Something went wrong with the connection.', actions: [retry, fix] };
   }
 }

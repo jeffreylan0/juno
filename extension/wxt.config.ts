@@ -1,7 +1,34 @@
 import { defineConfig } from 'wxt';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { BRAND, GECKO_ID } from './brand';
+import { BRAND, CHROME_KEY, GECKO_ID } from './brand';
 import { hardenLibraries } from './harden-libs';
+
+// WXT_* settings from extension/.env and .env.local, which Vite reads for the
+// bundle but not for this file; the shell's own environment wins.
+for (const file of ['.env', '.env.local']) {
+  const path = resolve(__dirname, file);
+  if (!existsSync(path)) continue;
+  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+    const m = /^\s*(WXT_[A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
+    if (m && process.env[m[1]!] === undefined) process.env[m[1]!] = m[2]!.replace(/^(['"])(.*)\1$/, '$2');
+  }
+}
+
+// The E2E build signs in against a fake Supabase that the tests play with
+// Playwright routes (tests/e2e/fake-supabase.ts); nothing reaches a real one.
+if (process.env.E2E === '1') {
+  process.env.WXT_SUPABASE_URL ??= 'https://e2e-project.supabase.co';
+  process.env.WXT_SUPABASE_KEY ??= 'sb_publishable_e2e';
+  process.env.WXT_GATEWAY_URL ??= 'https://hosted.e2e.test';
+}
+
+/**
+ * Accounts are built in only when a Supabase project is named (see
+ * lib/account/config.ts). Without one, the build asks for no identity
+ * permission and talks to nobody but the AI the student picks.
+ */
+const ACCOUNTS = !!(process.env.WXT_SUPABASE_URL && process.env.WXT_SUPABASE_KEY);
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -58,8 +85,15 @@ export default defineConfig({
       name: BRAND.name,
       short_name: BRAND.shortName,
       description: BRAND.description,
-      // Permissions are kept to the store checklist: activeTab, scripting, storage, sidePanel.
-      permissions: ['activeTab', 'scripting', 'storage', ...(browser === 'firefox' ? [] : ['sidePanel'])],
+      // Permissions are kept to the store checklist: activeTab, scripting,
+      // storage, sidePanel, and identity (Google sign-in) with accounts.
+      permissions: [
+        'activeTab',
+        'scripting',
+        'storage',
+        ...(browser === 'firefox' ? [] : ['sidePanel']),
+        ...(ACCOUNTS && browser !== 'safari' ? ['identity'] : []),
+      ],
       host_permissions: [] as string[],
       // The default for extension pages, plus WebAssembly for the PDF
       // reader's image decoders (pdf.js). No remote code, no eval.
@@ -95,6 +129,9 @@ export default defineConfig({
     if (browser === 'firefox') {
       return {
         ...base,
+        // On the toolbar from the start: Firefox, unlike Chrome, lets an
+        // extension ask for that, so it needs no pin prompt.
+        action: { ...base.action, default_area: 'navbar' as const },
         // Firefox reuses the sidepanel page as its sidebar.
         sidebar_action: {
           default_panel: 'sidepanel.html',
@@ -109,9 +146,12 @@ export default defineConfig({
             // Firefox asks for consent to this at install. What leaves the
             // browser is what the student selects (text or a screenshot of
             // part of a page) and that page's title, sent to the AI they
-            // picked; nothing else, and nothing to us. Without it the
-            // extension cannot answer, so it is required, not optional.
-            data_collection_permissions: { required: ['websiteContent', 'browsingActivity'] },
+            // picked (through our server for hosted answers, which keeps no
+            // copy). Without it the extension cannot answer, so it is
+            // required. Signing in (optional) sends an email address to our
+            // account service, asked for at that moment; chats go to the
+            // cloud only for accounts with cloud storage that turn it on.
+            data_collection_permissions: { required: ['websiteContent', 'browsingActivity'], optional: ['personallyIdentifyingInfo'] },
           },
           // Firefox for Android takes the consent key from 142.
           gecko_android: { strict_min_version: '142.0' },
@@ -125,6 +165,8 @@ export default defineConfig({
     }
 
     void manifestVersion;
+    // A fixed id for Google sign-in (see CHROME_KEY), except in store builds.
+    if (ACCOUNTS && process.env.STORE !== '1') return { ...base, key: CHROME_KEY };
     return base;
   },
 });

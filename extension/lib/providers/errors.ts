@@ -118,7 +118,7 @@ export async function vendorFetch(
     if ((err as Error)?.name === 'AbortError') throw err;
     const host = safeHost(url);
     throw new ProviderError(
-      `Could not reach ${vendor}. Check your internet connection; a firewall or blocker may also be stopping ${host}.`,
+      `Could not reach ${vendor}. Check your connection (or a blocker stopping ${host}).`,
       'network',
     );
   }

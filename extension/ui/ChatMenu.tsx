@@ -17,6 +17,7 @@ import { Icon } from './icons';
 export function ChatMenu({
   chats,
   limit,
+  cloud = false,
   currentId,
   onClose,
   onOpen,
@@ -26,6 +27,8 @@ export function ChatMenu({
   chats: ChatSummary[];
   /** How many chats are kept (Settings.chatLimit). */
   limit: number;
+  /** Chats are copied to the signed-in account too. */
+  cloud?: boolean;
   currentId: string | null;
   onClose: () => void;
   onOpen: (id: string) => void;
@@ -94,16 +97,15 @@ export function ChatMenu({
           ))}
           {!groups.length && (
             <p className="chat-list-empty" data-testid="chat-list-empty">
-              {query.trim() ? `No chats match “${query.trim()}”.` : 'No chats yet. Select something on a page and ask about it; the chat is kept here.'}
+              {query.trim() ? `No chats match “${query.trim()}”.` : 'No chats yet. Your chats show up here.'}
             </p>
           )}
         </nav>
         <footer className="drawer-foot" data-testid="chat-limit">
-          Saved on this computer only: your {limit} most recent chats. Change how many in{' '}
+          Your {limit} most recent chats, saved on this computer{cloud ? ' and in your account' : ''}.{' '}
           <button type="button" className="link" onClick={() => void browser.runtime.openOptionsPage()}>
-            settings
+            Change
           </button>
-          .
         </footer>
       </aside>
     </>

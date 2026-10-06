@@ -10,6 +10,8 @@
  *     the bar's gear offers too).
  *  4. Chats & privacy — how many chats are kept and how to delete them,
  *     blocked sites, and what is ever sent and kept.
+ *  5. Account (builds with accounts only) — sign in, cloud storage, hosted
+ *     answers (Account.tsx).
  *
  * Every change saves as it is made — there is no Save button to forget — and
  * a small "Saved" confirms it. Writes read the latest stored settings first,
@@ -21,6 +23,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { DEFAULT_MACROS, DEFAULT_PROMPT } from '@shared/prompts';
 import { BRAND } from '@/brand';
+import { ACCOUNTS } from '@/lib/account/config';
 import { listChats } from '@/lib/chats';
 import { MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
 import type { KeyModel, KeyTestResult } from '@/lib/providers/byok';
@@ -37,16 +40,19 @@ import {
   type Settings,
 } from '@/lib/storage';
 import type { AiStatus } from '@/lib/status';
-import { openShortcutSettings, useShortcut } from '@/ui/useShortcut';
+import { hasHosted, useAccount, type AccountState } from '@/ui/useAccount';
+import { formatShortcut, openShortcutSettings, useShortcut } from '@/ui/useShortcut';
+import { AccountSection } from './Account';
 
 type Vendor = 'anthropic' | 'openai';
-type Choice = 'claude' | 'chatgpt' | 'local' | 'placeholder';
+type Choice = 'claude' | 'chatgpt' | 'hosted' | 'local' | 'placeholder';
 
 const CHOICES: { id: Choice; name: string; sub: string }[] = [
   { id: 'claude', name: 'Claude', sub: 'Anthropic · your key' },
   { id: 'chatgpt', name: 'ChatGPT', sub: 'OpenAI · your key' },
+  { id: 'hosted', name: 'Hosted', sub: 'Your plan · no key' },
   { id: 'local', name: 'Local model', sub: 'On this computer' },
-  { id: 'placeholder', name: 'Placeholder', sub: 'No AI · free' },
+  { id: 'placeholder', name: 'Placeholder', sub: 'No AI · for trying it out' },
 ];
 
 const VENDOR_OF: Partial<Record<Choice, Vendor>> = { claude: 'anthropic', chatgpt: 'openai' };
@@ -58,9 +64,9 @@ const KEY_PAGE: Record<Vendor, string> = {
 };
 
 const SEND: { id: SendBehavior; label: string; help: string }[] = [
-  { id: 'prefill', label: 'Wait for me', help: 'The default prompt goes in the box; nothing is asked (or spent) until you press Enter or a macro.' },
-  { id: 'auto', label: 'Ask straight away', help: 'Asks the default prompt, or the first macro when that is empty. Every selection is a paid question.' },
-  { id: 'auto-box', label: 'Ask straight away for screenshots only', help: 'Box, Freeform and Element are asked about at once; Text waits for you.' },
+  { id: 'prefill', label: 'Wait for me', help: 'Nothing is asked until you press Enter or a macro.' },
+  { id: 'auto', label: 'Ask right away', help: 'Asks the default prompt, or the first macro. Each selection costs a question.' },
+  { id: 'auto-box', label: 'Ask right away, screenshots only', help: 'Text selections still wait for you.' },
 ];
 
 const SECTIONS = [
@@ -68,7 +74,8 @@ const SECTIONS = [
   { id: 'asking', title: 'Asking' },
   { id: 'selecting', title: 'Selecting' },
   { id: 'privacy', title: 'Chats & privacy' },
-] as const;
+  ...(ACCOUNTS ? [{ id: 'account', title: 'Account' }] : []),
+];
 
 type Check = { state: 'idle' } | { state: 'checking' } | KeyTestResult;
 
@@ -76,7 +83,7 @@ function choiceOf(s: Settings): Choice | null {
   if (s.provider === 'mock') return 'placeholder';
   if (s.provider === 'local') return 'local';
   if (s.provider === 'byok') return s.vendor === 'openai' ? 'chatgpt' : 'claude';
-  return null; // the hosted plan, which is not offered yet
+  return 'hosted';
 }
 
 /**
@@ -121,7 +128,8 @@ export function Options() {
   const [keys, setKeys] = useState<Keys>({ anthropic: '', openai: '', session: '' });
   const [models, setModels] = useState<Partial<Record<Vendor, KeyModel[]>>>({});
   const [saved, setSaved] = useState(0);
-  const shortcut = useShortcut();
+  const shortcut = formatShortcut(useShortcut());
+  const account = useAccount();
 
   useEffect(() => {
     void Promise.all([getSettings(), getKeys(), browser.storage.local.get('models')]).then(([s, k, m]) => {
@@ -203,17 +211,25 @@ export function Options() {
           Click {BRAND.iconName}
           {shortcut ? (
             <>
-              {' '}or press <kbd>{shortcut}</kbd>
+              {' '}or use <kbd>{shortcut}</kbd>
             </>
           ) : null}{' '}
-          to bring up the selection bar. The answer panel opens with your first selection and stays open from tab to tab;
-          everything you select goes into one chat until you close it (✕ or Escape). Changes here save as you make them.
+          to select what you want to ask about. Changes here save on their own.
         </p>
 
-        <AnswersSection settings={settings} keys={keys} models={models} save={save} saveKey={saveKey} rememberModels={rememberModels} />
+        <AnswersSection
+          settings={settings}
+          keys={keys}
+          models={models}
+          account={account}
+          save={save}
+          saveKey={saveKey}
+          rememberModels={rememberModels}
+        />
         <AskingSection settings={settings} save={save} />
         <SelectingSection settings={settings} save={save} shortcut={shortcut} />
-        <PrivacySection settings={settings} save={save} />
+        <PrivacySection settings={settings} save={save} account={account} />
+        <AccountSection account={account} settings={settings} save={save} />
       </main>
     </div>
   );
@@ -265,6 +281,7 @@ function AnswersSection({
   settings,
   keys,
   models,
+  account,
   save,
   saveKey,
   rememberModels,
@@ -272,6 +289,7 @@ function AnswersSection({
   settings: Settings;
   keys: Keys;
   models: Partial<Record<Vendor, KeyModel[]>>;
+  account: AccountState;
   save: (patch: Partial<Settings>) => Promise<void>;
   saveKey: (vendor: Vendor, key: string) => Promise<void>;
   rememberModels: (vendor: Vendor, list: KeyModel[]) => Promise<void>;
@@ -285,13 +303,20 @@ function AnswersSection({
       // Coming back to a vendor keeps the model picked for it before.
       const keep = settings.modelOverride?.vendor === v ? settings.modelOverride : null;
       void save({ provider: 'byok', vendor: v, modelOverride: keep });
+    } else if (next === 'hosted') {
+      // Hosted answers use Claude, with the automatic model choice.
+      void save({ provider: 'gateway', vendor: 'anthropic', modelOverride: null });
     } else void save({ provider: next === 'local' ? 'local' : 'mock' });
   };
+  // Offered once the account's plan includes hosted answers (or already picked).
+  const hosted = hasHosted(account);
+  const offered = CHOICES.filter((c) => c.id !== 'hosted' || hosted || choice === 'hosted');
+  const ent = account.entitlement;
 
   return (
-    <Section id="answers" title="Answers" lede="Who answers your questions. Only what your choice needs is shown below it.">
+    <Section id="answers" title="Answers" lede="Who answers your questions.">
       <div className="cards" role="radiogroup" aria-label="Who answers">
-        {CHOICES.map((c) => (
+        {offered.map((c) => (
           <label key={c.id} className={`card${choice === c.id ? ' on' : ''}`} data-testid={`answer-${c.id}`}>
             <input type="radio" name="answers" checked={choice === c.id} onChange={() => choose(c.id)} />
             <b>{c.name}</b>
@@ -299,7 +324,17 @@ function AnswersSection({
           </label>
         ))}
       </div>
-      {settings.provider === 'gateway' && <p className="help">Hosted plans are not available yet. Pick one of the above.</p>}
+      {choice === 'hosted' &&
+        (hosted && ent ? (
+          <p className="help" data-testid="hosted-help">
+            Answers come through our server with our key; it keeps no copy. {Math.max(0, ent.quota - ent.used)} of {ent.quota} left
+            this month.
+          </p>
+        ) : (
+          <p className="help warn" data-testid="hosted-help">
+            {account.user ? "Your account doesn't include hosted answers. Pick another above." : 'Sign in under Account to use it.'}
+          </p>
+        ))}
 
       {vendor && (
         <KeyAndModel
@@ -316,8 +351,7 @@ function AnswersSection({
       {choice === 'local' && <LocalServer settings={settings} save={save} />}
       {choice === 'placeholder' && (
         <p className="help" data-testid="placeholder-help">
-          Answers are made up on this computer, so you can try the shortcut without an account or a key. Nothing is sent
-          anywhere.
+          Made-up answers, so you can try it without a key. Nothing is sent.
         </p>
       )}
     </Section>
@@ -360,7 +394,7 @@ function KeyAndModel({
     try {
       result = (await browser.runtime.sendMessage({ type: 'keys:test', vendor, key: trimmed })) as KeyTestResult;
     } catch (err) {
-      result = { ok: false, error: `Could not run the check: ${(err as Error).message}`, code: 'http' };
+      result = { ok: false, error: `Couldn't check it: ${(err as Error).message}`, code: 'http' };
     }
     setCheck(result);
     if (result.ok) await rememberModels(vendor, result.models);
@@ -406,8 +440,8 @@ function KeyAndModel({
         </span>
         <KeyStatus check={check} hasKey={!!savedKey} />
         <p className="help">
-          Kept in this browser only and sent only to {VENDOR_NAME[vendor]}; empty the field to remove it. Checking costs
-          nothing. Set a monthly spend limit in {VENDOR_NAME[vendor]}'s console so a busy week can't surprise you.
+          Stays in this browser and only goes to {VENDOR_NAME[vendor]}. Clear the field to remove it. Tip: set a monthly
+          spend limit in {VENDOR_NAME[vendor]}'s console.
         </p>
       </div>
 
@@ -424,12 +458,12 @@ function KeyAndModel({
           {choices.map((m) => (
             <option key={m.id} value={m.id}>
               {m.name}
-              {m.vision ? '' : ' (text only — cannot read screenshots)'}
+              {m.vision ? '' : ' (text only)'}
             </option>
           ))}
           {override && !choices.some((m) => m.id === override) && <option value={override}>{override}</option>}
         </select>
-        <small className="help">Also on the panel, beside the macros. {listed ? '' : 'Check your key to list every model it can use.'}</small>
+        <small className="help">You can also change it in the panel.{listed ? '' : ' Check your key to see every model.'}</small>
       </label>
     </div>
   );
@@ -437,12 +471,12 @@ function KeyAndModel({
 
 function KeyStatus({ check, hasKey }: { check: Check; hasKey: boolean }) {
   if ('state' in check && check.state === 'checking') return <p className="help">Checking…</p>;
-  if (!('ok' in check)) return hasKey ? null : <p className="help warn">Needed before anything can be asked.</p>;
+  if (!('ok' in check)) return hasKey ? null : <p className="help warn">Needed to ask anything.</p>;
   if (check.ok) {
     const vision = check.models.filter((m) => m.vision).length;
     return (
       <p className="help ok" data-testid="key-status">
-        ✓ Key works. {check.models.length} models available{vision !== check.models.length ? `, ${vision} of them read images` : ''}.
+        ✓ Works. {check.models.length} models{vision !== check.models.length ? `, ${vision} read images` : ''}.
       </p>
     );
   }
@@ -492,7 +526,7 @@ function LocalServer({ settings, save }: { settings: Settings; save: (patch: Par
             saveModel(e.target.value);
           }}
         />
-        <small className="help">Any OpenAI-compatible server works; Ollama is the usual one. The model must read images for screenshots.</small>
+        <small className="help">Any OpenAI-compatible server, like Ollama. For screenshots, use a model that reads images.</small>
       </label>
       <span className="key-row">
         <button type="button" className="secondary" disabled={checking} onClick={() => void check()}>
@@ -500,7 +534,7 @@ function LocalServer({ settings, save }: { settings: Settings; save: (patch: Par
         </button>
         {status && (
           <span className={`help ${status.state === 'ok' ? 'ok' : 'bad'}`}>
-            {status.state === 'ok' ? '✓ The server answers.' : status.message}
+            {status.state === 'ok' ? '✓ Connected.' : status.message}
           </span>
         )}
       </span>
@@ -534,7 +568,7 @@ function AskingSection({ settings, save }: { settings: Settings; save: (patch: P
             </button>
           )}
         </div>
-        <p className="help">Buttons above the question box. A click puts the prompt in the box and asks it.</p>
+        <p className="help">Buttons above the question box. Click one to ask it.</p>
         <ol className="macro-list">
           {macros.map((m, i) => (
             <li key={m.id} className="macro-row" data-testid="macro-row">
@@ -577,17 +611,17 @@ function AskingSection({ settings, save }: { settings: Settings; save: (patch: P
           value={prompt}
           maxLength={120}
           data-testid="default-prompt"
-          placeholder="Empty — the box starts blank"
+          placeholder="Empty"
           onChange={(e) => {
             setPrompt(e.target.value);
             savePrompt(e.target.value);
           }}
         />
-        <small className="help">Waiting in the box when a selection lands. Empty by default: the macros do the asking.</small>
+        <small className="help">Put in the question box after each selection.</small>
       </label>
 
       <div className="field">
-        <span className="field-label">When a selection lands</span>
+        <span className="field-label">After you select</span>
         <Radios name="send" value={settings.sendBehavior} options={SEND} onChange={(v) => void save({ sendBehavior: v })} />
       </div>
     </Section>
@@ -609,7 +643,7 @@ function SelectingSection({ settings, save, shortcut }: { settings: Settings; sa
             Change…
           </button>
         </span>
-        <small className="help">Does the same as clicking {BRAND.iconName}. The browser owns shortcuts, so they are changed on its own page.</small>
+        <small className="help">Same as clicking {BRAND.iconName}. It's changed on the browser's shortcuts page.</small>
       </div>
 
       <div className="field">
@@ -618,17 +652,17 @@ function SelectingSection({ settings, save, shortcut }: { settings: Settings; sa
           name="adjust"
           value={settings.adjustBox ? 'adjust' : 'send'}
           options={[
-            { id: 'send', label: 'Send it as soon as I let go' },
-            { id: 'adjust', label: 'Let me adjust it first', help: 'Handles to resize or move it; Enter or Ask sends it.' },
+            { id: 'send', label: 'Send right away' },
+            { id: 'adjust', label: 'Let me adjust it first', help: 'Drag the edges, then press Enter.' },
           ]}
           onChange={(v) => void save({ adjustBox: v === 'adjust' })}
         />
-        <small className="help">The gear on the selection bar changes this too.</small>
+        <small className="help">Also in the gear on the selection bar.</small>
       </div>
 
       <p className="help">
-        On a PDF in the browser's own viewer only Box and Freeform work; {BRAND.name} offers to reopen it in its own reader,
-        where every mode does.
+        In the browser's PDF viewer, only Box and Freeform work. {BRAND.name} can reopen the PDF in its own reader, where
+        everything works.
       </p>
     </Section>
   );
@@ -636,7 +670,15 @@ function SelectingSection({ settings, save, shortcut }: { settings: Settings; sa
 
 // ── 4. Chats & privacy ───────────────────────────────────────────────────
 
-function PrivacySection({ settings, save }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void> }) {
+function PrivacySection({
+  settings,
+  save,
+  account,
+}: {
+  settings: Settings;
+  save: (patch: Partial<Settings>) => Promise<void>;
+  account: AccountState;
+}) {
   const [blocked, setBlocked] = useState(settings.blockedSites.join('\n'));
   const saveBlocked = useDebounced((v: string) =>
     void save({
@@ -646,10 +688,12 @@ function PrivacySection({ settings, save }: { settings: Settings; save: (patch: 
         .filter(Boolean),
     }),
   );
+  // Chats go to the cloud only for an account that has cloud storage and turned it on.
+  const cloud = !!account.user && !!account.entitlement?.cloud && settings.cloudSync;
 
   return (
     <Section id="privacy" title="Chats & privacy">
-      <ChatsField limit={settings.chatLimit} save={save} />
+      <ChatsField limit={settings.chatLimit} cloud={cloud} save={save} />
 
       <label className="field">
         <span className="field-label">Blocked sites</span>
@@ -663,33 +707,41 @@ function PrivacySection({ settings, save }: { settings: Settings; save: (patch: 
             saveBlocked(e.target.value);
           }}
         />
-        <small className="help">One hostname per line. The shortcut does nothing on these sites — for exams and private portals.</small>
+        <small className="help">One site per line, like exam sites. {BRAND.name} stays off on them.</small>
       </label>
 
       <div className="field" data-testid="what-is-sent">
-        <span className="field-label">What is sent, and what is kept</span>
+        <span className="field-label">What's sent and kept</span>
         <p className="help">
-          Nothing leaves the page until you select something, and then only the selection — the screenshot of what you
-          selected, or the text — goes to the AI you chose, never the rest of the page. Keys and chats stay in this browser.
+          Only what you select (a screenshot or text) and the page's title go to the AI you picked. Your keys stay in this
+          browser. Your chats stay on this computer{cloud ? ' and in your account' : ''}.
         </p>
         <ul className="help facts">
           <li>
-            <b>Claude</b> (Anthropic's API) is not trained on what you send, and Anthropic deletes it within 30 days — kept
-            longer only if it is flagged for breaking their usage policy.
+            <b>Claude</b>: not used for training. Anthropic deletes it within 30 days, unless it's flagged for breaking their
+            rules.
           </li>
           <li>
-            <b>ChatGPT</b> (OpenAI's API) is not trained on what you send unless your OpenAI organization opted in to sharing
-            data (check its data controls); OpenAI keeps abuse-monitoring logs for up to 30 days. Answers are asked with
-            storing turned off.
+            <b>ChatGPT</b>: not used for training, unless your OpenAI organization opted in to sharing. OpenAI keeps abuse
+            logs for up to 30 days. Answers aren't stored.
+          </li>
+          {hasHosted(account) && (
+            <li>
+              <b>Hosted answers</b> go to Claude through our server, which counts them but keeps no copy.
+            </li>
+          )}
+          <li>
+            <b>A local model</b>: nothing leaves this computer.
           </li>
           <li>
-            <b>A local model</b> never sends anything off this computer.
+            <b>Temporary chats</b> are never saved{ACCOUNTS ? ' or synced' : ''}, and are deleted when you're done.
           </li>
-          <li>
-            <b>Temporary chats</b> (the ghost, on the bar or the panel) are never saved on this computer and are deleted when
-            you finish. They also ask ChatGPT to keep its prompt cache in memory only, where the model allows it; Claude's
-            is always memory-only.
-          </li>
+          {ACCOUNTS && (
+            <li>
+              <b>Your account</b>, if you sign in, holds your email address. Chats go to the cloud only if your account has
+              cloud storage and you turn it on.
+            </li>
+          )}
         </ul>
       </div>
     </Section>
@@ -700,7 +752,7 @@ function PrivacySection({ settings, save }: { settings: Settings; save: (patch: 
  * How many chats are kept, and a way to clear them. Keeping fewer than there
  * are, or deleting them all, asks first, since neither can be undone.
  */
-function ChatsField({ limit, save }: { limit: number; save: (patch: Partial<Settings>) => Promise<void> }) {
+function ChatsField({ limit, cloud, save }: { limit: number; cloud: boolean; save: (patch: Partial<Settings>) => Promise<void> }) {
   const [count, setCount] = useState<number | null>(null);
   const [confirming, setConfirming] = useState<{ kind: 'all' } | { kind: 'limit'; to: number } | null>(null);
   useEffect(() => {
@@ -721,8 +773,10 @@ function ChatsField({ limit, save }: { limit: number; save: (patch: Partial<Sett
     <div className="field" data-testid="chats">
       <span className="field-label">Chats</span>
       <p className="help">
-        Saved on this computer only, with their screenshots. When there are more than you keep, the one used longest ago
-        is deleted. Temporary chats are never saved.
+        {cloud
+          ? 'Saved on this computer and in your account, with their screenshots. Past the limit, the oldest leaves this computer but stays in your account.'
+          : 'Saved on this computer with their screenshots. Past the limit, the oldest is deleted.'}{' '}
+        Temporary chats are never saved.
       </p>
       <label className="key-row limit-row">
         <span>Keep my</span>
@@ -744,8 +798,8 @@ function ChatsField({ limit, save }: { limit: number; save: (patch: Partial<Sett
       {confirming?.kind === 'limit' ? (
         <div className="confirm-row">
           <span>
-            Keep only your {confirming.to} most recent chats? The other {(count ?? 0) - confirming.to} will be deleted. This
-            cannot be undone.
+            Keep only your {confirming.to} most recent chats? The other {(count ?? 0) - confirming.to} will be deleted
+            {cloud ? ' from this computer (your account keeps them).' : ". This can't be undone."}
           </span>
           <button
             type="button"
@@ -764,7 +818,9 @@ function ChatsField({ limit, save }: { limit: number; save: (patch: Partial<Sett
         </div>
       ) : confirming?.kind === 'all' ? (
         <div className="confirm-row">
-          <span>Delete all {count} saved chats? This cannot be undone.</span>
+          <span>
+            Delete all {count} saved chats{cloud ? ', here and in your account' : ''}? This can't be undone.
+          </span>
           <button
             type="button"
             className="danger"

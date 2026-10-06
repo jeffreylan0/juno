@@ -52,6 +52,11 @@ export interface Settings {
   chatLimit: number;
   /** Hostnames where the shortcut does nothing (exams, private portals). */
   blockedSites: string[];
+  /**
+   * Copy saved chats to the signed-in account (account/sync.ts). Only does
+   * anything for accounts given cloud storage; off until the student turns it on.
+   */
+  cloudSync: boolean;
   localBaseUrl: string;
   localModel: string;
 }
@@ -67,6 +72,7 @@ export const DEFAULT_SETTINGS: Settings = {
   adjustBox: false,
   chatLimit: DEFAULT_CHAT_LIMIT,
   blockedSites: [],
+  cloudSync: false,
   localBaseUrl: 'http://localhost:11434/v1',
   localModel: 'qwen2.5vl:7b',
 };
@@ -74,7 +80,10 @@ export const DEFAULT_SETTINGS: Settings = {
 export interface Keys {
   anthropic: string;
   openai: string;
-  /** Hosted-plan session token (Supabase), week 9. */
+  /**
+   * Unused in storage (always empty): the hosted plan's token comes from the
+   * signed-in account (account/session.ts) when an answer is asked.
+   */
   session: string;
 }
 

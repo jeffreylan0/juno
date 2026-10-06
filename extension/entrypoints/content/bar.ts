@@ -3,7 +3,8 @@
  * answer panel close), the selection modes, the current instruction, an Ask
  * button while a box is being adjusted, the ghost (the next selection starts
  * a temporary chat), and a gear that expands the bar upwards into a
- * scrollable settings menu. Notices sit underneath the control row.
+ * scrollable settings menu. Warnings about the page go to the top of the
+ * page instead (lib/tooltip.ts).
  *
  * The bar is built once and stays up for as long as it is on the page: while
  * selecting, while a selection is sent, and between selections, when nothing
@@ -71,16 +72,6 @@ export const BAR_STYLE = `
 /* Taken out of the screenshot when the selection runs under it; back right after. */
 .bar.out-of-shot { visibility: hidden; }
 
-.notices { display: flex; flex-direction: column; }
-.notice {
-  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.12); font-size: 12px; line-height: 1.45;
-}
-.notice button {
-  font: inherit; font-size: 12px; cursor: pointer; border: 0; border-radius: 7px;
-  padding: 4px 10px; background: var(--sai-accent, #3b82f6); color: #fff; flex: none;
-}
-
 /* The bar is anchored at its bottom, so growing this grows it upwards. */
 .settings {
   max-height: 0; overflow-y: auto; overscroll-behavior: contain;
@@ -109,20 +100,20 @@ export const BAR_STYLE = `
 `;
 
 /** Shown while a drawn box waits to be adjusted and sent. */
-export const ADJUST_HINT = 'Drag the edges to adjust · Enter to ask';
+export const ADJUST_HINT = 'Drag the edges to adjust · Enter to send';
 
 /** Between selections: nothing armed, the page is the student's. */
 export const READY_HINT = 'Pick a mode to select more';
 
 const MODE_HINT: Record<SelectionKind, string> = {
-  box: 'Drag to select an area',
-  text: 'Select text on the page',
-  element: 'Hover and click to pick · ↑ ↓ to widen or narrow',
-  freeform: 'Draw around what you want to ask about',
+  box: 'Drag over an area',
+  text: 'Highlight some text',
+  element: 'Click part of the page · ↑ ↓ to resize',
+  freeform: 'Draw around it',
 };
 
-const GHOST_OFF = 'Temporary chat: your next selection starts a chat that is never saved';
-const GHOST_ON = 'Temporary chat is on: nothing is saved. Click to leave it (it is deleted)';
+const GHOST_OFF = "Temporary chat (next selection isn't saved)";
+const GHOST_ON = 'Temporary chat is on. Click to leave (deletes it)';
 
 export interface BarHandlers {
   /** The red X: finishes the chat, which closes the bar and the answer panel. */
@@ -134,15 +125,9 @@ export interface BarHandlers {
   onGhost: () => void;
 }
 
-export interface NoticeAction {
-  label: string;
-  onClick: () => void;
-}
-
 export class Bar {
   readonly el: HTMLElement;
   private say: HTMLElement;
-  private notices: HTMLElement;
   private settings: HTMLElement;
   private settingsInner: HTMLElement;
   private gear: HTMLButtonElement;
@@ -174,8 +159,8 @@ export class Bar {
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'close';
-    close.title = 'Finish: close the bar and the answer panel';
-    close.setAttribute('aria-label', 'Finish: close the bar and the answer panel');
+    close.title = 'Done (closes the bar and panel)';
+    close.setAttribute('aria-label', 'Done (closes the bar and panel)');
     close.textContent = '✕';
     close.addEventListener('click', () => this.handlers.onClose());
 
@@ -186,7 +171,7 @@ export class Bar {
     this.ask = document.createElement('button');
     this.ask.type = 'button';
     this.ask.className = 'ask';
-    this.ask.title = 'Ask about this box (Enter)';
+    this.ask.title = 'Send this box (Enter)';
     this.ask.append(svgIcon(ICON_PATHS.check), document.createTextNode('Ask'));
     this.ask.addEventListener('click', () => this.handlers.onConfirm());
 
@@ -209,13 +194,9 @@ export class Bar {
 
     row.append(close, this.buildChips(), this.say, this.ask, this.ghost, this.gear);
 
-    this.notices = document.createElement('div');
-    this.notices.className = 'notices';
-
-    // Row, then settings, then notices: the gear opens between the controls
-    // and whatever the page is warning about, and since the bar is anchored at
-    // its bottom, the whole thing still grows upwards.
-    this.el.append(row, this.settings, this.notices);
+    // Row, then settings: the bar is anchored at its bottom, so opening the
+    // gear grows it upwards.
+    this.el.append(row, this.settings);
   }
 
   /** Which mode is being selected in; null while the bar waits. */
@@ -260,25 +241,6 @@ export class Bar {
 
   resetInstruction(): void {
     this.say.textContent = this.hint();
-  }
-
-  /** Adds a notice row under the controls, once. Returns a function that removes it. */
-  notice(text: string, action: NoticeAction | null): () => void {
-    for (const row of this.notices.children) if (row.firstChild?.textContent === text) return () => row.remove();
-    const row = document.createElement('div');
-    row.className = 'notice';
-    const label = document.createElement('span');
-    label.textContent = text;
-    row.append(label);
-    if (action) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = action.label;
-      button.addEventListener('click', action.onClick);
-      row.append(button);
-    }
-    this.notices.append(row);
-    return () => row.remove();
   }
 
   private buildChips(): HTMLElement {
@@ -337,7 +299,7 @@ export class Bar {
       field(
         'After drawing a box',
         [
-          ['send', 'Send it as soon as I let go'],
+          ['send', 'Send right away'],
           ['adjust', 'Let me adjust it first'],
         ],
         settings.adjustBox ? 'adjust' : 'send',
@@ -348,7 +310,7 @@ export class Bar {
     const more = document.createElement('button');
     more.type = 'button';
     more.className = 'more';
-    more.textContent = 'All settings, keys and macros';
+    more.textContent = 'All settings';
     more.addEventListener('click', () => void send({ type: 'options:open' }));
     this.settingsInner.append(more);
   }
@@ -374,8 +336,8 @@ function field(name: string, options: [string, string][], value: string, onChang
 
 function unavailableTitle(kind: SelectionKind): string {
   // Only the browser's own PDF viewer takes modes away: it has no DOM to read.
-  if (kind === 'text' || kind === 'element') return `${label(kind)} selection needs the page's text; open this PDF in the reader`;
-  return `${label(kind)} selection is not available here`;
+  if (kind === 'text' || kind === 'element') return `${label(kind)} needs the PDF reader`;
+  return `${label(kind)} doesn't work here`;
 }
 
 function label(kind: SelectionKind): string {

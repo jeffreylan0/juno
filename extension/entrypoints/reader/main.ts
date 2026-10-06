@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   const brand = document.querySelector('.brand');
   if (brand) brand.textContent = `${BRAND.shortName} reader`;
   const url = fileParam();
-  if (!url) return status('No file to open. This page is opened for you from a PDF.', true);
+  if (!url) return status('No PDF to open here.', true);
   els.file.textContent = decodeURIComponent(url.split('/').pop() ?? url);
   document.title = `${els.file.textContent} — ${BRAND.shortName} reader`;
 
@@ -112,18 +112,18 @@ function failed(url: string, err: Error): void {
   if (fileUrl) {
     status(
       [
-        'Chrome blocks extensions from reading local files until you allow it. Open ',
+        'To open files on your computer, go to ',
         h('code', 'chrome://extensions'),
-        `, find ${BRAND.name}, and turn on `,
+        `, find ${BRAND.name}, turn on `,
         h('b', 'Allow access to file URLs'),
-        ', then reload this page.',
+        ', and reload.',
         ...detail,
       ],
       true,
     );
     return;
   }
-  status(['Could not open this PDF.', ...detail], true);
+  status(["Couldn't open this PDF.", ...detail], true);
 }
 
 /** Builds (or resizes) one placeholder per page at the current scale. */

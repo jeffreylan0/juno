@@ -232,7 +232,7 @@ test('selections from different pages go into the same chat, and one question ca
   await expect(panel.getByTestId('chat-title')).toHaveText(await a.title());
   await expect(cards.nth(0).getByTestId('selection-page')).toHaveCount(0);
   await expect(cards.nth(1).getByTestId('selection-page')).toHaveText(await b.title());
-  await expect(panel.locator('.composer textarea')).toHaveAttribute('placeholder', 'Ask about these selections…');
+  await expect(panel.locator('.composer textarea')).toHaveAttribute('placeholder', 'Ask about these…');
   // Not asked about yet, so either can still be taken back.
   await expect(panel.getByTestId('selection-remove')).toHaveCount(2);
 
@@ -252,7 +252,7 @@ test('selections from different pages go into the same chat, and one question ca
   await startSelection(serviceWorker, 'box', first.url);
   await boxAround(a, panel, '#problem', first.tabId);
   await expect(cards).toHaveCount(3);
-  await expect(panel.locator('.composer textarea')).toHaveAttribute('placeholder', 'Ask about the new selection…');
+  await expect(panel.locator('.composer textarea')).toHaveAttribute('placeholder', 'Ask about the new one…');
   await panel.locator('.macros .macro', { hasText: 'Hint' }).click();
   await expect(panel.locator('.turn.assistant').nth(1)).toContainText('1 part(s)', { timeout: 25_000 });
   await expect(panel.locator('.turn.assistant').nth(1)).toContainText('plus 2 earlier selection(s)');

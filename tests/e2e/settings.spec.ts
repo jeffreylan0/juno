@@ -7,12 +7,13 @@ import { expect, test } from './fixtures';
 const stored = async (sw: import('@playwright/test').Worker) =>
   (await sw.evaluate(async () => (await chrome.storage.local.get('settings')).settings)) as Record<string, unknown> | undefined;
 
-test('four sections, in order, and every change saves as it is made', async ({ context, extensionId, serviceWorker }) => {
+test('the sections, in order, and every change saves as it is made', async ({ context, extensionId, serviceWorker }) => {
   const options = await context.newPage();
   await options.goto(`chrome-extension://${extensionId}/options.html`);
 
-  await expect(options.locator('section h2')).toHaveText(['Answers', 'Asking', 'Selecting', 'Chats & privacy']);
-  await expect(options.locator('.tabs a')).toHaveText(['Answers', 'Asking', 'Selecting', 'Chats & privacy']);
+  // Account only in builds with accounts, which the test build is.
+  await expect(options.locator('section h2')).toHaveText(['Answers', 'Asking', 'Selecting', 'Chats & privacy', 'Account']);
+  await expect(options.locator('.tabs a')).toHaveText(['Answers', 'Asking', 'Selecting', 'Chats & privacy', 'Account']);
 
   // A macro renamed and rewritten; a blank one added but not saved.
   const rows = options.getByTestId('macro-row');
@@ -27,7 +28,7 @@ test('four sections, in order, and every change saves as it is made', async ({ c
   await options.getByTestId('default-prompt').fill('Solve it.');
   await options.getByTestId('blocked-sites').fill('Exam.Example.edu\nportal.school.org');
   await options.getByLabel('Let me adjust it first').check();
-  await options.getByLabel('Ask straight away for screenshots only').check();
+  await options.getByLabel('Ask right away, screenshots only').check();
   await expect
     .poll(async () => {
       const s = await stored(serviceWorker);
@@ -107,7 +108,7 @@ test('what is sent says what each AI keeps, and what a temporary chat changes', 
   const options = await context.newPage();
   await options.goto(`chrome-extension://${extensionId}/options.html`);
   const facts = options.getByTestId('what-is-sent');
-  await expect(facts).toContainText('is not trained on what you send');
+  await expect(facts).toContainText('not used for training');
   await expect(facts).toContainText('Temporary chats');
   // The bar-follows-you permission is gone.
   await expect(options.getByTestId('all-sites')).toHaveCount(0);

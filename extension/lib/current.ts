@@ -90,22 +90,6 @@ export async function setBarTab(windowId: number, tabId: number | null): Promise
   else await session().set({ [barKey(windowId)]: tabId });
 }
 
-// ── Pages the bar cannot go on ───────────────────────────────────────────
-
-/**
- * Why a click on the icon brought no bar: the browser's own pages and the
- * extension stores take none, a blocked site is the student's own choice,
- * and files need a switch turned on first. The panel says which.
- */
-export type Unreachable = 'restricted' | 'blocked-site' | 'file-access';
-export const unreachableKey = (windowId: number) => `unreachable:${windowId}`;
-
-/** Stored with the time, so the same reason twice still reaches a panel that dismissed the first. */
-export async function setUnreachable(windowId: number, why: Unreachable | null): Promise<void> {
-  if (why) await session().set({ [unreachableKey(windowId)]: { why, at: Date.now() } });
-  else await session().remove(unreachableKey(windowId));
-}
-
 // ── The chat's life ──────────────────────────────────────────────────────
 
 /**
@@ -123,7 +107,6 @@ export async function panelOpened(windowId: number, claim?: Current): Promise<Cu
 export async function endChat(windowId: number): Promise<void> {
   await leave(await getCurrent(windowId));
   await setCurrent(windowId, null);
-  await setUnreachable(windowId, null);
   await setBarTab(windowId, null);
 }
 

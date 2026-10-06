@@ -11,7 +11,7 @@
  * connection, one that fails to connect disproves it.
  */
 import { testKey } from './providers/byok';
-import { answerChoiceOf, type Keys, type Settings } from './storage';
+import { GATEWAY_URL, answerChoiceOf, type Keys, type Settings } from './storage';
 
 export type AiState = 'ok' | 'placeholder' | 'no-key' | 'bad-key' | 'disconnected' | 'error' | 'unavailable';
 
@@ -41,7 +41,7 @@ export function whoAnswers(settings: Pick<Settings, 'provider' | 'vendor'>): str
     case 'local':
       return 'the local model';
     case 'gateway':
-      return 'the hosted plan';
+      return 'hosted answers';
     case 'mock':
       return 'placeholder answers';
   }
@@ -59,17 +59,29 @@ export async function checkStatus(fetchImpl: typeof fetch, settings: Settings, k
     case 'mock':
       return { ...base, state: 'placeholder', message: 'Placeholder answers — no AI is connected.' };
 
-    case 'gateway':
-      return { ...base, state: 'unavailable', message: 'Hosted plans are not available yet. Pick Claude or ChatGPT with your own key.' };
+    case 'gateway': {
+      if (!keys.session) return { ...base, state: 'no-key', message: 'Sign in to use hosted answers.' };
+      try {
+        const res = await f(`${GATEWAY_URL.replace(/\/$/, '')}/me`, { headers: { authorization: `Bearer ${keys.session}` } });
+        if (res.status === 401) return { ...base, state: 'bad-key', message: 'Your sign-in ran out. Sign in again.' };
+        if (!res.ok) return { ...base, state: 'disconnected', message: "The hosted service isn't responding right now." };
+        const me = (await res.json()) as { quota?: number; used?: number };
+        if (!me.quota) return { ...base, state: 'unavailable', message: "Your account doesn't include hosted answers." };
+        if ((me.used ?? 0) >= me.quota) return { ...base, state: 'error', message: `You've used all ${me.quota} hosted answers this month.` };
+        return { ...base, state: 'ok' };
+      } catch {
+        return { ...base, state: 'disconnected', message: "Can't reach the hosted service. Check your internet connection." };
+      }
+    }
 
     case 'local': {
       const url = settings.localBaseUrl.replace(/\/$/, '');
       try {
         const res = await f(`${url}/models`);
         if (res.ok) return { ...base, state: 'ok' };
-        return { ...base, state: 'error', message: `The local server at ${host(url)} answered with an error (HTTP ${res.status}).` };
+        return { ...base, state: 'error', message: `The local server at ${host(url)} returned an error (${res.status}).` };
       } catch {
-        return { ...base, state: 'disconnected', message: `No local model server is answering at ${host(url)}. Start it, or pick another model.` };
+        return { ...base, state: 'disconnected', message: `No local model is answering at ${host(url)}. Start it, or pick another.` };
       }
     }
 
@@ -119,7 +131,7 @@ export function statusFromAnswer(
   if (settings.provider === 'mock') return null;
   if (outcome.ok) return { ...base, state: 'ok' };
   if (settings.provider === 'local') {
-    return outcome.code === 'network' ? { ...base, state: 'disconnected', message: `No local model server is answering at ${host(settings.localBaseUrl)}. Start it, or pick another model.` } : null;
+    return outcome.code === 'network' ? { ...base, state: 'disconnected', message: `No local model is answering at ${host(settings.localBaseUrl)}. Start it, or pick another.` } : null;
   }
   if (settings.provider !== 'byok') return null;
   // An overloaded vendor is up, just busy: the answer's own error says so.

@@ -22,6 +22,25 @@ export function useShortcut(name = '_execute_action'): string {
   return shortcut;
 }
 
+const MAC_KEYS: Record<string, string> = { '⌘': 'Command', '⌥': 'Option', '⇧': 'Shift', '⌃': 'Control' };
+
+/**
+ * A shortcut the way people say it: "Alt + Shift + S", or on a Mac (where the
+ * browser reports "⌥⇧S") "Option + Shift + S", after the keys' own labels.
+ */
+export function formatShortcut(shortcut: string): string {
+  if (!shortcut) return '';
+  if (shortcut.includes('+')) return shortcut.split('+').map((k) => k.trim()).filter(Boolean).join(' + ');
+  const keys: string[] = [];
+  let rest = '';
+  for (const ch of shortcut) {
+    if (MAC_KEYS[ch]) keys.push(MAC_KEYS[ch]);
+    else rest += ch;
+  }
+  if (rest) keys.push(rest);
+  return keys.join(' + ');
+}
+
 /** Opens the browser's own page for changing extension shortcuts. */
 export function openShortcutSettings(): void {
   const firefox = (browser as unknown as { commands?: { openShortcutSettings?: () => Promise<void> } }).commands;
