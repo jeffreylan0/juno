@@ -1,0 +1,38 @@
+{
+  "name": "desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Selection AI as a desktop app (Tauri 2): the extension's bar, panel and chats over any app.",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "web:dev": "vite",
+    "web:build": "vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "icons": "node scripts/icons.mjs && tauri icon src-tauri/icons/app.png -o src-tauri/icons",
+    "tauri": "tauri",
+    "build:e2e": "SAI_E2E=1 vite build && CARGO_TARGET_DIR=src-tauri/target/e2e cargo build --manifest-path src-tauri/Cargo.toml --features test-hook,custom-protocol",
+    "test:e2e": "pnpm build:e2e && vitest run --config vitest.e2e.config.ts",
+    "test:native": "cargo test --manifest-path src-tauri/Cargo.toml"
+  },
+  "dependencies": {
+    "@selection-ai/shared": "workspace:*",
+    "@tauri-apps/api": "^2.12.0",
+    "@tauri-apps/plugin-http": "^2.8.0",
+    "@tauri-apps/plugin-opener": "^2.7.0",
+    "@wxt-dev/storage": "1.2.9",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "katex": "^0.16.22"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^5.7.0",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
+  }
+}

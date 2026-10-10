@@ -1,0 +1,57 @@
+name: Desktop
+
+# The desktop app (desktop/). Linux runs everything, end to end included, on
+# a virtual display; macOS and Windows build against the real system SDKs and
+# run the native unit tests. Only when something the app is built from changes.
+on:
+  push:
+    branches: ['**']
+    paths: ['desktop/**', 'extension/**', 'shared/**', 'tests/unit/desktop-*', 'pnpm-lock.yaml', '.github/workflows/desktop.yml']
+  pull_request:
+    paths: ['desktop/**', 'extension/**', 'shared/**', 'tests/unit/desktop-*', 'pnpm-lock.yaml', '.github/workflows/desktop.yml']
+
+jobs:
+  linux:
+    name: Linux (typecheck, native tests, end to end)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+      - name: System libraries (WebKitGTK, X11 tools for the end-to-end tests)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev xvfb xdotool imagemagick
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter desktop typecheck
+      - run: pnpm --filter desktop test:native
+      - run: pnpm --filter desktop test:e2e
+
+  native:
+    name: ${{ matrix.os }} (build, native tests)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter desktop test:native
+      - run: pnpm --filter desktop exec tauri build --debug --no-bundle

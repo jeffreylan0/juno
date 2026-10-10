@@ -1,0 +1,2 @@
+/* The overlay page is see-through: only the bar and what is drawn show. */
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }

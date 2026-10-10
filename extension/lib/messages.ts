@@ -40,6 +40,8 @@ export interface SelectionDoneMsg {
   clipped?: boolean;
   /** Freeform selections: the outline, in viewport CSS pixels. */
   path?: Point[];
+  /** The viewport the rect is in, CSS pixels (the app crops a whole display with it). */
+  viewport?: { width: number; height: number };
   page: { url: string; title: string };
 }
 

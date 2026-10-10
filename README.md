@@ -4,7 +4,7 @@ Select a box, any shape, a page element or some text in the browser and ask Clau
 
 The build plan's planner, which re-sends a box as extracted text, LaTeX or tables where it can, is no longer used for box selections: page text scraped from under a box garbled real layouts and duplicated the screenshot. The eval keeps a `planner` route so the idea can still be measured for Gate A.
 
-Chrome, Edge and Firefox from one WXT codebase; Safari from week 12.
+Chrome, Edge and Firefox from one WXT codebase; Safari from week 12. A desktop app (Mac first, then Windows) brings the same bar, panel and chats to any app on screen — Preview, Acrobat, PowerPoint, other extensions' PDF viewers — from the same code: see [desktop/README.md](desktop/README.md).
 
 ## Status
 
@@ -27,6 +27,7 @@ Weeks 1–2 of the build plan are done: the workspace, the shared payload schema
 | Providers | mock, local (Ollama), BYOK (Anthropic + OpenAI), hosted (the Worker, for accounts with a plan) |
 | Eval | 5 seed problems of 100; mock and image-only routes run |
 | Worker, Supabase | built: token check against the project's signing keys, per-account monthly quota, Anthropic and OpenAI streamed in one shape; schema with row level security, tested on PostgreSQL. Stripe: webhook → plan mapping only; no checkout yet |
+| Desktop app | Tauri 2, built from the extension's code: the shortcut, the bar in a transparent overlay over any app, Box and Freeform with native capture (ScreenCaptureKit on macOS), the panel docked right, settings, keys in the keychain. Tested end to end on Linux, type-checked for macOS and Windows; not yet run on a Mac. Element and Text (accessibility API) next |
 
 The surfaces are deliberately unstyled beyond a block of CSS tokens at the top of `ui/panel.css`, `entrypoints/options/options.css` and `entrypoints/reader/reader.css`, plus the `--sai-*` variables the in-page bar and tooltips read. Replacing those blocks re-themes everything.
 
@@ -82,6 +83,9 @@ ollama serve                   # OpenAI-compatible on http://localhost:11434/v1
 | End-to-end | `pnpm test:e2e` |
 | Typecheck everything | `pnpm typecheck` |
 | Worker locally | `pnpm worker:dev` |
+| Desktop app with live reload (Mac) | `pnpm desktop:dev` |
+| Desktop app release build | `pnpm desktop:build` |
+| Desktop native and end-to-end tests | `pnpm --filter desktop test:native`, `pnpm --filter desktop test:e2e` (Linux, Xvfb) |
 
 Rules that keep spend near zero: develop against `mock`; every paid eval answer is written into `eval/cache` by payload hash, so reruns replay for free (the extension itself keeps no answer cache, so nothing outlives its chat); planner or prompt changes run the eval on `mock` and `local` first, and the paid batch eval runs weekly and before each gate.
 
@@ -104,17 +108,21 @@ Four routes are compared: `mock` (replay), `local` (Ollama), `image-only` (just 
 ```
 selection-ai/
 ├── extension/          WXT project: Chrome, Edge, Firefox, Safari
+│   │                   (lib/engine.ts is the background's chat half, which the desktop app runs too;
+│   │                    lib/surface.ts is what the app's build swaps for its own words and settings)
 │   ├── brand.ts        name, description, icon wording (assets/brand/icon.svg → pnpm brand:icons)
 │   ├── entrypoints/    background, content/ (overlay, bar, select-box/-freeform/-element/-text, scroll), reader/, sidepanel/, options/
 │   ├── extract/        visible.ts (math, table, code land weeks 4–5)
 │   ├── lib/            planner, capture, router, cache, storage, chats, current, images, status, kinds, messages, render, pdf-detect, selection-controller, tooltip, providers/, account/ (session, cloud, sync)
 │   └── ui/             Panel, Selection, ModelPicker, Answer, WhatIRead
+├── desktop/            Tauri 2 app: src-tauri/ (native core: shortcut, windows, capture, crop, storage), src/ (the
+│                       WebExtension API over the native core, and the core, overlay, panel and settings windows)
 ├── shared/             payload.ts (types), prompts.ts (mode prompts) — one schema for all three packages
 ├── worker/             Cloudflare Worker for hosted answers: auth.ts, quota.ts, models.ts, stripe.ts
 ├── supabase/           migrations/ (the schema), tests/ (checked on local PostgreSQL), README.md (setup)
 ├── eval/               run, batch, score, crops, problems/
 ├── tests/              unit/ (Vitest + jsdom), e2e/ (Playwright), fixtures/pages/
-└── .github/workflows/  ci.yml, release.yml
+└── .github/workflows/  ci.yml, desktop.yml, release.yml
 ```
 
 Three rules hold the design together. Page-touching code lives in the content script; anything holding a key or making a network call lives in the background. Every provider speaks one OpenAI-compatible message shape, converted to the Anthropic Messages API only at the edge in `providers/byok.ts`. And `shared/payload.ts` is the single schema the extension, the Worker and the eval scripts all build against.

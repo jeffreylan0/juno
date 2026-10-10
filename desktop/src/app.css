@@ -1,0 +1,5 @@
+/*
+ * What the app's pages need beyond the extension's stylesheets: they fill a
+ * window of their own rather than a side panel or a tab.
+ */
+html, body, #root { height: 100%; }

@@ -22,6 +22,7 @@ import type { SelectionKind } from '@shared/payload';
 import { ICON_PATHS, svgIcon } from '@/lib/icons';
 import { KIND_ICON as ICONS, KIND_LABEL, KIND_ORDER } from '@/lib/kinds';
 import { send } from '@/lib/messages';
+import { SURFACE } from '@/lib/surface';
 import { getSettings, settingsItem, type Settings } from '@/lib/storage';
 import { UI_ATTR } from './scroll';
 
@@ -335,9 +336,7 @@ function field(name: string, options: [string, string][], value: string, onChang
 }
 
 function unavailableTitle(kind: SelectionKind): string {
-  // Only the browser's own PDF viewer takes modes away: it has no DOM to read.
-  if (kind === 'text' || kind === 'element') return `${label(kind)} needs the PDF reader`;
-  return `${label(kind)} doesn't work here`;
+  return SURFACE.unavailable(label(kind), kind);
 }
 
 function label(kind: SelectionKind): string {

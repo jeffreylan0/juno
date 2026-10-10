@@ -12,50 +12,23 @@
  *
  * Chats (lib/chats.ts) collect selections from any page in the window. ✕ on
  * the bar or the panel (or Escape on a waiting bar) hides both and finishes
- * the chat (lib/current.ts has the rules). This file is the only writer, and
- * it writes one change at a time (`serial`), so a selection landing while an
- * answer streams is never overwritten by the stream's next write.
+ * the chat (lib/current.ts has the rules). The background is the only writer,
+ * and it writes one change at a time (`serial`), so a selection landing while
+ * an answer streams is never overwritten by the stream's next write. That
+ * half — the queue, answering, the cloud copy, the connection status — is
+ * lib/engine.ts, which the desktop app's core window runs too; this file is
+ * the browser half: tabs, the toolbar icon, the side panel, captureVisibleTab.
  */
-import type { AskRequest, Attachment, ChatTurn, SelectionKind } from '@shared/payload';
+import type { SelectionKind } from '@shared/payload';
 import { deleteAccount } from '@/lib/account/cloud';
-import { currentSession, sessionItem } from '@/lib/account/session';
-import { ChatSync } from '@/lib/account/sync';
-import { captureVisible, cropDataUrl, type CaptureResult } from '@/lib/capture';
+import { currentSession } from '@/lib/account/session';
+import { captureVisible, cropDataUrl } from '@/lib/capture';
+import { deleteAllChats, deleteChat, getChat, listChats, renameChat } from '@/lib/chats';
 import {
-  attachmentOf,
-  deleteAllChats,
-  deleteChat,
-  discardChat,
-  getChat,
-  hasUsableSelection,
-  historyOf,
-  isRemovable,
-  latestSelection,
-  listChats,
-  pendingSelections,
-  pruneChats,
-  renameChat,
-  retitle,
-  saveChat,
-  settleStreaming,
-  sweepImages,
-  updateChat,
-  type AssistantItem,
-  type Chat,
-  type ChatItem,
-  type ChatSummary,
-  type SelectionItem,
-  type UserItem,
-} from '@/lib/chats';
-import {
-  addSelection,
-  allCurrent,
-  discardOrphans,
   endChat,
   ensureCurrent,
   getBarTab,
   getCurrent,
-  onTemporaryDiscarded,
   panelOpened,
   replaceGone,
   setBarTab,
@@ -63,7 +36,7 @@ import {
   switchTo,
   type Current,
 } from '@/lib/current';
-import { deletePartImages, hydrateParts, hydratePlan } from '@/lib/images';
+import { ChatEngine } from '@/lib/engine';
 import {
   PANEL_PORT,
   isRuntimeMessage,
@@ -72,25 +45,8 @@ import {
   type RuntimeMessage,
   type SelectionDoneMsg,
 } from '@/lib/messages';
-import { buildPlan } from '@/lib/planner';
-import { callModel, type ProviderContext } from '@/lib/providers';
 import { testKey } from '@/lib/providers/byok';
-import { chooseRoute } from '@/lib/router';
-import { STATUS_KEY, STATUS_TTL_MS, checkStatus, statusFromAnswer, type AiStatus } from '@/lib/status';
-import {
-  DEFAULT_SETTINGS,
-  GATEWAY_URL,
-  answerChoiceOf,
-  fallbackQuestion,
-  getKeys,
-  getSettings,
-  keysItem,
-  lastKindItem,
-  settingsItem,
-  shouldAutoSend,
-  type Keys,
-  type Settings,
-} from '@/lib/storage';
+import { getSettings, lastKindItem, type Settings } from '@/lib/storage';
 
 const CONTENT_SCRIPT = 'content-scripts/content.js';
 
@@ -100,30 +56,8 @@ const COMMAND_KINDS: Record<string, SelectionKind> = {
   'select-element': 'element',
   'select-freeform': 'freeform',
 };
-/** How often a streaming answer is written back to the thread. */
-const STREAM_SAVE_MS = 120;
-
 /** True when a plan is waiting and the panel could not be opened for it. */
 let panelPending = false;
-/** One answer at a time per chat. */
-const streams = new Map<string, AbortController>();
-
-function stopStream(chatId: string): void {
-  streams.get(chatId)?.abort();
-  streams.delete(chatId);
-}
-
-/**
- * Every chat write goes through here, one after another. A streaming answer,
- * a selection arriving and the panel closing all read and rewrite the same
- * chat; in sequence, none of them undoes another.
- */
-let tail: Promise<unknown> = Promise.resolve();
-function serial<T>(task: () => Promise<T>): Promise<T> {
-  const run = tail.then(task, task);
-  tail = run.catch((err) => console.warn('[selection-ai] chat write failed', err));
-  return run;
-}
 
 /**
  * Answers a message once the work is done, whether it worked or not, so the
@@ -143,20 +77,17 @@ function reply(work: Promise<unknown>, sendResponse: (value: unknown) => void): 
 /** Open panels, per window. Usually one; tests open the panel page as a tab too. */
 const panels = new Map<number, Set<chrome.runtime.Port>>();
 
-/** The chat limit dropped a chat: tell the panels, once. */
-async function noteDropped(dropped: ChatSummary[]): Promise<void> {
-  if (!dropped.length) return;
-  for (const c of dropped) stopStream(c.id);
-  await browser.storage.session.set({ lastDropped: { titles: dropped.map((c) => c.title || 'Untitled chat'), at: Date.now() } });
-}
-
 /**
- * Settings, cached. The toolbar click has to call sidePanel.open() before any
- * await or Chrome drops the gesture, so "is this a blocked site?" is first
- * answered from here — and checked again against stored settings before the
- * bar goes on the page, since a worker just woken has not read them yet.
+ * Chats, answers, the cloud copy and the connection status (lib/engine.ts,
+ * shared with the desktop app). Its settings cache is what the toolbar click
+ * reads: it has to call sidePanel.open() before any await or Chrome drops the
+ * gesture, so "is this a blocked site?" is first answered from there — and
+ * checked again against stored settings before the bar goes on the page,
+ * since a worker just woken has not read them yet.
  */
-let settings: Settings = DEFAULT_SETTINGS;
+const engine = new ChatEngine({ fetch: (input, init) => globalThis.fetch(input, init), panelsOpen: () => panels.size > 0 });
+const serial = <T>(task: () => Promise<T>) => engine.serial(task);
+
 /**
  * Whether the student let the extension onto file:// pages (Chrome's own
  * switch), cached for the same reason; null until checked, when the bar is
@@ -164,69 +95,18 @@ let settings: Settings = DEFAULT_SETTINGS;
  */
 let fileAccess: boolean | null = null;
 
-/** Cloud copies of saved chats, for accounts that have them (account/sync.ts). */
-let sync: ChatSync | null = null;
-
-/** The keys an answer or a check needs; for hosted answers, the account's current token. */
-async function keysFor(current: Settings): Promise<Keys> {
-  const keys = await getKeys();
-  if (current.provider !== 'gateway') return { ...keys, session: '' };
-  return { ...keys, session: (await currentSession())?.accessToken ?? '' };
-}
-
 export default defineBackground(() => {
   // Inside main, not at module level: WXT evaluates entrypoint modules in Node
   // at build time, where there is no browser to read from.
-  void getSettings().then((s) => (settings = s));
+  engine.start();
   void checkFileAccess();
-  settingsItem.watch(() =>
-    void getSettings().then((s) => {
-      const before = `${answerChoiceOf(settings)} ${settings.localBaseUrl}`;
-      settings = s;
-      // Picking another model: check the new choice right away.
-      if (panels.size && before !== `${answerChoiceOf(s)} ${s.localBaseUrl}`) void aiStatus(true);
-      // Keeping fewer chats (the settings page asked first): the oldest go
-      // now. Checked on every change, since a worker that was asleep cannot
-      // tell a lowered limit from the one it just read.
-      void serial(async () => {
-        const dropped = await pruneChats();
-        await replaceGone(dropped.map((c) => c.id));
-        await noteDropped(dropped);
-      });
-    }),
-  );
-  keysItem.watch(() => void (panels.size && aiStatus(true)));
-  // Signing in or out changes whether hosted answers can be asked.
-  sessionItem.watch((now, before) => {
-    if (now?.user.id !== before?.user.id && settings.provider === 'gateway' && panels.size) void aiStatus(true);
-  });
-
-  // A temporary chat's answer is not worth finishing (or paying for) once the
-  // chat is gone, however it went: ✕ on the bar, the ghost, another chat opened.
-  onTemporaryDiscarded(stopStream);
   void restoreReaderTabs();
-  void serial(settleStreaming);
-  sync = new ChatSync({
-    serial,
-    gone: async (ids) => {
-      ids.forEach(stopStream);
-      await serial(() => replaceGone(ids));
-    },
-  }).start();
   // Answers used to be kept by request hash so a rerun was free; they are no
   // longer, so none outlives its chat. Clear what earlier versions stored.
   browser.runtime.onInstalled.addListener(({ reason }) => {
     void clearAnswerCache();
     if (reason === 'install') void promptToPin();
   });
-  // A temporary chat left behind, screenshots nobody points at: tidied once,
-  // after any panel that is still open has had a moment to reconnect.
-  setTimeout(() => {
-    void serial(async () => {
-      await discardOrphans();
-      await sweepImages((await allCurrent()).map(([, c]) => c.chatId));
-    });
-  }, 3_000);
 
   browser.runtime.onConnect.addListener((port) => {
     if (port.name !== PANEL_PORT) return;
@@ -259,7 +139,7 @@ export default defineBackground(() => {
     // The click grants this tab, so its URL is known right here — in time to
     // open the panel on the click's own gesture when the bar cannot go on
     // this page, so the student sees why instead of nothing.
-    const why = tab?.url ? unreachable(tab.url, settings) : null;
+    const why = tab?.url ? unreachable(tab.url, engine.settings) : null;
     if (why) {
       // The tooltip, from the icon itself: the page cannot have it.
       showNotice(why);
@@ -306,16 +186,16 @@ export default defineBackground(() => {
         if (sender.tab?.windowId !== undefined) return reply(finishChat(sender.tab.windowId), sendResponse);
         return;
       case 'plan:get':
-        void planFor(msg.tabId).then(sendResponse);
+        void engine.planFor(msg.tabId).then(sendResponse);
         return true;
       case 'chat:send':
-        void sendChat(msg.chatId, msg.question);
+        void engine.sendChat(msg.chatId, msg.question);
         return;
       case 'chat:retry':
-        void retryChat(msg.chatId);
+        void engine.retryChat(msg.chatId);
         return;
       case 'chat:stop':
-        streams.get(msg.chatId)?.abort();
+        engine.abortStream(msg.chatId);
         return;
       case 'chat:temporary': {
         // From the panel (which names its window) or the bar (whose tab does).
@@ -340,7 +220,7 @@ export default defineBackground(() => {
       case 'chat:rename':
         return reply(serial(() => renameChat(msg.chatId, msg.title)), sendResponse);
       case 'chat:delete':
-        stopStream(msg.chatId);
+        engine.stopStream(msg.chatId);
         return reply(
           serial(async () => {
             await deleteChat(msg.chatId);
@@ -352,17 +232,17 @@ export default defineBackground(() => {
         return reply(
           serial(async () => {
             const ids = (await listChats()).map((c) => c.id);
-            ids.forEach(stopStream);
+            ids.forEach((id) => engine.stopStream(id));
             await deleteAllChats();
-            await sync?.deleteAll();
+            await engine.sync?.deleteAll();
             await replaceGone(ids);
           }),
           sendResponse,
         );
       case 'chat:drop-selection':
-        return reply(serial(() => dropSelection(msg.chatId, msg.itemId)), sendResponse);
+        return reply(serial(() => engine.dropSelection(msg.chatId, msg.itemId)), sendResponse);
       case 'ai:check':
-        return reply(aiStatus(!!msg.force), sendResponse);
+        return reply(engine.aiStatus(!!msg.force), sendResponse);
       case 'keys:test':
         void testKey(globalThis.fetch.bind(globalThis), msg.vendor, msg.key).then(sendResponse);
         return true;
@@ -377,14 +257,14 @@ export default defineBackground(() => {
         void watchForPin();
         return;
       case 'sync:now':
-        sync?.soon(0);
+        engine.sync?.soon(0);
         return;
       case 'account:delete':
         void (async () => {
           const s = await currentSession();
           if (!s) return { error: 'Signed out already.' };
           await deleteAccount(s.user.id);
-          await sync?.reset();
+          await engine.sync?.reset();
           return { ok: true };
         })()
           .catch((err: Error) => ({ error: err.message }))
@@ -748,37 +628,21 @@ async function keepSelection(
   shot: Promise<string | null>,
   into: Promise<Current>,
 ): Promise<void> {
-  const current = await getSettings();
-  let capture: CaptureResult | undefined;
-  let notice: string | undefined;
-  try {
-    const full = await shot;
-    if (full) capture = await cropDataUrl(full, msg.rect, msg.devicePixelRatio, msg.path);
-  } catch (err) {
-    console.warn('[selection-ai] capture failed', err);
-    // A box is only its screenshot now, so without one there is nothing
-    // to send. Say so, rather than quietly asking about nothing.
-    notice = "Couldn't take a screenshot of that. Try again, or reload the page.";
-  }
-  const plan = buildPlan({ selection: msg, mode: 'ask', capture });
-  // The selection joins the chat it was made for, whatever page it came
-  // from; an answer still streaming there carries on.
-  let added: Awaited<ReturnType<typeof addSelection>>;
-  try {
-    const target = await into;
-    added = await serial(() => addSelection(windowId, { plan, notice, tabId, into: target }));
-  } catch (err) {
-    console.warn('[selection-ai] could not keep the selection', err);
-    return;
-  }
-  if (!added) return; // its chat was finished or deleted meanwhile
-  const { chat, dropped } = added;
-  await noteDropped(dropped);
-
-  if (panelPending) await promptForPanel(tabId);
-  const usable = !notice && plan.parts.length > 0;
-  // Auto-send waits its turn: an answer already streaming is not cut off.
-  if (usable && shouldAutoSend(current, msg.kind) && !streams.has(chat.id)) void sendChat(chat.id, fallbackQuestion(current));
+  await engine.keepSelection(
+    {
+      selection: msg,
+      windowId,
+      tabId,
+      into,
+      capture: async () => {
+        const full = await shot;
+        return full ? await cropDataUrl(full, msg.rect, msg.devicePixelRatio, msg.path) : undefined;
+      },
+    },
+    async () => {
+      if (panelPending) await promptForPanel(tabId);
+    },
+  );
 }
 
 /**
@@ -795,215 +659,8 @@ async function captureWithRetry(windowId: number): Promise<string> {
   }
 }
 
-/**
- * The newest selection in the chats open right now — from one tab when a tab
- * is given — with its screenshots filled back in. For tests and diagnostics.
- */
-async function planFor(tabId: number | undefined) {
-  const chats = await Promise.all((await allCurrent()).map(([, c]) => getChat(c.chatId)));
-  const newest = chats
-    .flatMap((c) => c?.items ?? [])
-    .filter((i): i is SelectionItem => i.kind === 'selection' && (tabId === undefined || i.tabId === tabId))
-    .sort((a, b) => b.at - a.at)[0];
-  return newest ? await hydratePlan(newest.plan) : null;
-}
-
-async function withPixels(a: Attachment): Promise<Attachment> {
-  return { ...a, parts: await hydrateParts(a.parts) };
-}
-
-/**
- * Asks a question in a chat. It carries every selection made since the last
- * answered question (select, select, ask sends both); earlier questions go
- * along as history, each with the selections it carried. The answer streams
- * into the chat, so it survives the panel closing and shows in the menu.
- */
-async function sendChat(chatId: string, question: string): Promise<void> {
-  if (streams.has(chatId)) return; // one answer at a time; the panel shows Stop meanwhile
-  const controller = new AbortController();
-  streams.set(chatId, controller);
-
-  let answerId = '';
-  let text = '';
-  const finish = (done: Partial<AssistantItem>, opts = { touch: false, index: false }) =>
-    serial(() =>
-      updateChat(
-        chatId,
-        (c) => ({ ...c, items: c.items.map((i) => (i.id === answerId && i.kind === 'assistant' ? { ...i, text, ...done } : i)) }),
-        opts,
-      ),
-    );
-
-  try {
-    const setup = await serial(async () => {
-      const chat = await getChat(chatId);
-      if (!chat || !hasUsableSelection(chat)) return null;
-      const settled: Chat = { ...chat, items: chat.items.map(settle) };
-      const pending = pendingSelections(settled);
-      const q = question.trim() || fallbackQuestion(settings);
-      const user: UserItem = { kind: 'user', id: crypto.randomUUID(), at: Date.now(), text: q, selections: pending.map((s) => s.id) };
-      const answer: AssistantItem = { kind: 'assistant', id: crypto.randomUUID(), at: Date.now(), text: '', streaming: true };
-      const saved = await saveChat({ ...settled, items: [...settled.items, user, answer] });
-      await replaceGone(saved.dropped.map((c) => c.id));
-      await noteDropped(saved.dropped);
-      return { chat: settled, pending, q, answerId: answer.id, temporary: !!chat.temporary };
-    });
-    if (!setup) return;
-    answerId = setup.answerId;
-
-    const attachments = await Promise.all(setup.pending.map((s) => withPixels(attachmentOf(s))));
-    const history: ChatTurn[] = await Promise.all(
-      historyOf(setup.chat).map(async (t) => (t.attachments ? { ...t, attachments: await Promise.all(t.attachments.map(withPixels)) } : t)),
-    );
-    const latest = setup.pending.at(-1) ?? latestSelection(setup.chat)!;
-    // Anything with a screenshot anywhere in the chat goes to the large model.
-    const everything = [...history.flatMap((t) => t.attachments ?? []), ...attachments].flatMap((a) => a.parts);
-    const route = chooseRoute({ parts: everything, mode: 'ask', question: setup.q });
-    const request: AskRequest = {
-      plan: { ...latest.plan, parts: attachments.flatMap((a) => a.parts), question: setup.q, route },
-      attachments,
-      history,
-    };
-
-    let dirty = false;
-    const timer = setInterval(() => {
-      if (!dirty) return;
-      dirty = false;
-      void finish({ streaming: true });
-    }, STREAM_SAVE_MS);
-
-    const done: Partial<AssistantItem> = { streaming: false };
-    const current = await getSettings();
-    const keys = await keysFor(current);
-    try {
-      const ctx: ProviderContext = {
-        fetch: globalThis.fetch.bind(globalThis),
-        keys,
-        settings: { ...current, gatewayUrl: GATEWAY_URL },
-        // A temporary chat asks the vendor to keep as little as it allows.
-        ephemeral: setup.temporary,
-        signal: controller.signal,
-      };
-      for await (const chunk of callModel(request, route, ctx, {
-        provider: current.provider,
-        vendor: current.vendor,
-        model: current.modelOverride,
-      })) {
-        if (chunk.type === 'delta') {
-          text += chunk.text;
-          dirty = true;
-        } else if (chunk.type === 'done') {
-          Object.assign(done, { usage: chunk.usage, model: chunk.model });
-          void recordStatus(current, { ok: true });
-        } else if (chunk.code === 'aborted') {
-          // A stop keeps whatever arrived; only an empty stop needs saying.
-          if (!text.trim()) done.error = 'Stopped before an answer arrived.';
-        } else {
-          done.error = chunk.message;
-          done.errorCode = chunk.code;
-          void recordStatus(current, { ok: false, code: chunk.code, message: chunk.message });
-        }
-      }
-    } catch (err) {
-      done.error = (err as Error).message;
-    } finally {
-      clearInterval(timer);
-    }
-    await finish(done, { touch: true, index: true });
-  } catch (err) {
-    console.warn('[selection-ai] ask failed', err);
-    if (answerId) await finish({ streaming: false, error: (err as Error).message }, { touch: true, index: true });
-  } finally {
-    if (streams.get(chatId) === controller) streams.delete(chatId);
-  }
-}
-
-/**
- * An answer left streaming when the worker was stopped mid-answer. It keeps
- * whatever text arrived, and is marked stopped so it stops showing a spinner
- * (and, if empty, drops out of the history sent to the model).
- */
-function settle(item: ChatItem): ChatItem {
-  if (item.kind !== 'assistant' || !item.streaming) return item;
-  return { ...item, streaming: false, error: item.text.trim() ? item.error : 'Stopped before an answer arrived.' };
-}
-
-/**
- * Try again after a failed answer: the failed question and its error are
- * dropped and the question is asked afresh — with the same selections, since
- * they were never answered.
- */
-async function retryChat(chatId: string): Promise<void> {
-  if (streams.has(chatId)) return;
-  const question = await serial(async () => {
-    const chat = await getChat(chatId);
-    const answer = chat?.items.at(-1);
-    const asked = chat?.items.at(-2);
-    if (!chat || answer?.kind !== 'assistant' || !answer.error || asked?.kind !== 'user') return null;
-    await saveChat({ ...chat, items: chat.items.slice(0, -2) }, { touch: false });
-    return asked.text;
-  });
-  if (question !== null) await sendChat(chatId, question);
-}
-
-/** A selection taken back before any question carried it. */
-async function dropSelection(chatId: string, itemId: string): Promise<void> {
-  const chat = await getChat(chatId);
-  const item = chat?.items.find((i): i is SelectionItem => i.kind === 'selection' && i.id === itemId);
-  if (!chat || !item || !isRemovable(chat, itemId)) return;
-  await deletePartImages(item.plan.parts);
-  const next = retitle({ ...chat, items: chat.items.filter((i) => i.id !== itemId) });
-  if (next.items.length) await saveChat(next, { touch: false });
-  else if (chat.temporary) await discardChat(chatId);
-  else await deleteChat(chatId); // an empty chat is not kept; the window stays on it, empty
-}
-
-/**
- * The chosen AI's status, from a check at most a minute old unless `force`.
- * One check at a time per choice and key: a panel opening in each of three
- * windows asks once, and a check for an old choice or key is never passed off
- * as one for the new.
- */
-let checking: { key: string; run: Promise<AiStatus> } | null = null;
-async function aiStatus(force: boolean): Promise<AiStatus> {
-  const current = await getSettings();
-  const keys = await keysFor(current);
-  const choice = answerChoiceOf(current);
-  // In memory only; the key is part of it so a fixed key (or a new sign-in) is checked afresh.
-  const key = `${choice}|${current.localBaseUrl}|${current.provider === 'byok' ? keys[current.vendor] : current.provider === 'gateway' ? keys.session.slice(-16) : ''}`;
-  if (checking?.key === key) return await checking.run;
-  const stored = (await browser.storage.session.get(STATUS_KEY))[STATUS_KEY] as AiStatus | undefined;
-  if (!force && stored && stored.choice === choice && Date.now() - stored.checkedAt < STATUS_TTL_MS) return stored;
-
-  const before = checking?.run ?? Promise.resolve();
-  const run = before
-    .catch(() => undefined)
-    .then(async () => {
-      let status: AiStatus;
-      try {
-        status = await checkStatus(globalThis.fetch.bind(globalThis), current, keys);
-      } catch (err) {
-        status = { state: 'error', choice, who: '', message: (err as Error).message, checkedAt: Date.now() };
-      }
-      await browser.storage.session.set({ [STATUS_KEY]: status });
-      return status;
-    });
-  checking = { key, run };
-  const done = () => {
-    if (checking?.run === run) checking = null;
-  };
-  run.then(done, done);
-  return await run;
-}
-
 /** Answers earlier versions kept by request hash (`cache:<hash>`), removed on install and update. */
 async function clearAnswerCache(): Promise<void> {
   const stale = Object.keys(await browser.storage.local.get(null)).filter((k) => k.startsWith('cache:'));
   if (stale.length) await browser.storage.local.remove(stale);
-}
-
-/** What an answer proved about the connection, if anything. */
-async function recordStatus(current: Settings, outcome: Parameters<typeof statusFromAnswer>[1]): Promise<void> {
-  const status = statusFromAnswer(current, outcome);
-  if (status) await browser.storage.session.set({ [STATUS_KEY]: status });
 }

@@ -28,6 +28,7 @@ import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import { autoTitle, hasUsableSelection, isRemovable, pendingSelections, type AssistantItem, type Chat } from '@/lib/chats';
 import { isTransient, needsSettings } from '@/lib/providers/errors';
+import { SURFACE } from '@/lib/surface';
 import { getKeys, getSettings, keysItem, settingsItem, type Keys, type Macro, type Settings } from '@/lib/storage';
 import { Answer } from './Answer';
 import { ChatMenu, TitleInput } from './ChatMenu';
@@ -392,7 +393,7 @@ function Empty({ temporary, shortcut, provider }: { temporary: boolean; shortcut
   return (
     <div className="empty" data-testid="empty">
       <p>{how}</p>
-      <p>Selections from any tab go into this chat. Press ✕ or Escape when you're done.</p>
+      <p>Selections from {SURFACE.anywhere} go into this chat. Press ✕ or Escape when you're done.</p>
     </div>
   );
 }
