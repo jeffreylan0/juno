@@ -125,6 +125,20 @@ impl Display {
     }
 }
 
+impl Placement {
+    /// The same frame for a window with a title bar and borders: Tauri sizes
+    /// a window's content but positions its frame, so the frame's extra
+    /// (`frame`, logical pixels: title bar and borders together) comes off
+    /// the size, or the bottom of the window ends under the Dock or taskbar.
+    pub fn content(self, frame: (f64, f64), scale: f64) -> Placement {
+        let fit = |r: Rect, k: f64| Rect::new(r.x, r.y, (r.width - frame.0 * k).max(1.0), (r.height - frame.1 * k).max(1.0));
+        match self {
+            Placement::Logical(r) => Placement::Logical(fit(r, 1.0)),
+            Placement::Physical(r) => Placement::Physical(fit(r, scale)),
+        }
+    }
+}
+
 /// The pointer in the system's global space. `cursor` is what Tauri reports,
 /// which on macOS is points times the *main* display's scale.
 pub fn global_cursor(cursor: (f64, f64), space: Space, main_scale: f64) -> (f64, f64) {
@@ -263,6 +277,22 @@ mod tests {
         // Below the 1080p monitor, which starts lower and ends higher than the 4K one.
         assert_eq!(display_at(&desk, (4500.0, 1400.0), Space::Physical), Some(1));
         assert_eq!(display_at(&[], (0.0, 0.0), Space::Physical), None);
+    }
+
+    #[test]
+    fn the_panel_frame_fits_the_work_area() {
+        // macOS: a 28 pt title bar comes off the height, in points.
+        let mac = mac_desk();
+        assert_eq!(
+            mac[0].panel_placement(Space::Points, 420.0).content((0.0, 28.0), 2.0),
+            Placement::Logical(Rect::new(1092.0, 37.0, 420.0, 917.0))
+        );
+        // Windows at 150%: 31 + 8 px of frame (logical) is 58.5 physical.
+        let win = windows_desk();
+        assert_eq!(
+            win[0].panel_placement(Space::Physical, 420.0).content((16.0, 39.0), 1.5),
+            Placement::Physical(Rect::new(3210.0, 0.0, 606.0, 2029.5))
+        );
     }
 
     #[test]

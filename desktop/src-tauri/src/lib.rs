@@ -329,11 +329,14 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn run() {
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // A second copy was started: this one stays, and shows its settings.
-            let _ = wm::open_settings(app, None);
-        }))
+    let builder = tauri::Builder::default();
+    // A second copy was started: this one stays, and shows its settings. Not
+    // in test builds, where each test runs its own copy side by side.
+    #[cfg(not(feature = "test-hook"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        let _ = wm::open_settings(app, None);
+    }));
+    let app = builder
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -346,6 +349,9 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            // First, so a test can see the app even if something below hangs.
+            #[cfg(feature = "test-hook")]
+            testhook::start(app.handle().clone());
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
@@ -364,8 +370,6 @@ pub fn run() {
             wm::overlay(&handle)?;
             tray(&handle)?;
             wm::start_passthrough(handle.clone(), overlay);
-            #[cfg(feature = "test-hook")]
-            testhook::start(handle);
             Ok(())
         })
         .on_window_event(|window, event| match event {

@@ -131,21 +131,22 @@ impl Store {
             }
             Area::Local => {
                 let mut local = self.local.lock().unwrap();
-                let mut secrets_changed = false;
+                // Secrets first, and only into memory once the keychain has
+                // them: a refused write must not look saved until a restart.
+                if items.keys().any(|k| is_secret(k)) {
+                    self.load_secrets(&mut local)?;
+                    let mut next = secrets_of(&local.values);
+                    next.extend(items.iter().filter(|(k, _)| is_secret(k)).map(|(k, v)| (k.clone(), v.clone())));
+                    self.secrets.save(&next)?;
+                }
                 for (key, value) in items {
-                    if is_secret(&key) {
-                        self.load_secrets(&mut local)?;
-                        secrets_changed = true;
-                    } else {
+                    if !is_secret(&key) {
                         self.write_file(&key, &value)?;
                     }
                     let old = local.values.insert(key.clone(), value.clone());
                     if old.as_ref() != Some(&value) {
                         changes.insert(key, Change { old_value: old, new_value: Some(value) });
                     }
-                }
-                if secrets_changed {
-                    self.save_secrets(&local)?;
                 }
             }
         }
@@ -165,20 +166,19 @@ impl Store {
             }
             Area::Local => {
                 let mut local = self.local.lock().unwrap();
-                let mut secrets_changed = false;
+                if keys.iter().any(|k| is_secret(k)) {
+                    self.load_secrets(&mut local)?;
+                    let mut next = secrets_of(&local.values);
+                    next.retain(|k, _| !keys.contains(k));
+                    self.secrets.save(&next)?;
+                }
                 for key in keys {
-                    if is_secret(key) {
-                        self.load_secrets(&mut local)?;
-                        secrets_changed = true;
-                    } else {
+                    if !is_secret(key) {
                         self.remove_file(key)?;
                     }
                     if let Some(old) = local.values.remove(key) {
                         changes.insert(key.clone(), Change { old_value: Some(old), new_value: None });
                     }
-                }
-                if secrets_changed {
-                    self.save_secrets(&local)?;
                 }
             }
         }
@@ -210,16 +210,6 @@ impl Store {
         Ok(())
     }
 
-    fn save_secrets(&self, local: &Local) -> io::Result<()> {
-        let mut out = Map::new();
-        for key in SECRET_KEYS {
-            if let Some(v) = local.values.get(key) {
-                out.insert(key.to_string(), v.clone());
-            }
-        }
-        self.secrets.save(&out)
-    }
-
     fn file_for(&self, key: &str) -> PathBuf {
         self.dir.join("local").join(format!("{}.json", encode_key(key)))
     }
@@ -238,6 +228,11 @@ impl Store {
 
 fn is_secret(key: &str) -> bool {
     SECRET_KEYS.contains(&key)
+}
+
+/// The secrets among the local values, as the keychain item holds them.
+fn secrets_of(values: &HashMap<String, Value>) -> Map<String, Value> {
+    SECRET_KEYS.iter().filter_map(|k| values.get(*k).map(|v| (k.to_string(), v.clone()))).collect()
 }
 
 fn pick(values: &HashMap<String, Value>, keys: Option<&[String]>) -> Map<String, Value> {
@@ -287,40 +282,102 @@ pub fn decode_key(name: &str) -> Option<String> {
 
 // ── Secrets ──────────────────────────────────────────────────────────────
 
-/// The system keychain: one generic password holding the secrets as JSON.
+/// The system keychain: the secrets as JSON in generic passwords under
+/// "Selection AI". Windows keeps at most 2560 bytes (1280 UTF-16 units) per
+/// credential, less than a signed-in session plus two API keys, so the JSON
+/// is split across "secrets", "secrets.1", … there; the first holds the
+/// count and is written last, so a write cut short leaves the old one whole.
 #[cfg(all(any(target_os = "macos", windows), not(feature = "test-hook")))]
 pub struct Keychain;
 
 #[cfg(all(any(target_os = "macos", windows), not(feature = "test-hook")))]
 impl Keychain {
     const SERVICE: &'static str = "Selection AI";
-    const ACCOUNT: &'static str = "secrets";
+    const MAX_UNITS: usize = if cfg!(windows) { 1200 } else { usize::MAX };
 
-    fn entry() -> io::Result<keyring::Entry> {
-        keyring::Entry::new(Self::SERVICE, Self::ACCOUNT).map_err(io::Error::other)
+    fn entry(n: usize) -> io::Result<keyring::Entry> {
+        let account = if n == 0 { "secrets".to_string() } else { format!("secrets.{n}") };
+        keyring::Entry::new(Self::SERVICE, &account).map_err(io::Error::other)
+    }
+
+    /// The chunk's text, or None if there is no such credential.
+    fn read(n: usize) -> io::Result<Option<String>> {
+        match Self::entry(n)?.get_password() {
+            Ok(text) => Ok(Some(text)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(io::Error::other(e)),
+        }
+    }
+
+    fn delete(n: usize) -> io::Result<bool> {
+        match Self::entry(n)?.delete_credential() {
+            Ok(()) => Ok(true),
+            Err(keyring::Error::NoEntry) => Ok(false),
+            Err(e) => Err(io::Error::other(e)),
+        }
     }
 }
 
 #[cfg(all(any(target_os = "macos", windows), not(feature = "test-hook")))]
 impl Secrets for Keychain {
     fn load(&self) -> io::Result<Map<String, Value>> {
-        match Self::entry()?.get_password() {
-            Ok(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
-            Err(keyring::Error::NoEntry) => Ok(Map::new()),
-            Err(e) => Err(io::Error::other(e)),
-        }
+        let Some(first) = Self::read(0)? else { return Ok(Map::new()) };
+        let json = join_chunks(&first, |n| Self::read(n).ok().flatten());
+        Ok(json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default())
     }
 
     fn save(&self, secrets: &Map<String, Value>) -> io::Result<()> {
-        let entry = Self::entry()?;
-        if secrets.is_empty() {
-            return match entry.delete_credential() {
-                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-                Err(e) => Err(io::Error::other(e)),
-            };
+        let count = if secrets.is_empty() {
+            0
+        } else {
+            let chunks = split_chunks(&serde_json::to_string(secrets)?, Self::MAX_UNITS);
+            for (n, chunk) in chunks.iter().enumerate().skip(1) {
+                Self::entry(n)?.set_password(chunk).map_err(io::Error::other)?;
+            }
+            Self::entry(0)?.set_password(&chunks[0]).map_err(io::Error::other)?;
+            chunks.len()
+        };
+        // Whatever is left from a longer (or any) earlier value.
+        if count == 0 {
+            Self::delete(0)?;
         }
-        entry.set_password(&serde_json::to_string(secrets)?).map_err(io::Error::other)
+        let mut n = count.max(1);
+        while Self::delete(n)? {
+            n += 1;
+        }
+        Ok(())
     }
+}
+
+/// Splits `text` into credentials of at most `max_units` UTF-16 units; the
+/// first starts with how many there are ("3\n…").
+#[cfg_attr(not(all(any(target_os = "macos", windows), not(feature = "test-hook"))), allow(dead_code))]
+pub fn split_chunks(text: &str, max_units: usize) -> Vec<String> {
+    let mut chunks = vec![String::new()];
+    let mut units = 0;
+    for c in text.chars() {
+        if units + c.len_utf16() > max_units && !chunks.last().unwrap().is_empty() {
+            chunks.push(String::new());
+            units = 0;
+        }
+        chunks.last_mut().unwrap().push(c);
+        units += c.len_utf16();
+    }
+    let count = chunks.len();
+    chunks[0].insert_str(0, &format!("{count}\n"));
+    chunks
+}
+
+/// Puts the chunks back together; None if any is missing.
+#[cfg_attr(not(all(any(target_os = "macos", windows), not(feature = "test-hook"))), allow(dead_code))]
+pub fn join_chunks(first: &str, mut read: impl FnMut(usize) -> Option<String>) -> Option<String> {
+    let (count, head) = first.split_once('\n')?;
+    let count: usize = count.parse().ok()?;
+    let mut out = head.to_string();
+    for n in 1..count {
+        out.push_str(&read(n)?);
+    }
+    Some(out)
 }
 
 /// A file readable only by this user: Linux (a development target, with no
@@ -338,13 +395,19 @@ impl Secrets for SecretsFile {
     }
 
     fn save(&self, secrets: &Map<String, Value>) -> io::Result<()> {
-        write_atomic(&self.0, &serde_json::to_vec(secrets)?)?;
+        // Readable only by this user from the moment it exists, not after.
+        let tmp = self.0.with_extension("tmp");
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&self.0, fs::Permissions::from_mode(0o600))?;
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
         }
-        Ok(())
+        let mut file = options.open(&tmp)?;
+        std::io::Write::write_all(&mut file, &serde_json::to_vec(secrets)?)?;
+        drop(file);
+        fs::rename(&tmp, &self.0)
     }
 }
 
@@ -601,6 +664,59 @@ mod tests {
 
         store.remove(Area::Local, &keys(&["keys"])).unwrap();
         assert!(secrets.0.lock().unwrap().is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_refused_keychain_write_changes_nothing() {
+        struct Refusing;
+        impl Secrets for Refusing {
+            fn load(&self) -> io::Result<Map<String, Value>> {
+                Ok(Map::new())
+            }
+            fn save(&self, _: &Map<String, Value>) -> io::Result<()> {
+                Err(io::Error::other("TooLong"))
+            }
+        }
+        let dir = temp_dir("refused");
+        let store = Store::open(&dir, Box::new(Refusing)).unwrap();
+        let mut items = Map::new();
+        items.insert("keys".into(), json!({ "anthropic": "sk-ant-x" }));
+        assert!(store.set(Area::Local, items).is_err());
+        assert!(store.get(Area::Local, Some(&keys(&["keys"]))).unwrap().is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn long_secrets_are_split_for_windows_and_put_back_together() {
+        // A signed-in session and two keys, with an accented name: past one credential.
+        let text = format!("{{\"account\":\"{}é\",\"keys\":\"{}\"}}", "j".repeat(1500), "k".repeat(900));
+        let chunks = split_chunks(&text, 1200);
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks[0].starts_with("3\n"));
+        for c in &chunks {
+            assert!(c.encode_utf16().count() <= 1200 + 3, "{}", c.len());
+        }
+        let back = join_chunks(&chunks[0], |n| chunks.get(n).cloned()).unwrap();
+        assert_eq!(back, text);
+        // A chunk gone missing: nothing, rather than half a secret.
+        assert_eq!(join_chunks(&chunks[0], |n| if n == 2 { None } else { chunks.get(n).cloned() }), None);
+        // Short values stay whole (macOS has no limit).
+        assert_eq!(split_chunks("{}", usize::MAX), vec!["1\n{}".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_secrets_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("private");
+        fs::create_dir_all(&dir).unwrap();
+        let file = SecretsFile(dir.join("secrets.json"));
+        let mut s = Map::new();
+        s.insert("keys".into(), json!({ "anthropic": "sk-ant-x" }));
+        file.save(&s).unwrap();
+        assert_eq!(fs::metadata(dir.join("secrets.json")).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(file.load().unwrap(), s);
         let _ = fs::remove_dir_all(&dir);
     }
 

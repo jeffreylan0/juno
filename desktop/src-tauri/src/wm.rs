@@ -76,18 +76,32 @@ pub fn display_under_pointer(app: &AppHandle) -> Option<(Display, f64)> {
     geometry::display_at(&all, at, Space::native()).map(|i| (all[i].clone(), scale))
 }
 
+/// Moves first, then sizes: on Windows a move onto a monitor at another
+/// scale rescales the window (WM_DPICHANGED), which would undo a size set
+/// before it.
 fn place(window: &WebviewWindow, placement: Placement) -> tauri::Result<()> {
     match placement {
         Placement::Logical(r) => {
-            window.set_size(LogicalSize::new(r.width, r.height))?;
             window.set_position(LogicalPosition::new(r.x, r.y))?;
+            window.set_size(LogicalSize::new(r.width, r.height))?;
         }
         Placement::Physical(r) => {
-            window.set_size(PhysicalSize::new(r.width.round() as u32, r.height.round() as u32))?;
             window.set_position(PhysicalPosition::new(r.x.round() as i32, r.y.round() as i32))?;
+            window.set_size(PhysicalSize::new(r.width.round() as u32, r.height.round() as u32))?;
         }
     }
     Ok(())
+}
+
+/// What a window's title bar and borders add to its content, in logical pixels.
+fn frame_of(window: &WebviewWindow) -> (f64, f64) {
+    match (window.outer_size(), window.inner_size(), window.scale_factor()) {
+        (Ok(outer), Ok(inner), Ok(scale)) if outer.width > 0 && outer.height > 0 => (
+            outer.width.saturating_sub(inner.width) as f64 / scale,
+            outer.height.saturating_sub(inner.height) as f64 / scale,
+        ),
+        _ => (0.0, 0.0),
+    }
 }
 
 pub fn make_core(app: &AppHandle) -> tauri::Result<WebviewWindow> {
@@ -219,7 +233,7 @@ pub fn open_panel(app: &AppHandle, state: &SharedOverlay, focus: bool) -> tauri:
             #[cfg(target_os = "macos")]
             mac::float_above_everything(&window, false);
             if let Some(d) = &display {
-                place(&window, d.panel_placement(Space::native(), PANEL_WIDTH))?;
+                place(&window, d.panel_placement(Space::native(), PANEL_WIDTH).content(frame_of(&window), d.scale))?;
             }
             window
         }

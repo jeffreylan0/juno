@@ -65,7 +65,7 @@ export class App {
     readonly display: number,
     readonly port: number,
     private xvfb: ChildProcess,
-    private app: ChildProcess,
+    readonly app: ChildProcess,
     private data: string,
   ) {
     for (const stream of [app.stdout, app.stderr]) stream?.on('data', (b: Buffer) => this.outputs.push(b.toString()));
@@ -88,13 +88,23 @@ export class App {
         SAI_TEST_PORT: String(port),
         WEBKIT_DISABLE_DMABUF_RENDERER: '1',
         NO_AT_BRIDGE: '1',
+        // No session bus: nothing shared between tests (or with the machine's
+        // own session), and nothing waits on one being started.
+        DBUS_SESSION_BUS_ADDRESS: 'disabled:',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const it = new App(display, port, xvfb, app, data);
-    await waitFor('the test hook', () => it.windows().then((w) => w.some((x) => x.label === 'overlay')), 30_000);
-    await waitFor('the core page', () => it.read('core', `typeof browser === 'object'`), 30_000);
-    await waitFor('the overlay page', () => it.read('overlay', `typeof browser === 'object'`), 30_000);
+    try {
+      await waitFor('the test hook', () => it.windows().then((w) => w.some((x) => x.label === 'overlay')), 30_000);
+      await waitFor('the core page', () => it.read('core', `typeof browser === 'object'`), 30_000);
+      await waitFor('the overlay page', () => it.read('overlay', `typeof browser === 'object'`), 30_000);
+    } catch (err) {
+      // Never leave a half-started app behind for the next test, and say why.
+      const exited = it.app.exitCode !== null ? ` (the app exited with ${it.app.exitCode})` : '';
+      await it.close();
+      throw new Error(`${(err as Error).message}${exited}\n── app output ──\n${it.log.slice(-4000)}`);
+    }
     return it;
   }
 

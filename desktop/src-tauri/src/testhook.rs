@@ -76,7 +76,13 @@ fn param(query: &str, name: &str) -> Option<f64> {
 }
 
 fn handle(app: &AppHandle, method: &str, path: &str, query: &str, body: &str) -> Result<Value, String> {
-    let shared = app.state::<Shared>();
+    // Started before the rest of setup: until it is done, only /windows answers.
+    let Some(shared) = app.try_state::<Shared>() else {
+        return match (method, path) {
+            ("GET", "/windows") => Ok(json!([])),
+            _ => Err("the app is still starting".into()),
+        };
+    };
     match (method, path) {
         ("POST", "/summon") => {
             crate::summon(app);

@@ -14,14 +14,18 @@ import { readPointerState } from '../../desktop/src/overlay/pointer';
 type Handler = (payload: unknown) => void;
 
 /** The native core, played in memory: storage areas, events by window, commands. */
-function fakeCore() {
+function fakeCore(opts: { delay?: (event: string) => number } = {}) {
   const listeners = new Map<string, Map<string, Set<Handler>>>();
   const areas: Record<string, Map<string, unknown>> = { local: new Map(), session: new Map() };
   const invoked: Array<[string, string, Record<string, unknown> | undefined]> = [];
   const deliver = (label: string, event: string, payload: unknown) => {
     // Through JSON, as the real IPC does.
     const copy = payload === undefined ? undefined : JSON.parse(JSON.stringify(payload));
-    for (const h of listeners.get(label)?.get(event) ?? []) queueMicrotask(() => h(copy));
+    const wait = opts.delay?.(event) ?? 0;
+    for (const h of listeners.get(label)?.get(event) ?? []) {
+      if (wait) setTimeout(() => h(copy), wait);
+      else queueMicrotask(() => h(copy));
+    }
   };
   const emitAll = (event: string, payload: unknown) => {
     for (const label of listeners.keys()) deliver(label, event, payload);
@@ -76,7 +80,10 @@ function fakeCore() {
 }
 
 async function windows(...labels: string[]) {
-  const hub = fakeCore();
+  return await windowsOver(fakeCore(), ...labels);
+}
+
+async function windowsOver(hub: ReturnType<typeof fakeCore>, ...labels: string[]) {
   const opened = Object.fromEntries(labels.map((l) => [l, createBrowser(hub.transport(l), { origin: 'tauri://localhost' })]));
   await Promise.all(Object.values(opened).map((b) => b.ready));
   return { hub, ...opened } as { hub: ReturnType<typeof fakeCore> } & Record<string, ReturnType<typeof createBrowser>>;
@@ -191,6 +198,24 @@ describe('ports', () => {
 
     // The panel window is closed: the core hears the port go.
     w.hub.close('panel');
+    await vi.waitFor(() => expect(closed).toHaveBeenCalledTimes(1));
+  });
+
+  it('keep a first message that overtook the connect (each event is its own command in the native core)', async () => {
+    const w = await windowsOver(fakeCore({ delay: (e) => (e === 'rt:connect' ? 15 : 0) }), 'core', 'panel');
+    const fromPanel = vi.fn();
+    const closed = vi.fn();
+    w.core!.runtime.onConnect.addListener((port) => {
+      port.onMessage.addListener(fromPanel);
+      port.onDisconnect.addListener(closed);
+    });
+    const port = w.panel!.runtime.connect({ name: 'panel' });
+    port.postMessage({ type: 'hello', windowId: WINDOW_ID });
+    await vi.waitFor(() => expect(fromPanel).toHaveBeenCalledWith({ type: 'hello', windowId: 1 }, expect.anything()));
+
+    // And a disconnect that overtook its connect still closes it.
+    const second = w.panel!.runtime.connect({ name: 'panel' });
+    second.disconnect();
     await vi.waitFor(() => expect(closed).toHaveBeenCalledTimes(1));
   });
 

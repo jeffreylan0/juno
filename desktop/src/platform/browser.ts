@@ -22,6 +22,8 @@ export const WINDOW_ID = 1;
 export const RUNTIME_ID = 'selection-ai-desktop';
 /** How long a message waits for the core's answer before giving up. */
 const REPLY_TIMEOUT_MS = 120_000;
+/** How long a port's messages wait for a connect that was overtaken. */
+const EARLY_PORT_MS = 10_000;
 
 type Listener = (...args: never[]) => unknown;
 
@@ -190,6 +192,21 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
   // ── runtime: ports ─────────────────────────────────────────────────────
   const onConnect = new Ev<(port: Port) => void>();
   const ports = new Map<string, { port: Port; other: string; close: () => void }>();
+  /**
+   * Each event is its own async command in the native core, so a port's
+   * first message (the panel's hello, posted right after connect) can arrive
+   * before the connect itself. It waits here for its port, briefly.
+   */
+  const early = new Map<string, { messages: unknown[]; closed: boolean }>();
+  const earlyFor = (portId: string) => {
+    let e = early.get(portId);
+    if (!e) {
+      e = { messages: [], closed: false };
+      early.set(portId, e);
+      setTimeout(() => early.delete(portId), EARLY_PORT_MS);
+    }
+    return e;
+  };
 
   const makePort = (portId: string, name: string, other: string): Port => {
     let closed = false;
@@ -243,12 +260,24 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
       });
     }),
     t.listen<Wire['reply']>('rt:reply', ({ id, value }) => replies.get(id)?.(value ?? undefined)),
-    t.listen<Wire['connect']>('rt:connect', ({ portId, name, from }) => onConnect.fire(makePort(portId, name, from))),
+    t.listen<Wire['connect']>('rt:connect', ({ portId, name, from }) => {
+      const port = makePort(portId, name, from);
+      onConnect.fire(port);
+      const waiting = early.get(portId);
+      early.delete(portId);
+      for (const msg of waiting?.messages ?? []) port.onMessage.fire(msg, port);
+      if (waiting?.closed) ports.get(portId)?.close();
+    }),
     t.listen<Wire['port']>('rt:port', ({ portId, msg }) => {
       const p = ports.get(portId)?.port;
-      p?.onMessage.fire(msg, p);
+      if (p) p.onMessage.fire(msg, p);
+      else earlyFor(portId).messages.push(msg);
     }),
-    t.listen<Wire['disconnect']>('rt:disconnect', ({ portId }) => ports.get(portId)?.close()),
+    t.listen<Wire['disconnect']>('rt:disconnect', ({ portId }) => {
+      const p = ports.get(portId);
+      if (p) p.close();
+      else earlyFor(portId).closed = true;
+    }),
     // A window was closed (the native core says): its ports are gone.
     t.listen<string>('rt:gone', (label) => {
       for (const p of [...ports.values()]) if (p.other === label) p.close();
