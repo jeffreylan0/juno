@@ -4,8 +4,10 @@
  * answers, the cloud copy, the connection status); this file is the
  * desktop half, in place of tabs, the toolbar icon and the side panel:
  *
- *  - the shortcut (or the menu bar icon) brings the bar up, armed in the
- *    last mode used, on the display under the pointer;
+ *  - the shortcut (or the menu bar icon, or opening the app) brings the bar
+ *    up, armed in the last mode used, on the display under the pointer;
+ *    while macOS has not let the app see the screen, the bar comes up with
+ *    a note asking for it instead (overlay/notices.ts);
  *  - a selection is committed: the panel opens, docked right;
  *  - the selection is done: the native core captures that display without
  *    the app's own windows and crops it; the selection joins the chat;
@@ -27,7 +29,8 @@ import { ChatEngine, type KeptCapture } from '@/lib/engine';
 import { PANEL_PORT, isRuntimeMessage, type BarControlMsg, type PanelPortMsg, type RuntimeMessage, type SelectionDoneMsg } from '@/lib/messages';
 import { testKey } from '@/lib/providers/byok';
 import { lastKindItem } from '@/lib/storage';
-import { pageTitle, type OverlayTip } from './tips';
+import type { NoticeReply } from '../overlay/notices';
+import { pageTitle, type OverlayNotice } from './tips';
 
 const W = WINDOW_ID;
 
@@ -49,35 +52,54 @@ let barUp = false;
 let overlayLoaded: () => void = () => {};
 let overlayReady = new Promise<void>((r) => (overlayLoaded = r));
 
-async function tellOverlay(msg: BarControlMsg | { type: 'overlay:tip'; tip: OverlayTip }): Promise<void> {
+async function tellOverlay(msg: BarControlMsg | { type: 'overlay:notice'; notice: OverlayNotice | null }): Promise<void> {
   await Promise.race([overlayReady, new Promise((r) => setTimeout(r, 4000))]);
   await browser.tell('overlay', msg);
 }
 
-/** The yellow tooltip, at the top of the display under the pointer. */
-async function tip(which: OverlayTip): Promise<void> {
-  if (!barUp) await transport.invoke('overlay_show', { focus: false });
-  await tellOverlay({ type: 'overlay:tip', tip: which });
-}
-
 // ── The bar ──────────────────────────────────────────────────────────────
 
-/** The shortcut or the menu: the bar comes up selecting in the last mode used. */
+/** Screen Recording was asked for (System Settings opened) since the app started. */
+let screenAsked = false;
+/** "Not now" to Screen Recording: until a selection fails for it, the bar stops asking. */
+let screenLater = false;
+/** Another app holds the shortcut, and the bar has not said so yet. */
+let shortcutUntold = false;
+
+/**
+ * The shortcut, the menu, or opening the app: the bar comes up selecting in
+ * the last mode used. On macOS, until the app may record the screen, it
+ * comes up with nothing armed and a note asking for that instead.
+ */
 async function summon(): Promise<void> {
-  // macOS: nothing can be selected until the app may record the screen. The
-  // first time, this shows the system's own prompt; after that, the tooltip
-  // says where the switch is.
-  if ((await transport.invoke<string>('screen_access')) === 'denied') {
-    await transport.invoke('screen_access_request');
-    await tip('screen-permission');
-    return;
-  }
+  const blocked = (await transport.invoke<string>('screen_access')) === 'denied' && !screenLater;
   const mode = await lastKindItem.getValue();
   const ghost = !!(await getCurrent(W))?.temporary;
-  // Focused, so Escape (and Enter on an adjusted box) reach it while selecting.
+  // Focused, so Escape (and Enter on a drawn box) reach it while selecting.
   await transport.invoke('overlay_show', { focus: true });
   barUp = true;
-  await tellOverlay({ type: 'bar:show', mode, ghost });
+  let notice: OverlayNotice | null = null;
+  if (blocked) notice = screenAsked ? 'screen-restart' : 'screen-permission';
+  else if (shortcutUntold) notice = 'shortcut-taken';
+  if (notice === 'shortcut-taken') shortcutUntold = false;
+  await tellOverlay({ type: 'overlay:notice', notice });
+  await tellOverlay({ type: 'bar:show', mode, ghost, arm: !blocked });
+}
+
+/** The bar's "Turn on Screen Recording": the bar steps aside for the system's prompt and settings. */
+async function enableScreen(): Promise<void> {
+  screenAsked = true;
+  await finishChat();
+  // The first time, macOS shows its own prompt and lists the app in System
+  // Settings; after that only the switch there will do.
+  await transport.invoke('screen_access_request');
+  await transport.invoke('open_privacy_settings');
+}
+
+/** The bar's "Not now": selecting goes ahead; a screenshot that fails for it brings the note back. */
+async function screenNotNow(): Promise<void> {
+  screenLater = true;
+  await summon();
 }
 
 /** ✕ on the bar or the panel (or Escape before anything was selected): both go, the chat is finished. */
@@ -147,7 +169,10 @@ async function handleSelectionDone(msg: SelectionDoneMsg): Promise<void> {
         return { dataUrl: c.dataUrl, width: c.width, height: c.height, page: { url: '', title: c.source ? pageTitle(c.source) : '' } };
       } catch (raw) {
         const failure = raw as Partial<CaptureFailure>;
-        if (failure?.code === 'permission') void tip('screen-permission');
+        if (failure?.code === 'permission') {
+          screenLater = false;
+          if (barUp) void tellOverlay({ type: 'overlay:notice', notice: screenAsked ? 'screen-restart' : 'screen-permission' });
+        }
         throw Object.assign(new Error(failure?.message ?? String(raw)), {
           notice:
             failure?.code === 'permission'
@@ -196,13 +221,21 @@ function reply(work: Promise<unknown>, sendResponse: (value: unknown) => void): 
   return true;
 }
 
+const DESKTOP_MESSAGES = new Set(['overlay:ready', 'screen:enable', 'screen:later']);
+
 browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
-  if (!isRuntimeMessage(raw) && (raw as { type?: string })?.type !== 'overlay:ready') return;
-  const msg = raw as RuntimeMessage | { type: 'overlay:ready' };
+  if (!isRuntimeMessage(raw) && !DESKTOP_MESSAGES.has((raw as { type?: string })?.type ?? '')) return;
+  const msg = raw as RuntimeMessage | NoticeReply | { type: 'overlay:ready' };
   switch (msg.type) {
     case 'overlay:ready':
       overlayLoaded();
       overlayReady = Promise.resolve();
+      return;
+    case 'screen:enable':
+      void enableScreen();
+      return;
+    case 'screen:later':
+      void screenNotNow();
       return;
     case 'selection:committed':
       void openPanel();
@@ -300,10 +333,15 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
 void transport.listen('app:summon', () => void summon());
 void browser.ready.then(() => browser.tell('overlay', { type: 'overlay:ping' }));
 
-// Another app holds the shortcut: say so once, at start.
+// Opening the app brings the bar up, as the shortcut does (unless it was
+// started out of sight, with --hidden). Another app holding the shortcut is
+// said once, on the bar.
 void transport
-  .invoke<{ shortcut: { error: string | null } }>('app_info')
-  .then((info) => info.shortcut.error && setTimeout(() => void tip('shortcut-taken'), 1500))
-  .catch(() => {});
+  .invoke<{ hidden: boolean; shortcut: { error: string | null } }>('app_info')
+  .then(async (info) => {
+    shortcutUntold = !!info.shortcut.error;
+    if (!info.hidden) await summon();
+  })
+  .catch((err) => console.warn('[selection-ai] start', err));
 
 void browser.ready.then(() => console.info('[selection-ai] core ready'));

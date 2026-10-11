@@ -72,7 +72,7 @@ test('the bar stays up through a selection and waits; a chip starts the next one
   // Waiting: no mode pressed, nothing over the page, the page takes clicks.
   const overlay = page.locator(OVERLAY);
   await expect(overlay).toHaveAttribute('data-state', 'ready');
-  await expect(page.locator(`${BAR} .say`)).toHaveText('Pick a mode to select more');
+  await expect(page.locator(`${BAR} .say`)).toHaveText('Pick a mode to select');
   await expect(page.locator(`${BAR} .chip[aria-pressed="true"]`)).toHaveCount(0);
   const p = (await page.locator('#problem').boundingBox())!;
   expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.id, { x: p.x + 5, y: p.y + p.height / 2 })).toBe('problem');

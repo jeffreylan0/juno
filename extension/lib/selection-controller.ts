@@ -12,6 +12,7 @@
  */
 import type { Rect, SelectionKind } from '@shared/payload';
 import { BRAND } from '@/brand';
+import type { BarNotice } from '@/entrypoints/content/bar';
 import { Overlay, type OverlayHost } from '@/entrypoints/content/overlay';
 import { dismissPageTooltip, showPageTooltip } from './tooltip';
 import { availableModes, detectPdf, readerUrlFor, type PdfContext } from './pdf-detect';
@@ -72,13 +73,19 @@ export class SelectionController {
     return this.modes;
   }
 
+  /** A note attached under the bar (the app's permissions, say), or null to take it away. */
+  notice(notice: BarNotice | null): void {
+    if (!this.gone) this.overlay.setNotice(notice);
+  }
+
   /** A message from the background for the bar on this page. */
   handle(msg: BarControlMsg): void {
     if (this.gone) return;
     switch (msg.type) {
       case 'bar:show':
         this.setGhost(msg.ghost);
-        this.summoned(msg.mode);
+        if (msg.arm === false) this.waiting();
+        else this.summoned(msg.mode);
         return;
       case 'bar:hide':
         this.hide();
@@ -94,6 +101,16 @@ export class SelectionController {
     const kind = this.modes.includes(mode) ? mode : (this.modes[0] as SelectionKind);
     if (this.armed === kind) return; // already selecting in it (perhaps still setting up)
     this.soon(() => void this.start(kind));
+  }
+
+  /** The bar up with nothing armed; a selection already armed carries on. */
+  private waiting(): void {
+    if (this.armed) return;
+    this.soon(() => {
+      if (this.armed) return;
+      this.generation++;
+      this.overlay.ready(this.modes);
+    });
   }
 
   /** Runs `fn` now, or right after the screenshot being taken, if one is. */
@@ -266,7 +283,7 @@ export class SelectionController {
     }
 
     if (kind === 'box') {
-      const adjust = await this.adjustBox();
+      const adjust = await this.waitsForSend();
       if (!current()) return null;
       const armed = this.overlay.selectBox(this.modes, { adjust });
       if (this.pdf.isPdf) this.offerReader();
@@ -280,7 +297,9 @@ export class SelectionController {
     }
 
     if (kind === 'freeform') {
-      const armed = this.overlay.selectFreeform(this.modes);
+      const adjust = await this.waitsForSend();
+      if (!current()) return null;
+      const armed = this.overlay.selectFreeform(this.modes, { adjust });
       if (this.pdf.isPdf) this.offerReader();
       const lasso = await armed;
       if (!lasso) return null;
@@ -312,7 +331,8 @@ export class SelectionController {
     await nextPaint();
   }
 
-  private async adjustBox(): Promise<boolean> {
+  /** The setting: a drawn box or outline waits for Send (or Enter) instead of going at once. */
+  private async waitsForSend(): Promise<boolean> {
     try {
       return (await getSettings()).adjustBox;
     } catch {

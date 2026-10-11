@@ -14,7 +14,7 @@
  * document in capture, which never needed focus in the first place.
  */
 import type { Rect, SelectionKind } from '@shared/payload';
-import { Bar, BAR_STYLE } from './bar';
+import { Bar, BAR_STYLE, type BarNotice } from './bar';
 import { BoxSelector, HANDLES } from './select-box';
 import { ElementPicker, type PickedElement } from './select-element';
 import { LassoSelector, type Lasso } from './select-freeform';
@@ -26,10 +26,14 @@ const STYLE = `
 .root { position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; }
 .backdrop { position: absolute; inset: 0; pointer-events: none; }
 .backdrop.interactive { pointer-events: auto; cursor: crosshair; }
+/* Armed, the screen dims a little: a selection is about to be made. Once one
+ * is being drawn, the dim moves outside it (the box's shadow, the lasso's scrim). */
+:host([data-state='armed']) .backdrop.interactive { background: var(--sai-scrim, rgba(20, 20, 19, 0.26)); animation: sai-dim 180ms ease-out; }
+:host([data-state='armed']) .backdrop.interactive.steady { animation: none; }
+@keyframes sai-dim { from { background: transparent; } }
 .box {
-  position: fixed; border: 2px dashed var(--sai-accent, #3b82f6);
-  background: color-mix(in srgb, var(--sai-accent, #3b82f6) 8%, transparent);
-  box-shadow: 0 0 0 100vmax var(--sai-scrim, rgba(15, 23, 42, 0.35));
+  position: fixed; border: 2px dashed rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 0 100vmax var(--sai-scrim, rgba(20, 20, 19, 0.26));
   pointer-events: none; display: none;
 }
 .box.adjusting { border-style: solid; }
@@ -38,8 +42,8 @@ const STYLE = `
 .handle {
   position: absolute; width: 10px; height: 10px; display: none;
   transform: translate(-50%, -50%); margin: -1px 0 0 -1px;
-  background: #fff; border: 2px solid var(--sai-accent, #3b82f6); border-radius: 3px;
-  box-sizing: border-box;
+  background: #fff; border: 1px solid rgba(0, 0, 0, 0.4); border-radius: 3px;
+  box-sizing: border-box; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 .box.adjusting .handle { display: block; }
 .handle[data-h='nw'] { left: 0; top: 0; }
@@ -51,41 +55,53 @@ const STYLE = `
 .handle[data-h='sw'] { left: 0; top: 100%; }
 .handle[data-h='w'] { left: 0; top: 50%; }
 .box.element {
-  border: 2px solid var(--sai-accent, #3b82f6); box-shadow: none; border-radius: 3px;
-  background: color-mix(in srgb, var(--sai-accent, #3b82f6) 10%, transparent);
+  border: 2px solid var(--sai-accent, #d97757); box-shadow: none; border-radius: 3px;
+  background: color-mix(in srgb, var(--sai-accent, #d97757) 10%, transparent);
   transition: left 60ms ease, top 60ms ease, width 60ms ease, height 60ms ease;
 }
 .tag {
   position: fixed; display: none; pointer-events: none; white-space: nowrap;
   font: 600 11px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-  color: #fff; background: var(--sai-accent, #3b82f6); padding: 4px 7px; border-radius: 5px;
+  color: #fff; background: var(--sai-accent, #d97757); padding: 4px 7px; border-radius: 5px;
 }
 .lasso { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; overflow: visible; }
-.lasso-scrim { fill: var(--sai-scrim, rgba(15, 23, 42, 0.35)); }
+.lasso-scrim { fill: var(--sai-scrim, rgba(20, 20, 19, 0.26)); }
 .lasso-line {
-  fill: color-mix(in srgb, var(--sai-accent, #3b82f6) 8%, transparent);
-  stroke: var(--sai-accent, #3b82f6); stroke-width: 2; stroke-dasharray: 6 4;
-  stroke-linejoin: round; stroke-linecap: round;
+  fill: none; stroke: rgba(255, 255, 255, 0.95); stroke-width: 2; stroke-dasharray: 6 4;
+  stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.45));
 }
-@media (prefers-reduced-motion: reduce) { .box.element { transition: none; } }
+.lasso.kept .lasso-line { stroke-dasharray: none; }
+@media (prefers-reduced-motion: reduce) { .box.element { transition: none; } :host([data-state='armed']) .backdrop.interactive { animation: none; } }
+/* By the pointer, after it has been there a moment: what to do, or how to stop. */
 .tip {
-  position: fixed; left: 0; top: 0; display: none; align-items: center; gap: 6px;
-  font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-  color: var(--sai-bar-fg, #f8fafc); background: var(--sai-bar-bg, rgba(15, 23, 42, 0.94));
-  padding: 6px 10px; border-radius: 9px; white-space: nowrap;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3); pointer-events: none;
+  position: fixed; left: 0; top: 0; display: flex; align-items: center; gap: 5px;
+  font: 500 12px/1.3 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  color: var(--sai-hint-fg, #1f1e1d); background: var(--sai-hint-bg, #f5f4ef);
+  padding: 5px 8px; border-radius: 7px; white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.12); pointer-events: none;
+  opacity: 0; visibility: hidden; transition: opacity 120ms ease, visibility 0s linear 120ms;
 }
-.tip.on { display: flex; }
+.tip.on { opacity: 1; visibility: visible; transition: opacity 120ms ease; }
 .tip kbd {
-  font: inherit; font-size: 11px; border: 1px solid rgba(255, 255, 255, 0.4);
-  border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px;
+  font: inherit; font-size: 11px; border: 1px solid rgba(31, 30, 29, 0.25);
+  border-bottom-width: 2px; border-radius: 4px; padding: 0 4px;
 }
+@media (prefers-reduced-motion: reduce) { .tip, .tip.on { transition: none; } }
 ${BAR_STYLE}
 `;
 
 /** How far the tooltip sits from the pointer. Close enough to read without
  * moving your eyes off the corner you are dragging. */
-const TIP_OFFSET = { x: 8, y: 10 };
+const TIP_OFFSET = { x: 12, y: 14 };
+
+/** How long the pointer is over the screen (or dragging) before the cursor tooltip comes up. */
+export const CURSOR_TIP_DELAY_MS = 600;
+
+/** What the cursor tooltip says while a selection is armed, for the modes drawn on the overlay. */
+const CURSOR_HINT: Partial<Record<SelectionKind, string>> = {
+  box: 'Drag to select',
+  freeform: 'Draw around it',
+};
 
 /**
  * The bar's entrance and exit: it opens outwards from its middle, left and
@@ -93,8 +109,8 @@ const TIP_OFFSET = { x: 8, y: 10 };
  * it is squashed on the way; the clip reaches past the edges so the shadow
  * comes with it.
  */
-const CLOSED = 'inset(-40px 50% -40px 50% round 14px)';
-const OPEN = 'inset(-40px -40px -40px -40px round 14px)';
+const CLOSED = 'inset(-40px 50% -40px 50% round 18px)';
+const OPEN = 'inset(-40px -40px -40px -40px round 18px)';
 const ENTER_MS = 220;
 const LEAVE_MS = 160;
 
@@ -113,15 +129,15 @@ export interface OverlayHandlers {
 }
 
 export interface BoxOptions {
-  /** Keep the drawn box on screen to resize before asking. */
+  /** Keep the drawn selection on screen (a box to resize, an outline to redraw) until Send. */
   adjust: boolean;
 }
 
 /**
  * ready: just the bar, between selections; nothing is armed. armed: waiting
- * for the first drag. drawing: a pointer drag is in progress. adjusting: a box
- * is drawn and waits to be resized or sent. sending: the selection is made
- * and its screenshot is being taken.
+ * for the first drag. drawing: a pointer drag is in progress. adjusting: a
+ * selection is drawn and waits to be adjusted or sent. sending: the selection
+ * is made and its screenshot is being taken.
  */
 type OverlayState = 'ready' | 'armed' | 'drawing' | 'adjusting' | 'sending';
 
@@ -152,6 +168,16 @@ export class Overlay {
   /** The bar's exit, while it plays. */
   private leaving: Animation | null = null;
   private ghost = false;
+  private notice: BarNotice | null = null;
+  /** The mode being selected in, or null while the bar waits. */
+  private kind: SelectionKind | null = null;
+  /** The selection being made waits for Send (the setting) rather than going when drawn. */
+  private submit = false;
+  /** Where the pointer last was over the overlay, for the cursor tooltip. */
+  private pointer: { x: number; y: number } | null = null;
+  private tipTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The surface just taken away had the screen dimmed (see beginSelection). */
+  private wasDimmed = false;
 
   constructor(private handlers: OverlayHandlers) {}
 
@@ -175,6 +201,8 @@ export class Overlay {
     this.abort();
     this.show(modes);
     this.clearSurface();
+    this.kind = null;
+    this.submit = false;
     this.bar!.setKind(null);
     this.setState('ready');
     this.backInShot();
@@ -225,6 +253,12 @@ export class Overlay {
     this.bar?.setGhost(on);
   }
 
+  /** A note attached under the bar (it stays, whatever is being selected, until replaced or cleared). */
+  setNotice(notice: BarNotice | null): void {
+    this.notice = notice;
+    this.bar?.setNotice(notice);
+  }
+
   /** Puts the bar up if it is not already, opening from its middle; a bar on its way out comes back. */
   private show(modes: SelectionKind[]): void {
     if (this.leaving) {
@@ -249,7 +283,6 @@ export class Overlay {
     const tip = document.createElement('div');
     tip.className = 'tip';
     tip.setAttribute(UI_ATTR, 'tip');
-    tip.append(kbd('Escape'), say('to cancel'));
 
     const bar = new Bar(modes, {
       onClose: () => {
@@ -261,8 +294,9 @@ export class Overlay {
       onGhost: () => this.handlers.onGhost(),
     });
     bar.setGhost(this.ghost);
+    bar.setNotice(this.notice);
 
-    root.append(tip, bar.el);
+    root.append(tip, bar.hintEl, bar.el);
     shadow.append(style, root);
     document.documentElement.append(host);
 
@@ -283,6 +317,8 @@ export class Overlay {
 
   private remove(): void {
     this.quietKeys();
+    clearTimeout(this.tipTimer);
+    this.tipTimer = undefined;
     this.leaving = null;
     this.host?.remove();
     this.host = null;
@@ -291,6 +327,8 @@ export class Overlay {
     this.bar = null;
     this.surface = null;
     this.state = 'ready';
+    this.kind = null;
+    this.submit = false;
     this.confirmCurrent = null;
   }
 
@@ -299,13 +337,20 @@ export class Overlay {
     this.waitingKeys = null;
   }
 
-  /** The bar, set up to select in `kind`, over a fresh drawing surface. Returns the surface. */
-  private beginSelection(kind: SelectionKind, modes: SelectionKind[]): HTMLElement {
+  /**
+   * The bar, set up to select in `kind`, over a fresh drawing surface.
+   * `submit`: the selection waits for Send. Returns the surface.
+   */
+  private beginSelection(kind: SelectionKind, modes: SelectionKind[], submit = false): HTMLElement {
+    // Switching mode: the screen is dimmed already, so it stays as it is rather than fading in again.
+    const dimmed = this.surface ? this.isDimmed() : this.wasDimmed;
     this.show(modes);
     this.clearSurface();
     // While selecting, run() owns Escape.
     this.quietKeys();
     this.backInShot();
+    this.kind = kind;
+    this.submit = submit;
     this.bar!.setKind(kind);
 
     // Box and freeform draw on a surface over the page; text and element
@@ -313,7 +358,13 @@ export class Overlay {
     // a sibling of the bar, not its parent, so clicks on our own controls can
     // never start a box.
     const surface = document.createElement('div');
-    surface.className = kind === 'box' || kind === 'freeform' ? 'backdrop interactive' : 'backdrop';
+    const interactive = kind === 'box' || kind === 'freeform';
+    surface.className = interactive ? `backdrop interactive${dimmed ? ' steady' : ''}` : 'backdrop';
+    if (interactive) {
+      surface.addEventListener('pointermove', (e) => this.moveTip(e.clientX, e.clientY));
+      // Onto the bar: the tooltip is about the screen, not the controls.
+      surface.addEventListener('pointerleave', () => this.resetTip());
+    }
     const box = document.createElement('div');
     box.className = 'box';
     for (const h of HANDLES) {
@@ -329,7 +380,13 @@ export class Overlay {
     return surface;
   }
 
+  /** Whether the screen shows dimmed: a box or outline is armed, drawn or waiting. */
+  private isDimmed(): boolean {
+    return !!this.surface?.classList.contains('interactive') && (this.state === 'armed' || this.state === 'drawing' || this.state === 'adjusting');
+  }
+
   private clearSurface(): void {
+    this.wasDimmed = this.isDimmed();
     this.surface?.remove();
     this.surface = null;
     this.confirmCurrent = null;
@@ -340,12 +397,13 @@ export class Overlay {
     this.state = state;
     const drawing = state === 'drawing';
     this.bar?.setDrawing(drawing);
-    // The cursor tooltip is for the drag itself; while adjusting, the bar
-    // carries the instructions and the Ask button.
-    this.tip?.classList.toggle('on', drawing);
     this.host?.setAttribute('data-state', state);
-    if (state === 'armed' || state === 'ready') this.bar?.resetInstruction();
     if (!drawing) this.bar?.setAdjusting(state === 'adjusting');
+    if (state === 'armed' || state === 'ready') this.bar?.resetInstruction();
+    const waits = this.submit && state !== 'ready' && state !== 'sending';
+    this.bar?.setSubmit(!waits ? 'off' : state === 'adjusting' ? 'ready' : 'waiting');
+    // Each state has its own word by the pointer (or none), after a moment.
+    this.resetTip();
   }
 
   /**
@@ -369,8 +427,41 @@ export class Overlay {
     if (!reducedMotion() && typeof bar.animate === 'function') bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160 });
   }
 
+  /**
+   * The cursor tooltip: what to do while armed ("Drag to select"), how to
+   * stop while drawing. Never at once: it comes up once the pointer has been
+   * over the screen (or dragging) a moment, then follows it.
+   */
+  private tipContent(): Node[] | null {
+    if (this.state === 'drawing') return [kbd('Esc'), say('to cancel')];
+    const hint = this.state === 'armed' && this.kind ? CURSOR_HINT[this.kind] : undefined;
+    return hint ? [say(hint)] : null;
+  }
+
+  private resetTip(): void {
+    clearTimeout(this.tipTimer);
+    this.tipTimer = undefined;
+    this.tip?.classList.remove('on');
+  }
+
   private moveTip(x: number, y: number): void {
-    if (!this.tip || this.state !== 'drawing') return;
+    this.pointer = { x, y };
+    if (!this.tip) return;
+    if (this.tip.classList.contains('on')) return this.placeTip();
+    if (this.tipTimer !== undefined || !this.tipContent()) return;
+    this.tipTimer = setTimeout(() => {
+      this.tipTimer = undefined;
+      const content = this.tipContent();
+      if (!this.tip || !content) return;
+      this.tip.replaceChildren(...content);
+      this.tip.classList.add('on');
+      this.placeTip();
+    }, CURSOR_TIP_DELAY_MS);
+  }
+
+  private placeTip(): void {
+    if (!this.tip || !this.pointer) return;
+    const { x, y } = this.pointer;
     const rect = this.tip.getBoundingClientRect();
     // Flip back inside the viewport rather than running off the edge.
     const left = x + TIP_OFFSET.x + rect.width > innerWidth ? x - TIP_OFFSET.x - rect.width : x + TIP_OFFSET.x;
@@ -385,7 +476,7 @@ export class Overlay {
 
   /** Resolves with a viewport rect in CSS pixels, or null when cancelled. */
   async selectBox(modes: SelectionKind[], options: BoxOptions = { adjust: false }): Promise<Rect | null> {
-    const backdrop = this.beginSelection('box', modes);
+    const backdrop = this.beginSelection('box', modes, options.adjust);
     const box = backdrop.querySelector<HTMLElement>('.box')!;
     return await this.run((finish) => {
       const selector = new BoxSelector(
@@ -444,17 +535,22 @@ export class Overlay {
   }
 
   /** Draw any closed shape; resolves with its outline and bounding box. */
-  async selectFreeform(modes: SelectionKind[]): Promise<Lasso | null> {
-    const backdrop = this.beginSelection('freeform', modes);
+  async selectFreeform(modes: SelectionKind[], options: BoxOptions = { adjust: false }): Promise<Lasso | null> {
+    const backdrop = this.beginSelection('freeform', modes, options.adjust);
     return await this.run((finish) => {
-      const lasso = new LassoSelector(backdrop, {
-        onDragStart: () => this.setState('drawing'),
-        onDragEnd: () => this.setState('armed'),
-        onMove: (x, y) => this.moveTip(x, y),
-        onClamped: (clamped) =>
-          this.bar?.setInstruction(clamped ? 'Selections stop at the screen edge' : ''),
-        onDone: finish,
-      });
+      const lasso = new LassoSelector(
+        backdrop,
+        {
+          onDragStart: () => this.setState('drawing'),
+          onDragEnd: (kept) => this.setState(kept && options.adjust ? 'adjusting' : 'armed'),
+          onMove: (x, y) => this.moveTip(x, y),
+          onClamped: (clamped) =>
+            this.bar?.setInstruction(clamped ? 'Selections stop at the screen edge' : ''),
+          onDone: finish,
+        },
+        options,
+      );
+      this.confirmCurrent = () => void lasso.confirm();
       return lasso.attach();
     });
   }

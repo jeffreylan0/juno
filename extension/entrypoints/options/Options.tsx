@@ -658,13 +658,17 @@ function SelectingSection({ settings, save, shortcut }: { settings: Settings; sa
       )}
 
       <div className="field">
-        <span className="field-label">After drawing a box</span>
+        <span className="field-label">After drawing a selection</span>
         <Radios
           name="adjust"
           value={settings.adjustBox ? 'adjust' : 'send'}
           options={[
             { id: 'send', label: 'Send right away' },
-            { id: 'adjust', label: 'Let me adjust it first', help: 'Drag the edges, then press Enter.' },
+            {
+              id: 'adjust',
+              label: 'Let me adjust it first',
+              help: "Drag a box's edges (or draw an outline again), then press ↑ on the bar or Enter.",
+            },
           ]}
           onChange={(v) => void save({ adjustBox: v === 'adjust' })}
         />

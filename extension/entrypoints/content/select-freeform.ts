@@ -4,6 +4,10 @@
  * the outline blanked (see capture.ts), so a neighbouring diagram or an
  * answer key beside the problem cannot leak into the question.
  *
+ * With adjusting on (the same setting as a box's), letting go keeps the
+ * outline on screen instead of sending it: drawing again replaces it, and
+ * Enter, a double-click inside it or the bar's Send sends it.
+ *
  * Points are viewport CSS pixels and clamped to the viewport, for the same
  * reason boxes are: `captureVisibleTab` only sees what is on screen.
  */
@@ -63,7 +67,8 @@ export function pathData(points: Point[], closed: boolean): string {
 
 export interface LassoHandlers {
   onDragStart?: () => void;
-  onDragEnd?: (usable: boolean) => void;
+  /** The drag ended; `kept` when an outline is on screen afterwards (adjusting on). */
+  onDragEnd?: (kept: boolean) => void;
   onMove?: (x: number, y: number) => void;
   onClamped?: (clamped: boolean) => void;
   onDone: (lasso: Lasso) => void;
@@ -71,10 +76,18 @@ export interface LassoHandlers {
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+export interface LassoOptions {
+  /** Keep the outline on screen after the drag, until it is sent. */
+  adjust: boolean;
+}
+
 export class LassoSelector {
   private points: Point[] = [];
   private drawing = false;
   private clamped = false;
+  /** The outline waiting to be sent (adjusting on); null until one is drawn. */
+  private kept: Lasso | null = null;
+  private finished = false;
   private svg: SVGSVGElement;
   private scrim: SVGPathElement;
   private outline: SVGPathElement;
@@ -82,6 +95,7 @@ export class LassoSelector {
   constructor(
     private surface: HTMLElement,
     private handlers: LassoHandlers,
+    private options: LassoOptions = { adjust: false },
   ) {
     this.svg = document.createElementNS(SVG_NS, 'svg');
     this.svg.setAttribute('class', 'lasso');
@@ -94,6 +108,14 @@ export class LassoSelector {
     surface.append(this.svg);
   }
 
+  /** Sends the outline on screen. Does nothing until one has been drawn. */
+  confirm(): boolean {
+    if (!this.kept || this.finished || this.drawing) return false;
+    this.finished = true;
+    this.handlers.onDone(this.kept);
+    return true;
+  }
+
   attach(): () => void {
     const off: (() => void)[] = [];
     const on = (type: string, fn: (e: never) => void) => {
@@ -103,9 +125,10 @@ export class LassoSelector {
     };
 
     on('pointerdown', (e: PointerEvent) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || this.finished) return;
       e.preventDefault();
       this.drawing = true;
+      this.svg.classList.remove('kept');
       this.points = [{ x: e.clientX, y: e.clientY }];
       this.surface.setPointerCapture?.(e.pointerId);
       this.handlers.onDragStart?.();
@@ -137,15 +160,32 @@ export class LassoSelector {
       }
       const lasso = finishLasso(this.points, innerWidth, innerHeight);
       if (!lasso) {
-        this.points = [];
-        this.render();
-        this.handlers.onDragEnd?.(false);
+        // Too small to be deliberate: the outline waiting, if there is one, stays.
+        this.points = this.kept?.path ?? [];
+        this.svg.classList.toggle('kept', !!this.kept);
+        this.render(!!this.kept);
+        this.handlers.onDragEnd?.(!!this.kept);
         return;
       }
       this.points = lasso.path;
       this.render(true);
-      this.handlers.onDragEnd?.(true);
+      if (this.options.adjust) {
+        this.kept = lasso;
+        this.svg.classList.add('kept');
+        this.handlers.onDragEnd?.(true);
+        return;
+      }
+      this.finished = true;
+      this.handlers.onDragEnd?.(false);
       this.handlers.onDone(lasso);
+    });
+
+    on('dblclick', (e: MouseEvent) => {
+      const r = this.kept?.rect;
+      if (r && e.clientX >= r.x && e.clientX <= r.x + r.width && e.clientY >= r.y && e.clientY <= r.y + r.height) {
+        e.preventDefault();
+        this.confirm();
+      }
     });
 
     return () => off.forEach((f) => f());
@@ -154,12 +194,13 @@ export class LassoSelector {
   /**
    * The outline, plus a scrim over everything outside it: a full-viewport
    * rectangle with the shape cut out (even-odd fill), so what will be sent
-   * stays bright while you draw.
+   * stays bright while you draw. Before there is a shape to cut out, the
+   * scrim covers everything, as the armed screen's dim did.
    */
   private render(closed = false): void {
     const d = pathData(this.points, closed || this.points.length > 2);
     const full = `M0 0H${innerWidth}V${innerHeight}H0Z`;
-    this.scrim.setAttribute('d', this.points.length > 2 ? `${full}${d}` : '');
+    this.scrim.setAttribute('d', this.points.length > 2 ? `${full}${d}` : this.drawing ? full : '');
     this.outline.setAttribute('d', pathData(this.points, closed));
   }
 }

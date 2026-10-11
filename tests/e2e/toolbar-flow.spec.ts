@@ -1,8 +1,9 @@
 /**
- * The toolbar flow: one click arms a selection, the bar carries the controls,
- * the cursor tooltip appears only while a selection is being drawn, a drawn
- * box can be adjusted before asking, the page still scrolls, the bar itself
- * is never selectable, and its X finishes the chat, closing the panel too.
+ * The toolbar flow: one click arms a selection and dims the page a little,
+ * the bar carries the controls (each with a tooltip that waits a moment), the
+ * cursor tooltip comes up once the pointer has rested, a drawn box can be
+ * adjusted before Send, the page still scrolls, the bar itself is never
+ * selectable, and its ✕ finishes the chat, closing the panel too.
  */
 import type { Page, Worker } from '@playwright/test';
 import { FIXTURE_ORIGIN, dragBox, expect, openPanel, setSettings, sidePanelCount, tabIdFor, test } from './fixtures';
@@ -11,6 +12,7 @@ import type { Plan } from '../../shared/payload';
 const OVERLAY = 'selection-ai-overlay';
 const BAR = `${OVERLAY} .bar`;
 const TIP = `${OVERLAY} .tip`;
+const HINT = `${OVERLAY} .hint`;
 
 const getPlan = async (panel: Page) =>
   (await panel.evaluate(async () => chrome.runtime.sendMessage({ type: 'plan:get' }))) as Plan | null;
@@ -68,7 +70,7 @@ test('one toolbar click arms a box selection with the bar in place', async ({ co
   const viewport = page.viewportSize()!;
   expect(box.y + box.height).toBeGreaterThan(viewport.height * 0.7);
 
-  // Nothing follows the cursor until a selection is actually being drawn.
+  // Nothing follows the cursor until it has rested over the page a moment.
   await expect(page.locator(TIP)).toBeHidden();
 
   // By default the answer panel waits for the selection, so it does not
@@ -76,18 +78,64 @@ test('one toolbar click arms a box selection with the bar in place', async ({ co
   expect(await sidePanelCount(serviceWorker)).toBe(0);
 });
 
-test('hovering the selected mode keeps its label readable', async ({ context, serviceWorker }) => {
+test('armed, the page dims a little; while drawing, only outside the box', async ({ context, serviceWorker }) => {
   const page = await context.newPage();
   await armed(serviceWorker, page);
-  const chip = page.locator(`${BAR} .chip[data-kind="box"]`);
-  await chip.hover();
-  const { color, background } = await chip.evaluate((el) => {
+  const backdrop = page.locator(`${OVERLAY} .backdrop`);
+  const fill = () => backdrop.evaluate((el) => getComputedStyle(el).backgroundColor);
+  await expect.poll(fill).toBe('rgba(20, 20, 19, 0.26)');
+
+  await page.mouse.move(100, 100);
+  await page.mouse.down();
+  await page.mouse.move(300, 200, { steps: 4 });
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'drawing');
+  // The box's own shadow dims around it; inside, the page shows as it is.
+  expect(await fill()).toBe('rgba(0, 0, 0, 0)');
+  expect(await page.locator(`${OVERLAY} .box`).evaluate((el) => getComputedStyle(el).boxShadow)).toContain('rgba(20, 20, 19, 0.26)');
+  await page.mouse.up();
+
+  // Sent: nothing of the selection is left on the page, dim included.
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+  await expect(backdrop).toHaveCount(0);
+});
+
+test('the chosen mode shows its name; the others are icons with a tooltip that waits', async ({ context, serviceWorker }) => {
+  const page = await context.newPage();
+  await armed(serviceWorker, page);
+  const box = page.locator(`${BAR} .chip[data-kind="box"]`);
+  await expect(box.locator('.label')).toBeVisible();
+  await expect(page.locator(`${BAR} .chip[data-kind="freeform"] .label`)).toBeHidden();
+
+  // Hovering the chosen one keeps it readable: light text on its pill.
+  await box.hover();
+  const { color, background } = await box.evaluate((el) => {
     const s = getComputedStyle(el);
     return { color: s.color, background: s.backgroundColor };
   });
-  // Dark text on the light pill, never white on white.
-  expect(color).toBe('rgb(15, 23, 42)');
-  expect(background).not.toBe(color);
+  expect(color).toBe('rgb(245, 244, 239)');
+  expect(background).not.toBe('rgba(0, 0, 0, 0)');
+  // Off the bar for a moment, so the next tooltip starts cold.
+  await page.mouse.move(200, 120);
+  await page.waitForTimeout(600);
+
+  // A tooltip comes up only once the pointer has rested on a control.
+  await page.locator(`${BAR} .chip[data-kind="freeform"]`).hover();
+  await page.waitForTimeout(150);
+  await expect(page.locator(HINT)).toBeHidden();
+  await expect(page.locator(HINT)).toBeVisible();
+  await expect(page.locator(HINT)).toHaveText('Freeform');
+  // Above the control, not over it.
+  const hint = (await page.locator(HINT).boundingBox())!;
+  const chip = (await page.locator(`${BAR} .chip[data-kind="freeform"]`).boundingBox())!;
+  expect(hint.y + hint.height).toBeLessThanOrEqual(chip.y);
+  // Away from the bar, it goes.
+  await page.mouse.move(200, 200);
+  await expect(page.locator(HINT)).toBeHidden();
+
+  // Then the cursor's own: what to do here, once the pointer has rested.
+  await page.mouse.move(220, 210);
+  await expect(page.locator(TIP)).toBeVisible();
+  await expect(page.locator(TIP)).toHaveText('Drag to select');
 });
 
 test('the tooltip takes over from the bar for the duration of the drag', async ({ context, serviceWorker }) => {
@@ -102,9 +150,10 @@ test('the tooltip takes over from the bar for the duration of the drag', async (
   await page.mouse.move(target.x + 120, target.y + 60, { steps: 6 });
 
   await expect(host).toHaveAttribute('data-state', 'drawing');
+  await page.mouse.move(target.x + 130, target.y + 70);
   await expect(tip).toBeVisible();
-  await expect(tip).toHaveText('Escapeto cancel');
-  await expect(tip.locator('kbd')).toHaveText('Escape');
+  await expect(tip).toHaveText('Escto cancel');
+  await expect(tip.locator('kbd')).toHaveText('Esc');
   // The bar's instruction steps aside rather than competing with it.
   await expect(page.locator(`${BAR} .say`)).toBeHidden();
 
@@ -202,7 +251,7 @@ test('the gear expands the bar upwards, between the controls and the notices', a
   await expect(settings.locator('select')).toHaveCount(1);
   await expect(settings).not.toContainText('Answered by');
   await expect(settings).not.toContainText('Selection mode');
-  await expect(settings).toContainText('After drawing a box');
+  await expect(settings).toContainText('After drawing a selection');
   await expect(settings).not.toContainText('Open the answer panel');
   await settled(page, BAR);
 
@@ -250,6 +299,9 @@ test('set to adjust, a drawn box waits, then Enter asks and the panel opens', as
   // The panel page is a tab here; opening it after the bar would be switching tabs, which takes the bar away.
   const panel = await openPanel(context, extensionId);
   await armed(serviceWorker, page);
+  // Send is on the bar from the start, waiting for something to send.
+  await expect(page.locator(`${BAR} .ask`)).toBeVisible();
+  await expect(page.locator(`${BAR} .ask`)).toBeDisabled();
 
   const target = (await page.locator('#problem').boundingBox())!;
   await dragBox(page, target.x - 4, target.y - 4, target.x + target.width + 4, target.y + target.height + 4);
@@ -258,8 +310,8 @@ test('set to adjust, a drawn box waits, then Enter asks and the panel opens', as
   await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'adjusting');
   await expect(page.locator(`${OVERLAY} .box.adjusting`)).toBeVisible();
   await expect(page.locator(`${OVERLAY} .handle`)).toHaveCount(8);
-  await expect(page.locator(`${BAR} .ask`)).toBeVisible();
-  await expect(page.locator(`${BAR} .say`)).toHaveText('Drag the edges to adjust · Enter to send');
+  await expect(page.locator(`${BAR} .ask`)).toBeEnabled();
+  await expect(page.locator(`${BAR} .say`)).toHaveText('Adjust the edges, then send');
   expect(await getPlan(panel)).toBeNull();
   expect(await sidePanelCount(serviceWorker)).toBe(0);
 
@@ -294,6 +346,37 @@ test('dragging a corner resizes the box, and Ask sends the resized one', async (
   await page.locator(`${BAR} .ask`).click();
   await expect.poll(async () => (await getPlan(panel))?.selection.kind ?? null, { timeout: 15_000 }).toBe('box');
   expect((await getPlan(panel))!.selection.rect).toEqual({ x: 120, y: 110, width: 260, height: 160 });
+});
+
+test('set to adjust, a freeform outline waits too, and Send sends it', async ({ context, extensionId, serviceWorker }) => {
+  await setSettings(serviceWorker, { adjustBox: true });
+  const page = await context.newPage();
+  // The panel page is a tab here; opening it after the bar would be switching tabs, which takes the bar away.
+  const panel = await openPanel(context, extensionId);
+  await armed(serviceWorker, page);
+  await page.locator(`${BAR} .chip[data-kind="freeform"]`).click();
+  await expect(page.locator(`${BAR} .chip[data-kind="freeform"]`)).toHaveAttribute('aria-pressed', 'true');
+
+  const loop = async (cx: number, cy: number, r: number) => {
+    await page.mouse.move(cx + r, cy);
+    await page.mouse.down();
+    for (let i = 1; i <= 24; i++) await page.mouse.move(cx + r * Math.cos((i / 24) * 2 * Math.PI), cy + r * Math.sin((i / 24) * 2 * Math.PI));
+    await page.mouse.up();
+  };
+  await loop(200, 200, 60);
+  // Kept on screen, not sent.
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'adjusting');
+  await expect(page.locator(`${OVERLAY} .lasso.kept`)).toHaveCount(1);
+  await expect(page.locator(`${BAR} .say`)).toHaveText('Draw again to redo, or send');
+  expect(await getPlan(panel)).toBeNull();
+
+  // Drawing again replaces it; Send sends the new one.
+  await loop(400, 260, 50);
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'adjusting');
+  await page.locator(`${BAR} .ask`).click();
+  await expect.poll(async () => (await getPlan(panel))?.selection.kind ?? null, { timeout: 15_000 }).toBe('freeform');
+  const rect = (await getPlan(panel))!.selection.rect;
+  expect(Math.round(rect.x + rect.width / 2)).toBeGreaterThan(380);
 });
 
 test('Escape while adjusting cancels the whole selection', async ({ context, extensionId, serviceWorker }) => {

@@ -248,11 +248,19 @@ async fn capture_selection(app: AppHandle, state: State<'_, Shared>, request: Cr
 
 #[tauri::command(async)]
 fn screen_access() -> Access {
+    #[cfg(feature = "test-hook")]
+    if let Some(access) = testhook::screen_access() {
+        return access;
+    }
     capture::screen_access()
 }
 
 #[tauri::command(async)]
 fn screen_access_request() -> Access {
+    #[cfg(feature = "test-hook")]
+    if let Some(access) = testhook::screen_access() {
+        return access;
+    }
     capture::request_screen_access()
 }
 
@@ -279,11 +287,18 @@ struct AppInfo {
     os: &'static str,
     version: String,
     shortcut: ShortcutStatus,
+    /// Started with `--hidden` (at login, say): no bar until it is asked for.
+    hidden: bool,
 }
 
 #[tauri::command(async)]
 fn app_info(app: AppHandle, state: State<Shared>) -> AppInfo {
-    AppInfo { os: std::env::consts::OS, version: app.package_info().version.to_string(), shortcut: state.shortcut.lock().unwrap().clone() }
+    AppInfo {
+        os: std::env::consts::OS,
+        version: app.package_info().version.to_string(),
+        shortcut: state.shortcut.lock().unwrap().clone(),
+        hidden: std::env::args().any(|a| a == "--hidden"),
+    }
 }
 
 #[tauri::command]
@@ -330,12 +345,11 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
 
 pub fn run() {
     let builder = tauri::Builder::default();
-    // A second copy was started: this one stays, and shows its settings. Not
-    // in test builds, where each test runs its own copy side by side.
+    // A second copy was started: this one stays, and brings the bar up, as
+    // opening the app does. Not in test builds, where each test runs its own
+    // copy side by side.
     #[cfg(not(feature = "test-hook"))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-        let _ = wm::open_settings(app, None);
-    }));
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| summon(app)));
     let app = builder
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
@@ -416,13 +430,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("building the app");
 
-    app.run(|_app, event| {
+    app.run(|_app, event| match event {
         // Closing the last visible window is not quitting: the app lives in
         // the menu bar. Only Quit (an explicit exit code) ends it.
-        if let RunEvent::ExitRequested { api, code, .. } = event {
-            if code.is_none() {
-                api.prevent_exit();
-            }
-        }
+        RunEvent::ExitRequested { api, code, .. } if code.is_none() => api.prevent_exit(),
+        // macOS: opening the app again (Finder, Spotlight, Launchpad) while it runs.
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen { .. } => summon(_app),
+        _ => {}
     });
 }

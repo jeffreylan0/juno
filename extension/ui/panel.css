@@ -1,44 +1,47 @@
 :root {
   color-scheme: light dark;
-  --bg: #ffffff;
-  --fg: #0f172a;
-  --muted: #64748b;
-  --line: #e2e8f0;
-  --accent: #2563eb;
-  --accent-bg: #eff6ff;
+  /* Claude's palette: warm paper, near-black ink, clay for what acts. */
+  --bg: #faf9f5;
+  --surface: #ffffff;
+  --fg: #141413;
+  --muted: #73726c;
+  --line: #e6e4dc;
+  --accent: #c96442;
+  --accent-bg: #f6ebe4;
   --on-accent: #ffffff;
-  --user-bg: #f1f5f9;
-  --hover: #f1f5f9;
-  --error: #b91c1c;
+  --user-bg: #f0eee6;
+  --hover: #f0eee6;
+  --error: #b42318;
   /* Notices: yellow, so they read as "worth a look" rather than "broken". */
   --warn-bg: #fef6d6;
   --warn-line: #f3dc8b;
   --warn-fg: #5c4300;
   --warn-strong: #8a5a00;
-  --scrim: rgba(15, 23, 42, .28);
-  --drawer-bg: #f8fafc;
+  --scrim: rgba(20, 20, 19, .28);
+  --drawer-bg: #f5f4ed;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
   /* Chat text size. Everything else is relative to it. */
   font-size: 15px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0b1220;
-    --fg: #e5e7eb;
-    --muted: #94a3b8;
-    --line: #1f2937;
-    --accent: #60a5fa;
-    --accent-bg: #172554;
-    --on-accent: #0b1220;
-    --user-bg: #111827;
-    --hover: #162033;
-    --error: #fca5a5;
+    --bg: #262624;
+    --surface: #30302e;
+    --fg: #f5f4ef;
+    --muted: #a6a39b;
+    --line: #3d3d3a;
+    --accent: #d97757;
+    --accent-bg: #3b2c25;
+    --on-accent: #ffffff;
+    --user-bg: #141413;
+    --hover: #30302e;
+    --error: #f2998b;
     --warn-bg: #2a2412;
     --warn-line: #5a4815;
     --warn-fg: #f3e2a6;
     --warn-strong: #fcd34d;
     --scrim: rgba(0, 0, 0, .45);
-    --drawer-bg: #0f172a;
+    --drawer-bg: #1f1e1d;
   }
 }
 * { box-sizing: border-box; }
@@ -53,7 +56,7 @@ body { background: var(--bg); color: var(--fg); font-size: 1rem; }
 .icon:focus-visible, .chat-title:focus-visible, .chat-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* Top bar: chats menu on the left, the chat's name, then ghost and settings. */
-.topbar { flex: none; display: flex; align-items: center; gap: 2px; padding: 6px 6px; border-bottom: 1px solid var(--line); }
+.topbar { flex: none; display: flex; align-items: center; gap: 2px; padding: 6px 6px; border-bottom: 1px solid var(--line); background: var(--bg); }
 .topbar .icon { padding: 7px; border-radius: 8px; }
 .topbar .icon svg { width: 18px; height: 18px; }
 .chat-title {
@@ -186,7 +189,7 @@ a.selection-page:hover { color: var(--fg); text-decoration: underline; }
 .empty-ghost { width: 40px; height: 40px; margin-bottom: 10px; fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 
 .thread { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 14px; }
-.turn.user { align-self: flex-end; background: var(--user-bg); border-radius: 14px 14px 3px 14px; padding: 8px 12px; max-width: 90%; }
+.turn.user { align-self: flex-end; background: var(--user-bg); border-radius: 14px; padding: 8px 13px; max-width: 90%; }
 .turn.user .turn-text { white-space: pre-wrap; }
 .turn.assistant { max-width: 100%; }
 .error { color: var(--error); background: color-mix(in srgb, var(--error) 10%, transparent); padding: 8px 10px; border-radius: 8px; line-height: 1.45; }
@@ -208,51 +211,52 @@ a.selection-page:hover { color: var(--fg); text-decoration: underline; }
 .answer.streaming .markdown::after { content: '▍'; color: var(--accent); animation: blink 1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 
-/* The question area: answer macros, then a large, unmistakable box. */
-.ask { padding: 10px 10px 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; background: var(--bg); }
+/* The question area: answer macros, then the box, as Claude's: who answers beside Send. */
+.ask { padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; background: var(--bg); }
 .ask-row { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
-/* Macros wrap rather than scroll, so none hides behind the model picker. */
-.macros { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; min-width: 0; }
-.model-picker { flex: none; max-width: 45%; position: relative; display: flex; }
+.macros { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; }
+.model-picker { flex: 0 1 auto; min-width: 0; max-width: 60%; position: relative; display: flex; }
 .model-picker-face {
   display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 13px; color: var(--fg); background-color: var(--bg);
-  border: 1px solid var(--line); border-radius: 999px; padding: 5px 24px 5px 10px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
+  font-size: 13px; color: var(--muted); background-color: transparent;
+  border: 0; border-radius: 8px; padding: 6px 24px 6px 9px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%2373726c' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 9px center; background-size: 10px 10px;
 }
 .model-picker select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font: inherit; font-size: 13px; }
-.model-picker:hover .model-picker-face { border-color: var(--muted); }
+.model-picker:hover .model-picker-face { color: var(--fg); background-color: var(--hover); }
 .model-picker:focus-within .model-picker-face { outline: 2px solid var(--accent); outline-offset: 1px; }
 .macro {
   flex: none; font: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer; white-space: nowrap;
-  color: var(--accent); background: var(--accent-bg); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
-  border-radius: 999px; padding: 5px 10px;
+  color: var(--fg); background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; padding: 5px 11px;
 }
-.macro:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 18%, var(--bg)); }
+.macro:hover:not(:disabled) { background: var(--hover); }
 .macro:disabled { opacity: .45; cursor: default; }
 .composer {
-  display: flex; flex-direction: column; gap: 6px; padding: 10px 10px 8px 12px;
-  border: 1.5px solid color-mix(in srgb, var(--accent) 55%, var(--line)); border-radius: 14px; background: var(--bg);
-  box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 12%, transparent);
+  display: flex; flex-direction: column; gap: 4px; padding: 12px 10px 10px 14px;
+  border: 1px solid var(--line); border-radius: 18px; background: var(--surface);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .04), 0 0 0 .5px rgba(0, 0, 0, .02);
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.composer:focus-within { border-color: color-mix(in srgb, var(--fg) 22%, var(--line)); box-shadow: 0 2px 12px rgba(0, 0, 0, .07); }
 .composer.off { opacity: .6; box-shadow: none; }
 .composer textarea {
-  width: 100%; min-height: 4.5em; resize: none; border: 0; outline: 0; padding: 0; background: transparent;
-  font: inherit; font-size: 16px; line-height: 1.5; color: var(--fg);
+  width: 100%; min-height: 3em; resize: none; border: 0; outline: 0; padding: 0; background: transparent;
+  font: inherit; font-size: 15.5px; line-height: 1.5; color: var(--fg);
 }
-.composer textarea::placeholder { color: var(--muted); font-style: italic; }
-.composer-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.composer textarea::placeholder { color: var(--muted); }
+.composer-row { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
 .composer-hint { flex: 1; min-width: 0; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .send {
-  display: flex; align-items: center; gap: 6px; flex: none; border: 0; border-radius: 10px; padding: 7px 14px;
-  background: var(--accent); color: var(--on-accent); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; flex: none; width: 32px; height: 32px; padding: 0;
+  border: 0; border-radius: 9px; background: var(--accent); color: var(--on-accent); font: inherit; cursor: pointer;
 }
-.send svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.send:disabled { opacity: .5; cursor: default; }
+.send svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, #000); }
+.send:disabled { opacity: .4; cursor: default; }
 .send.stop { background: var(--fg); color: var(--bg); }
+.send.stop svg { fill: currentColor; stroke: none; width: 12px; height: 12px; }
 
-/* Very narrow side panels: the Send button needs the room more. */
-@media (max-width: 300px) { .composer-hint { display: none; } }
+/* Narrow panels: who answers and Send need the room more. */
+@media (max-width: 380px) { .composer-hint { display: none; } }

@@ -71,16 +71,21 @@ export class App {
     for (const stream of [app.stdout, app.stderr]) stream?.on('data', (b: Buffer) => this.outputs.push(b.toString()));
   }
 
-  /** A fresh app on a fresh display, with its core and overlay pages loaded. */
-  static async launch(): Promise<App> {
+  /**
+   * A fresh app on a fresh display, with its core and overlay pages loaded.
+   * Started with --hidden unless `opened` (as the student opens it, when the
+   * bar comes straight up); `env` adds to its environment.
+   */
+  static async launch(opts: { opened?: boolean; env?: Record<string, string> } = {}): Promise<App> {
     const display = displays++;
     const xvfb = spawn('Xvfb', [`:${display}`, '-screen', '0', `${SCREEN.width}x${SCREEN.height}x24`, '-nolisten', 'tcp'], { stdio: 'ignore' });
     await waitFor('the X server', () => existsSync(`/tmp/.X11-unix/X${display}`));
     const data = mkdtempSync(join(tmpdir(), 'sai-desktop-'));
     const port = 47000 + display;
-    const app = spawn(BINARY, [], {
+    const app = spawn(BINARY, opts.opened ? [] : ['--hidden'], {
       env: {
         ...process.env,
+        ...opts.env,
         DISPLAY: `:${display}`,
         XDG_DATA_HOME: data,
         XDG_CONFIG_HOME: data,
