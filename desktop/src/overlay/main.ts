@@ -5,9 +5,7 @@
  * background sends a tab, plus the notes the bar carries for the app
  * (notices.ts).
  *
- * Text and Element work on what the native core reads off the screen, on
- * this computer (src-tauri/src/read): no accessibility access, only the
- * Screen Recording any screenshot needs.
+ * Box and Freeform for now; Text and Element are switched off (below).
  */
 import { invoke } from '@tauri-apps/api/core';
 import { browser, transport } from '../platform/install';
@@ -29,8 +27,21 @@ async function readScreen(): Promise<ScreenRead> {
   }
 }
 
-// The system leaves the app's windows out of every screenshot, so the dim can fade after a selection.
-const controller = new SelectionController({ modes: ['box', 'freeform', 'element', 'text'], screen: readScreen, captureExcludesOverlay: true });
+/**
+ * Text and Element on what the core reads off the screen are off for now:
+ * reading pixels is close but not exact, and how the app should reach what
+ * apps show (a browser bridge, macOS Services, accessibility) is still to be
+ * chosen (README). A build with VITE_SCREEN_MODES=1 turns them on: the
+ * end-to-end tests' build, or `VITE_SCREEN_MODES=1 pnpm desktop:dev` to try them.
+ */
+const SCREEN_MODES = (import.meta.env.VITE_SCREEN_MODES as string | undefined) === '1';
+
+const controller = new SelectionController({
+  modes: SCREEN_MODES ? ['box', 'freeform', 'element', 'text'] : ['box', 'freeform'],
+  screen: SCREEN_MODES ? readScreen : undefined,
+  // The system leaves the app's windows out of every screenshot, so the dim can fade after a selection.
+  captureExcludesOverlay: true,
+});
 
 const announce = () => void browser.runtime.sendMessage({ type: 'overlay:ready' });
 

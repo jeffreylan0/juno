@@ -2,7 +2,7 @@
 //!
 //! It does only what the system has to: the global shortcut, the menu bar (or
 //! tray) icon, the windows, screen capture, and keeping chats, screenshots and
-//! keys on disk and in the keychain. Everything else — the bar, the panel,
+//! keys on disk. Everything else — the bar, the panel,
 //! chats, answers, accounts — is the extension's own web code, running in the
 //! app's windows (desktop/src). The `core` window plays the extension's
 //! background; the others reach it through events (desktop/src/platform).
@@ -23,7 +23,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WebviewWindow, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
@@ -365,6 +365,10 @@ fn shortcut() -> Shortcut {
     Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::KeyS)
 }
 
+/// The menu bar (tray) icon. A click starts a selection at once, as the
+/// shortcut does (Claude's icon opens its quick entry the same way); a
+/// right-click (or Control-click) opens a small menu, where Quit is.
+/// (Linux trays only have the menu.)
 fn tray(app: &AppHandle) -> tauri::Result<()> {
     let label = if cfg!(target_os = "macos") { "Select (⌥⇧S)" } else { "Select (Alt+Shift+S)" };
     let select = MenuItem::with_id(app, "select", label, true, None::<&str>)?;
@@ -375,9 +379,14 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
     TrayIconBuilder::with_id("main")
         .icon(icon)
         .icon_as_template(true)
-        .tooltip("Selection AI")
+        .tooltip(if cfg!(target_os = "macos") { "Selection AI: click to select (⌥⇧S)" } else { "Selection AI: click to select (Alt+Shift+S)" })
         .menu(&menu)
-        .show_menu_on_left_click(true)
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                summon(tray.app_handle());
+            }
+        })
         .on_menu_event(|app, event| match event.id.as_ref() {
             "select" => summon(app),
             "settings" => {
