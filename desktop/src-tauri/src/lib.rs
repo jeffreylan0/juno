@@ -10,6 +10,7 @@
 mod capture;
 mod crop;
 mod geometry;
+mod read;
 mod store;
 #[cfg(feature = "test-hook")]
 mod testhook;
@@ -29,7 +30,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use capture::{Access, CaptureError, Source};
 use crop::CropRequest;
-use geometry::{Rect, Space};
+use geometry::{Display, Rect, Space};
 use store::{Area, Changes, Images, StoredImage, Store};
 use wm::{OverlayState, SharedOverlay};
 
@@ -162,6 +163,18 @@ fn panel_open(app: AppHandle, state: State<Shared>, focus: bool) -> Res<()> {
     wm::open_panel(&app, &state.overlay, focus).map_err(err)
 }
 
+/// The panel's page asks for the height its chat needs (CSS pixels).
+#[tauri::command(async)]
+fn panel_fit(app: AppHandle, height: f64) -> Res<f64> {
+    wm::fit_panel(&app, height).map_err(err)
+}
+
+/// A card's page (the panel, settings) has drawn: its window shows.
+#[tauri::command(async)]
+fn window_show(window: WebviewWindow) -> Res<()> {
+    wm::show_window(&window).map_err(err)
+}
+
 #[tauri::command(async)]
 fn panel_close(app: AppHandle) -> Res<()> {
     wm::close_panel(&app).map_err(err)
@@ -208,30 +221,39 @@ impl From<CaptureError> for CaptureFailure {
     }
 }
 
+/// The display the overlay is on.
+fn overlay_display(state: &Shared) -> Result<Display, CaptureFailure> {
+    state.overlay.lock().unwrap().display.clone().ok_or_else(|| CaptureFailure { code: "failed", message: "The bar is not on a display".into() })
+}
+
+/// A screenshot of `display` without the app's own windows.
+fn shoot(app: &AppHandle, display: &Display) -> Result<image::RgbaImage, CaptureError> {
+    let frame = display.global_frame(Space::native());
+    if capture::EXCLUDES_OWN_WINDOWS {
+        return capture::capture_display(frame, display.scale);
+    }
+    // X11 cannot leave a window out of a capture: the overlay steps aside for it.
+    let overlay = app.get_webview_window(wm::OVERLAY);
+    if let Some(w) = &overlay {
+        let _ = w.hide();
+    }
+    thread::sleep(Duration::from_millis(180));
+    let shot = capture::capture_display(frame, display.scale);
+    if let Some(w) = &overlay {
+        let _ = w.show();
+    }
+    shot
+}
+
 /// Captures the overlay's display and crops it to the selection (CSS pixels
 /// in the overlay). Also says which window it was made over.
 #[tauri::command]
 async fn capture_selection(app: AppHandle, state: State<'_, Shared>, request: CropRequest) -> Result<Captured, CaptureFailure> {
-    let display = state.overlay.lock().unwrap().display.clone().ok_or_else(|| CaptureFailure { code: "failed", message: "The bar is not on a display".into() })?;
-    let hide = !capture::EXCLUDES_OWN_WINDOWS;
+    let display = overlay_display(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         let space = Space::native();
         let frame = display.global_frame(space);
-        let overlay = app.get_webview_window(wm::OVERLAY);
-        if hide {
-            // X11 cannot leave a window out of a capture: step aside for it.
-            if let Some(w) = &overlay {
-                let _ = w.hide();
-            }
-            thread::sleep(Duration::from_millis(180));
-        }
-        let shot = capture::capture_display(frame, display.scale);
-        if hide {
-            if let Some(w) = &overlay {
-                let _ = w.show();
-            }
-        }
-        let shot = shot?;
+        let shot = shoot(&app, &display)?;
         let cropped = crop::crop(&shot, &request).map_err(|e| CaptureError::Failed(e.to_string()))?;
         let r = request.rect;
         let (cx, cy) = (r.x + r.width / 2.0, r.y + r.height / 2.0);
@@ -240,6 +262,31 @@ async fn capture_selection(app: AppHandle, state: State<'_, Shared>, request: Cr
             Space::Physical => (frame.x + cx * display.scale, frame.y + cy * display.scale),
         };
         Ok::<_, CaptureError>(Captured { data_url: crop::png_data_url(&cropped), width: cropped.width(), height: cropped.height(), source: capture::window_at(at) })
+    })
+    .await
+    .map_err(|e| CaptureFailure { code: "failed", message: e.to_string() })?
+    .map_err(CaptureFailure::from)
+}
+
+#[derive(Serialize)]
+struct ScreenRead {
+    lines: Vec<read::Line>,
+    windows: Vec<read::WindowFrame>,
+}
+
+/// What is on the overlay's display, read on this computer, in the
+/// overlay's CSS pixels (`viewport` is its size): the text, line by line and
+/// word by word, and the other apps' windows. For Text and Element.
+#[tauri::command]
+async fn read_screen(app: AppHandle, state: State<'_, Shared>, viewport: crop::CssSize) -> Result<ScreenRead, CaptureFailure> {
+    let display = overlay_display(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let shot = shoot(&app, &display)?;
+        let lines = read::recognize(&shot).map_err(CaptureError::Failed)?;
+        let (sx, sy) = (viewport.width / shot.width().max(1) as f64, viewport.height / shot.height().max(1) as f64);
+        let space = Space::native();
+        let windows = read::windows_on(read::windows(), display.global_frame(space), space, display.scale);
+        Ok::<_, CaptureError>(ScreenRead { lines: read::to_css(lines, sx, sy), windows })
     })
     .await
     .map_err(|e| CaptureFailure { code: "failed", message: e.to_string() })?
@@ -417,9 +464,12 @@ pub fn run() {
             overlay_pointer,
             panel_open,
             panel_close,
+            panel_fit,
+            window_show,
             settings_open,
             window_close,
             capture_selection,
+            read_screen,
             screen_access,
             screen_access_request,
             open_privacy_settings,

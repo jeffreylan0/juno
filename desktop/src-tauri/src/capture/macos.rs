@@ -140,13 +140,21 @@ fn to_rgba(image: &CGImage) -> Result<RgbaImage, CaptureError> {
     RgbaImage::from_raw(width as u32, height as u32, pixels).ok_or_else(|| CaptureError::Failed("The screenshot has the wrong size".into()))
 }
 
-/// The frontmost normal window of another app under `point` (points), from
-/// the window list (front to back). Titles need Screen Recording permission,
-/// which a capture already has.
+/// The frontmost normal window of another app under `point` (points).
 pub fn window_at(point: (f64, f64)) -> Option<Source> {
-    let list: CFRetained<CFArray> =
-        CGWindowListCopyWindowInfo(CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements, kCGNullWindowID)?;
+    window_list().into_iter().find(|(_, r)| r.contains(point.0, point.1)).map(|(s, _)| s)
+}
+
+/// Other apps' normal windows on screen, front to back, with their frames
+/// (points), from the window list. Titles need Screen Recording permission,
+/// which a capture already has.
+pub fn window_list() -> Vec<(Source, Rect)> {
+    let Some(list) = CGWindowListCopyWindowInfo(CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements, kCGNullWindowID) else {
+        return Vec::new();
+    };
+    let list: CFRetained<CFArray> = list;
     let me = std::process::id() as i64;
+    let mut out = Vec::new();
     for i in 0..list.count() {
         let dict = unsafe { list.value_at_index(i) } as *const CFDictionary;
         let Some(dict) = (unsafe { dict.as_ref() }) else { continue };
@@ -163,11 +171,9 @@ pub fn window_at(point: (f64, f64)) -> Option<Source> {
             continue;
         }
         let r = Rect::new(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
-        if r.contains(point.0, point.1) {
-            return Some(Source { app: text(unsafe { kCGWindowOwnerName }), title: text(unsafe { kCGWindowName }) });
-        }
+        out.push((Source { app: text(unsafe { kCGWindowOwnerName }), title: text(unsafe { kCGWindowName }) }, r));
     }
-    None
+    out
 }
 
 fn value<'a>(dict: &'a CFDictionary, key: &CFString) -> Option<&'a CFType> {

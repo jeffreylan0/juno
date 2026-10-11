@@ -24,6 +24,10 @@ export interface Surface {
   pdfViewer: boolean;
   /** Why a mode's chip is off, when it is. */
   unavailable: (label: string, kind: string) => string;
+  /** The panel and settings are windows of their own, with their own ✕ (the app). */
+  ownWindow: boolean;
+  /** The bar's instruction for a mode, where it differs from the page's. */
+  modeHints?: Partial<Record<'box' | 'freeform' | 'element' | 'text', string>>;
 }
 
 export const SURFACE: Surface = {
@@ -35,6 +39,7 @@ export const SURFACE: Surface = {
   sections: [],
   blockedSites: true,
   pdfViewer: true,
+  ownWindow: false,
   // Only the browser's own PDF viewer takes modes away: it has no DOM to read.
   unavailable: (label, kind) => (kind === 'text' || kind === 'element' ? `${label} needs the PDF reader` : `${label} doesn't work here`),
 };

@@ -98,6 +98,8 @@ export interface SelectionMeta {
   label?: string;
   /** The element ran past the edge of the screen, so only the visible part was captured. */
   clipped?: boolean;
+  /** Text read off the screen by the app (on device), not a page's own characters. */
+  read?: boolean;
   /**
    * Freeform selections: the outline, normalised to the selection's rect
    * (0..1 on each axis), so the panel can show exactly what was inside it.

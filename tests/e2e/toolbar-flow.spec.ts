@@ -97,6 +97,28 @@ test('armed, the page dims a little; while drawing, only outside the box', async
   // Sent: nothing of the selection is left on the page, dim included.
   await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
   await expect(backdrop).toHaveCount(0);
+
+  // Switching modes swaps the surface within one frame: no frame shows the
+  // page undimmed, and the new surface does not fade in again.
+  await page.locator(`${BAR} .chip[data-kind="box"]`).click();
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'armed');
+  const gaps = await page.evaluate(async () => {
+    const root = document.querySelector('selection-ai-overlay')!.shadowRoot!;
+    let gaps = 0;
+    let frames = 0;
+    const sample = () => {
+      if (!root.querySelector('.backdrop.interactive:not(.leaving)')) gaps++;
+      if (++frames < 20) requestAnimationFrame(sample);
+    };
+    (root.querySelector('.chip[data-kind="freeform"]') as HTMLElement).click();
+    await new Promise<void>((done) => {
+      requestAnimationFrame(sample);
+      setTimeout(done, 600);
+    });
+    return gaps;
+  });
+  expect(gaps).toBe(0);
+  await expect(page.locator(`${OVERLAY} .backdrop.steady`)).toHaveCount(1);
 });
 
 test('the chosen mode shows its name; the others are icons with a tooltip that waits', async ({ context, serviceWorker }) => {

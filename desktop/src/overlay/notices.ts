@@ -12,7 +12,7 @@ import type { OverlayNotice } from '../core/tips';
 import { MAC } from '../os';
 
 /** The core's desktop-only words from the bar (core/main.ts). */
-export type NoticeReply = { type: 'screen:enable' } | { type: 'screen:later' };
+export type NoticeReply = { type: 'screen:enable' } | { type: 'screen:later' } | { type: 'screen:denied' };
 
 const tell = (msg: NoticeReply) => void browser.runtime.sendMessage(msg);
 

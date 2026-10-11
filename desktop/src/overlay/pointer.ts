@@ -7,7 +7,9 @@
  *  - while the bar waits: only the bar and any tooltip, so the app beneath
  *    works as usual everywhere else;
  *  - nothing on screen at all (the bar went, the tooltip faded): the window
- *    is hidden.
+ *    is hidden, once an empty frame has been drawn: a window hidden with
+ *    the bar still in its last frame shows that frame for a moment the next
+ *    time it comes up.
  *
  * Arming a selection also gives the overlay the keyboard, so Escape (and
  * Enter on an adjusted box) reach it: after the first selection the panel
@@ -64,13 +66,20 @@ export function trackPointer(t: Transport, doc: Document = document): () => void
     }
     // Only on the way from something to nothing: right after the core shows
     // the window, the bar is not drawn yet.
-    if (s.idle && !wasIdle) void t.invoke('overlay_hide').catch(() => {});
+    if (s.idle && !wasIdle) hideWhenClear();
     wasIdle = s.idle;
   };
   // At once when a selection is armed, or the pointer would go through to
   // the app before the first drag; and, while anything shows, on a timer for
   // whatever moves or grows (the gear's settings, a tooltip's text).
   let timer: ReturnType<typeof setInterval> | undefined;
+  /** Hides the window after two frames, if nothing came back meanwhile. */
+  const hideWhenClear = () =>
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (readPointerState(doc).idle) void t.invoke('overlay_hide').catch(() => {});
+      }),
+    );
   const watch = () => {
     report();
     if (!wasIdle && timer === undefined) timer = setInterval(watch, 150);

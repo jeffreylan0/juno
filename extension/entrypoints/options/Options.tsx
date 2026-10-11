@@ -41,6 +41,7 @@ import {
   type Settings,
 } from '@/lib/storage';
 import type { AiStatus } from '@/lib/status';
+import { Icon } from '@/ui/icons';
 import { hasHosted, useAccount, type AccountState } from '@/ui/useAccount';
 import { formatShortcut, openShortcutSettings, useShortcut } from '@/ui/useShortcut';
 import { AccountSection } from './Account';
@@ -205,6 +206,11 @@ export function Options() {
           <span className={`saved${saved ? ' on' : ''}`} data-testid="saved" aria-live="polite">
             {saved ? 'Saved' : ''}
           </span>
+          {SURFACE.ownWindow && (
+            <button type="button" className="close" title="Close" aria-label="Close" data-testid="close" onClick={() => window.close()}>
+              <Icon name="close" />
+            </button>
+          )}
         </div>
       </header>
 

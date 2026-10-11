@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { WINDOW_ID, createBrowser } from '../../desktop/src/platform/browser';
 import type { Transport } from '../../desktop/src/platform/transport';
 import { pageTitle } from '../../desktop/src/core/tips';
-import { readPointerState } from '../../desktop/src/overlay/pointer';
+import { readPointerState, trackPointer } from '../../desktop/src/overlay/pointer';
 
 type Handler = (payload: unknown) => void;
 
@@ -313,5 +313,29 @@ describe('which parts of the overlay take the pointer', () => {
     expect(readPointerState()).toMatchObject({ interactive: false, idle: false });
     overlay(null);
     expect(readPointerState()).toEqual({ interactive: false, regions: [], idle: true });
+  });
+
+  it('hides the window only once an empty frame has been drawn, and not if the bar came back', async () => {
+    const calls: string[] = [];
+    const t = { invoke: async (cmd: string) => void calls.push(cmd), listen: async () => () => {} } as unknown as Transport;
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0))));
+    overlay('ready');
+    const stop = trackPointer(t);
+    overlay(null);
+    await Promise.resolve();
+    expect(calls).not.toContain('overlay_hide');
+    await frames();
+    expect(calls.filter((c) => c === 'overlay_hide')).toHaveLength(1);
+
+    // Gone and straight back (the shortcut again): the window stays.
+    calls.length = 0;
+    overlay('armed');
+    await Promise.resolve();
+    overlay(null);
+    await Promise.resolve();
+    overlay('armed');
+    await frames();
+    expect(calls).not.toContain('overlay_hide');
+    stop();
   });
 });

@@ -1,8 +1,10 @@
 /**
- * Settings → Permissions (macOS). Box and Freeform need Screen Recording:
- * without it the app cannot see what is under a selection. macOS asks once;
- * after that it is a switch in System Settings, and the app has to restart
- * before the switch takes effect. macOS also re-asks every month or so.
+ * Settings → Permissions (macOS). Screen Recording is the one permission the
+ * app asks for: every mode works on what is on screen, and Text and Element
+ * read it on this Mac rather than through accessibility access, which would
+ * let the app read and control every other app. macOS asks once; after that
+ * it is a switch in System Settings, and the app has to restart before the
+ * switch takes effect.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
@@ -29,7 +31,7 @@ export function Permissions() {
       ) : (
         <>
           <p className="help warn" data-testid="screen-denied">
-            Off. Box and Freeform need it to see what you select. Turn {BRAND.name} on under Screen &amp; System Audio
+            Off. {BRAND.name} needs it to see what you select. Turn {BRAND.name} on under Screen &amp; System Audio
             Recording, then restart it.
           </p>
           <span className="key-row">
@@ -42,6 +44,13 @@ export function Permissions() {
           </span>
         </>
       )}
+      <ul className="help facts" data-testid="permission-facts">
+        <li>
+          It is the <b>only</b> permission {BRAND.name} asks for: no accessibility access, no microphone, no keystrokes.
+          macOS names the switch &ldquo;Screen &amp; System Audio Recording&rdquo;; {BRAND.name} never records audio.
+        </li>
+        <li>Text and Element read the words on screen on this Mac. Only what you select goes to the AI you picked.</li>
+      </ul>
     </div>
   );
 }

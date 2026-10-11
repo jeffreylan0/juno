@@ -65,17 +65,11 @@ pub fn capture_display(frame: Rect, _scale: f64) -> Result<RgbaImage, CaptureErr
     }
 }
 
-struct Search {
-    point: (i32, i32),
-    me: u32,
-    found: Option<HWND>,
-}
-
 unsafe extern "system" fn visit(hwnd: HWND, data: LPARAM) -> BOOL {
-    let search = &mut *(data.0 as *mut Search);
+    let found = &mut *(data.0 as *mut Vec<(HWND, RECT)>);
     let mut pid = 0u32;
     GetWindowThreadProcessId(hwnd, Some(&mut pid));
-    if pid == search.me || !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+    if pid == std::process::id() || !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
         return BOOL(1);
     }
     // Hidden by the system (other virtual desktops, suspended Store apps).
@@ -88,26 +82,42 @@ unsafe extern "system" fn visit(hwnd: HWND, data: LPARAM) -> BOOL {
     if GetWindowRect(hwnd, &mut r).is_err() || r.right <= r.left || r.bottom <= r.top {
         return BOOL(1);
     }
-    let (x, y) = search.point;
-    if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
-        search.found = Some(hwnd);
-        return BOOL(0); // stop: windows come front to back
-    }
+    found.push((hwnd, r));
     BOOL(1)
 }
 
-/// The topmost visible window of another app at `point` (physical pixels).
-pub fn window_at(point: (f64, f64)) -> Option<Source> {
-    let mut search = Search { point: (point.0.round() as i32, point.1.round() as i32), me: std::process::id(), found: None };
+/// Other apps' visible windows, front to back, with their frames (physical pixels).
+fn visible_windows() -> Vec<(HWND, RECT)> {
+    let mut found: Vec<(HWND, RECT)> = Vec::new();
     unsafe {
-        let _ = EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize));
-        let hwnd = search.found?;
+        let _ = EnumWindows(Some(visit), LPARAM(&mut found as *mut Vec<(HWND, RECT)> as isize));
+    }
+    found
+}
+
+fn source_of(hwnd: HWND) -> Source {
+    unsafe {
         let mut title = [0u16; 512];
         let n = GetWindowTextW(hwnd, &mut title).max(0) as usize;
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        Some(Source { app: process_name(pid).unwrap_or_default(), title: String::from_utf16_lossy(&title[..n]) })
+        Source { app: process_name(pid).unwrap_or_default(), title: String::from_utf16_lossy(&title[..n]) }
     }
+}
+
+/// The topmost visible window of another app at `point` (physical pixels).
+pub fn window_at(point: (f64, f64)) -> Option<Source> {
+    let (x, y) = (point.0.round() as i32, point.1.round() as i32);
+    let (hwnd, _) = visible_windows().into_iter().find(|(_, r)| x >= r.left && x < r.right && y >= r.top && y < r.bottom)?;
+    Some(source_of(hwnd))
+}
+
+/// Other apps' visible windows, front to back, with their frames (physical pixels).
+pub fn window_list() -> Vec<(Source, Rect)> {
+    visible_windows()
+        .into_iter()
+        .map(|(hwnd, r)| (source_of(hwnd), Rect::new(r.left as f64, r.top as f64, (r.right - r.left) as f64, (r.bottom - r.top) as f64)))
+        .collect()
 }
 
 /// The program's file name without ".exe", e.g. "WINWORD" or "Acrobat".

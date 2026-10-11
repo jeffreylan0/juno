@@ -26,17 +26,18 @@ base64 = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSError", "NSDictionary", "NSValue", "NSGeometry", "NSThread"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSError", "NSDictionary", "NSValue", "NSGeometry", "NSThread", "NSRange"] }
 objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSRunningApplication", "NSWorkspace", "NSApplication", "NSResponder", "NSScreen", "NSGraphics"] }
 objc2-screen-capture-kit = { version = "0.3", features = ["SCShareableContent", "SCScreenshotManager", "SCStream", "SCError", "block2"] }
 objc2-core-graphics = "0.3"
 objc2-core-foundation = "0.3"
 block2 = "0.6"
+objc2-vision = { version = "0.3", default-features = false, features = ["std", "VNRequest", "VNRecognizeTextRequest", "VNRequestHandler", "VNObservation", "VNTypes", "objc2-core-graphics", "objc2-core-foundation"] }
 keyring = { version = "3.6", features = ["apple-native"] }
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6", features = ["windows-native"] }
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_ProcessStatus"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_System_WinRT", "Foundation", "Foundation_Collections", "Graphics_Imaging", "Media_Ocr", "Storage_Streams"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = "0.13"

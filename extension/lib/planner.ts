@@ -9,7 +9,10 @@
  *   element  → the same: a crop snapped to the element's edges.
  *   freeform → the crop of the shape's bounding box, with everything outside
  *              the outline blanked before it leaves the browser (capture.ts).
- *   text     → the selected text, and only the text.
+ *   text     → the selected text, and only the text. In the app, text read
+ *              off the screen goes as text, with its picture too when the
+ *              reading may not be exact (maths, low confidence), since a
+ *              lost superscript changes the question.
  *
  * This departs from the plan's "cheapest exact form" planner for box
  * selections, by the product owner's call. The eval keeps a `planner` route
@@ -40,7 +43,9 @@ export function partsFor(input: PlanInput): Part[] {
     case 'freeform':
       return image('user');
     case 'text':
-      return text ? [{ kind: 'text', text, source: 'selection' }] : [];
+      if (!text) return [];
+      if (selection.read) return [{ kind: 'text', text, source: 'ocr' }, ...image('fallback')];
+      return [{ kind: 'text', text, source: 'selection' }];
   }
 }
 
@@ -67,6 +72,7 @@ export function buildPlan(input: PlanInput, id = crypto.randomUUID()): Plan {
       devicePixelRatio: input.selection.devicePixelRatio,
       ...(input.selection.label ? { label: input.selection.label } : {}),
       ...(input.selection.clipped ? { clipped: true } : {}),
+      ...(input.selection.read ? { read: true } : {}),
       ...(input.selection.kind === 'freeform' && input.selection.path?.length
         ? { outline: normaliseOutline(input.selection.path, input.selection.rect) }
         : {}),

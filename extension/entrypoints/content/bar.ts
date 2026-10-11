@@ -147,6 +147,9 @@ export const ADJUST_HINT = 'Adjust the edges, then send';
 /** Shown while a drawn outline waits to be sent. */
 export const REDRAW_HINT = 'Draw again to redo, or send';
 
+/** Shown while text selected on the screen (the app) waits to be sent. */
+export const RESELECT_HINT = 'Drag again to change it, or send';
+
 /** Between selections: nothing armed, the page is the student's. */
 export const READY_HINT = 'Pick a mode to select';
 
@@ -155,6 +158,7 @@ const MODE_HINT: Record<SelectionKind, string> = {
   text: 'Highlight some text',
   element: 'Click part of the page · ↑ ↓ to resize',
   freeform: 'Draw around it',
+  ...SURFACE.modeHints,
 };
 
 const GHOST_OFF = 'Temporary chat';
@@ -336,7 +340,7 @@ export class Bar {
   }
 
   private hint(): string {
-    if (this.adjusting) return this.kind === 'freeform' ? REDRAW_HINT : ADJUST_HINT;
+    if (this.adjusting) return this.kind === 'freeform' ? REDRAW_HINT : this.kind === 'text' ? RESELECT_HINT : ADJUST_HINT;
     return this.kind ? MODE_HINT[this.kind] : READY_HINT;
   }
 

@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "app": "node scripts/app.mjs",
     "web:dev": "vite",
     "web:build": "vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
