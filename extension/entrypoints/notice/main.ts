@@ -17,7 +17,7 @@ const close = () => window.close();
 
 const style = document.createElement('style');
 style.textContent = `
-html, body { margin: 0; background: var(--sai-tip-bg, #fef3c7); }
+html, body { margin: 0; background: var(--sai-tip-bg, #30302e); }
 body { width: 360px; }
 #root .sai-tip { max-width: none; border: 0; border-radius: 0; box-shadow: none; padding: 12px 14px 12px 10px; }
 ${TOOLTIP_STYLE}`;

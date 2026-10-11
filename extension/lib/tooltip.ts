@@ -1,5 +1,5 @@
 /**
- * The yellow tooltip at the top of the page: a warning or a tip that fades in
+ * The tooltip at the top of the page, in the bar's colours: a warning or a tip that fades in
  * from the top, stays a few seconds (longer while the pointer is on it), and
  * fades out. A small grey ✕ on the very left dismisses it early.
  *
@@ -42,24 +42,25 @@ export const TOOLTIP_STYLE = `
   box-sizing: border-box; display: flex; align-items: center; gap: 10px;
   max-width: min(560px, calc(100vw - 24px)); padding: 9px 12px 9px 8px;
   font: 500 13px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-  color: var(--sai-tip-fg, #422006); background: var(--sai-tip-bg, #fef3c7);
-  border: 1px solid var(--sai-tip-border, #f5d77a); border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  -webkit-font-smoothing: antialiased;
+  color: var(--sai-tip-fg, #f5f4ef); background: var(--sai-tip-bg, #30302e);
+  border: 1px solid var(--sai-tip-border, rgba(222, 220, 209, 0.14)); border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
   animation: sai-tip-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .sai-tip.gone { animation: sai-tip-out 200ms ease-in forwards; }
 .sai-tip-x {
   flex: none; display: flex; align-items: center; justify-content: center;
   width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px; cursor: pointer;
-  background: transparent; color: #8a8a8a; font: inherit; font-size: 12px; line-height: 1;
+  background: transparent; color: #a6a39b; font: inherit; font-size: 12px; line-height: 1;
 }
-.sai-tip-x:hover { color: #525252; background: rgba(0, 0, 0, 0.06); }
+.sai-tip-x:hover { color: #f5f4ef; background: rgba(255, 255, 255, 0.08); }
 .sai-tip-text { flex: 1; min-width: 0; }
 .sai-tip-actions { display: flex; gap: 6px; flex: none; }
 .sai-tip-actions button {
   font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
-  border: 1px solid #d6a92c; border-radius: 7px; padding: 4px 10px;
-  color: #422006; background: rgba(255, 255, 255, 0.65);
+  border: 0; border-radius: 8px; padding: 5px 11px;
+  color: #1f1e1d; background: #f5f4ef;
 }
 .sai-tip-actions button:hover { background: #fff; }
 @keyframes sai-tip-in { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }

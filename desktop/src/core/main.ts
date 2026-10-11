@@ -109,6 +109,15 @@ async function finishChat(): Promise<void> {
     barUp = false;
     await tellOverlay({ type: 'bar:hide' });
   }
+  await closePanel();
+}
+
+/** The panel plays its exit and closes itself (card.ts); closed from here if it does not. */
+async function closePanel(): Promise<void> {
+  if (panels.size) {
+    await browser.tell('panel', { type: 'card:leave' }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 400));
+  }
   await transport.invoke('panel_close').catch(() => {});
 }
 
@@ -151,8 +160,10 @@ interface CaptureFailure {
 async function handleSelectionDone(msg: SelectionDoneMsg): Promise<void> {
   // The chat it was made for, fixed now (current.ts).
   const into = serial(() => ensureCurrent(W));
+  // Text read off the screen goes as text; its picture only when the
+  // reading may not be exact (screen-text.ts, needsPicture).
   const shot: Promise<Captured | undefined> =
-    msg.kind === 'text'
+    msg.kind === 'text' && !msg.read?.unsure
       ? Promise.resolve(undefined)
       : transport.invoke<Captured>('capture_selection', {
           request: { rect: msg.rect, path: msg.path ?? null, viewport: msg.viewport ?? { width: 0, height: 0 } },
@@ -221,7 +232,7 @@ function reply(work: Promise<unknown>, sendResponse: (value: unknown) => void): 
   return true;
 }
 
-const DESKTOP_MESSAGES = new Set(['overlay:ready', 'screen:enable', 'screen:later']);
+const DESKTOP_MESSAGES = new Set(['overlay:ready', 'screen:enable', 'screen:later', 'screen:denied']);
 
 browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
   if (!isRuntimeMessage(raw) && !DESKTOP_MESSAGES.has((raw as { type?: string })?.type ?? '')) return;
@@ -236,6 +247,10 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
       return;
     case 'screen:later':
       void screenNotNow();
+      return;
+    case 'screen:denied':
+      screenLater = false;
+      if (barUp) void tellOverlay({ type: 'overlay:notice', notice: screenAsked ? 'screen-restart' : 'screen-permission' });
       return;
     case 'selection:committed':
       void openPanel();

@@ -1,27 +1,27 @@
 /**
- * Barebones reader chrome. Tokens at the top, same as the panel and options,
- * so the real design lands in one place.
+ * The PDF reader's chrome, in the palette the bar, the panel and settings
+ * share. Tokens at the top.
  */
 :root {
   color-scheme: light dark;
-  --bg: #f1f5f9;
-  --chrome: #ffffff;
-  --fg: #0f172a;
-  --muted: #64748b;
-  --line: #e2e8f0;
-  --accent: #2563eb;
+  --bg: #f0eee6;
+  --chrome: #faf9f5;
+  --fg: #141413;
+  --muted: #73726c;
+  --line: #e6e4dc;
+  --accent: #c96442;
   --radius: 8px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
   font-size: 13px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0b1220;
-    --chrome: #111827;
-    --fg: #e5e7eb;
-    --muted: #94a3b8;
-    --line: #1f2937;
-    --accent: #60a5fa;
+    --bg: #1f1e1d;
+    --chrome: #262624;
+    --fg: #f5f4ef;
+    --muted: #a6a39b;
+    --line: #3d3d3a;
+    --accent: #d97757;
   }
 }
 

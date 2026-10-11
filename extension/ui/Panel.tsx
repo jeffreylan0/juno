@@ -210,6 +210,11 @@ export function Panel() {
         <button type="button" className="icon" title="Settings" aria-label="Settings" data-testid="settings" onClick={() => void browser.runtime.openOptionsPage()}>
           <Icon name="gear" />
         </button>
+        {SURFACE.ownWindow && (
+          <button type="button" className="icon" title="Close (finishes the chat)" aria-label="Close" data-testid="close" onClick={() => window.close()}>
+            <Icon name="close" />
+          </button>
+        )}
       </header>
 
       {menuOpen && (

@@ -108,36 +108,39 @@ impl Display {
         }
     }
 
-    /// The panel: docked to the right edge of the usable area, full height,
-    /// `width` CSS pixels wide (narrower on a small screen).
-    pub fn panel_placement(&self, space: Space, width: f64) -> Placement {
+    /// The panel: a floating card at the top right of the usable area,
+    /// `width` × `height` CSS pixels, never past the area less a margin all
+    /// round. It grows with its chat from there (wm::fit_panel).
+    pub fn panel_placement(&self, space: Space, width: f64, height: f64) -> Placement {
+        self.card(space, width, height, |work, w, _h, m| (work.x + work.width - m - w, work.y + m))
+    }
+
+    /// Settings: a card in the middle of the usable area.
+    pub fn centred_placement(&self, space: Space, width: f64, height: f64) -> Placement {
+        self.card(space, width, height, |work, w, h, _m| (work.x + (work.width - w) / 2.0, work.y + (work.height - h) / 2.0))
+    }
+
+    /// A card `width` × `height` CSS pixels on the usable area, at most the
+    /// area less a margin all round, put where `at` says.
+    fn card(&self, space: Space, width: f64, height: f64, at: impl Fn(Rect, f64, f64, f64) -> (f64, f64)) -> Placement {
+        let (work, k) = match space {
+            Space::Points => (self.global_work(space), 1.0),
+            Space::Physical => (self.work, self.scale),
+        };
+        let m = (CARD_MARGIN * k).round();
+        let w = (width * k).min(work.width - 2.0 * m).max(1.0).round();
+        let h = (height * k).min(work.height - 2.0 * m).max(1.0).round();
+        let (x, y) = at(work, w, h, m);
+        let r = Rect::new(x.round(), y.round(), w, h);
         match space {
-            Space::Points => {
-                let work = self.global_work(space);
-                let w = width.min(work.width);
-                Placement::Logical(Rect::new(work.x + work.width - w, work.y, w, work.height))
-            }
-            Space::Physical => {
-                let w = (width * self.scale).min(self.work.width).round();
-                Placement::Physical(Rect::new(self.work.x + self.work.width - w, self.work.y, w, self.work.height))
-            }
+            Space::Points => Placement::Logical(r),
+            Space::Physical => Placement::Physical(r),
         }
     }
 }
 
-impl Placement {
-    /// The same frame for a window with a title bar and borders: Tauri sizes
-    /// a window's content but positions its frame, so the frame's extra
-    /// (`frame`, logical pixels: title bar and borders together) comes off
-    /// the size, or the bottom of the window ends under the Dock or taskbar.
-    pub fn content(self, frame: (f64, f64), scale: f64) -> Placement {
-        let fit = |r: Rect, k: f64| Rect::new(r.x, r.y, (r.width - frame.0 * k).max(1.0), (r.height - frame.1 * k).max(1.0));
-        match self {
-            Placement::Logical(r) => Placement::Logical(fit(r, 1.0)),
-            Placement::Physical(r) => Placement::Physical(fit(r, scale)),
-        }
-    }
-}
+/// Room between a floating card (the panel, settings) and the edges of the usable area, CSS pixels.
+pub const CARD_MARGIN: f64 = 12.0;
 
 /// The pointer in the system's global space. `cursor` is what Tauri reports,
 /// which on macOS is points times the *main* display's scale.
@@ -237,9 +240,13 @@ mod tests {
     fn mac_windows_are_placed_in_points() {
         let desk = mac_desk();
         assert_eq!(desk[0].overlay_placement(Space::Points), Placement::Logical(Rect::new(0.0, 0.0, 1512.0, 982.0)));
-        // Docked right, under the menu bar (37 pt on a notched laptop), full height.
-        assert_eq!(desk[0].panel_placement(Space::Points, 420.0), Placement::Logical(Rect::new(1092.0, 37.0, 420.0, 945.0)));
-        assert_eq!(desk[2].panel_placement(Space::Points, 420.0), Placement::Logical(Rect::new(-420.0, -73.0, 420.0, 1055.0)));
+        // A card at the top right, 12 pt in from the edges, under the menu bar (37 pt on a notched laptop).
+        assert_eq!(desk[0].panel_placement(Space::Points, 420.0, 480.0), Placement::Logical(Rect::new(1080.0, 49.0, 420.0, 480.0)));
+        assert_eq!(desk[2].panel_placement(Space::Points, 420.0, 480.0), Placement::Logical(Rect::new(-432.0, -61.0, 420.0, 480.0)));
+        // Never taller than the usable height less the margins.
+        assert_eq!(desk[0].panel_placement(Space::Points, 420.0, 5000.0), Placement::Logical(Rect::new(1080.0, 49.0, 420.0, 921.0)));
+        // Settings, in the middle.
+        assert_eq!(desk[1].centred_placement(Space::Points, 760.0, 640.0), Placement::Logical(Rect::new(2092.0, 233.0, 760.0, 640.0)));
     }
 
     /// Windows, per-monitor DPI aware: a 4K monitor at 150% and a 1080p one at 100% to its right.
@@ -267,7 +274,7 @@ mod tests {
     #[test]
     fn windows_panel_width_scales_with_the_monitor() {
         let desk = windows_desk();
-        assert_eq!(desk[0].panel_placement(Space::Physical, 420.0), Placement::Physical(Rect::new(3210.0, 0.0, 630.0, 2088.0)));
+        assert_eq!(desk[0].panel_placement(Space::Physical, 420.0, 480.0), Placement::Physical(Rect::new(3192.0, 18.0, 630.0, 720.0)));
         assert_eq!(desk[0].overlay_placement(Space::Physical), Placement::Physical(Rect::new(0.0, 0.0, 3840.0, 2160.0)));
     }
 
@@ -280,25 +287,9 @@ mod tests {
     }
 
     #[test]
-    fn the_panel_frame_fits_the_work_area() {
-        // macOS: a 28 pt title bar comes off the height, in points.
-        let mac = mac_desk();
-        assert_eq!(
-            mac[0].panel_placement(Space::Points, 420.0).content((0.0, 28.0), 2.0),
-            Placement::Logical(Rect::new(1092.0, 37.0, 420.0, 917.0))
-        );
-        // Windows at 150%: 31 + 8 px of frame (logical) is 58.5 physical.
-        let win = windows_desk();
-        assert_eq!(
-            win[0].panel_placement(Space::Physical, 420.0).content((16.0, 39.0), 1.5),
-            Placement::Physical(Rect::new(3210.0, 0.0, 606.0, 2029.5))
-        );
-    }
-
-    #[test]
     fn panel_never_wider_than_the_screen() {
         let small = display("Small", Rect::new(0.0, 0.0, 800.0, 600.0), Rect::new(0.0, 0.0, 300.0, 600.0), 1.0);
-        assert_eq!(small.panel_placement(Space::Physical, 420.0), Placement::Physical(Rect::new(0.0, 0.0, 300.0, 600.0)));
+        assert_eq!(small.panel_placement(Space::Physical, 420.0, 480.0), Placement::Physical(Rect::new(12.0, 12.0, 276.0, 480.0)));
     }
 
     #[test]

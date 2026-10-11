@@ -12,6 +12,7 @@
     "dev:firefox": "pnpm --filter extension dev:firefox",
     "desktop:dev": "pnpm --filter desktop dev",
     "desktop:build": "pnpm --filter desktop build",
+    "desktop:app": "pnpm --filter desktop app",
     "build": "pnpm --filter extension build",
     "build:firefox": "pnpm --filter extension build:firefox",
     "zip": "pnpm --filter extension zip",

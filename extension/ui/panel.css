@@ -12,11 +12,11 @@
   --user-bg: #f0eee6;
   --hover: #f0eee6;
   --error: #b42318;
-  /* Notices: yellow, so they read as "worth a look" rather than "broken". */
-  --warn-bg: #fef6d6;
-  --warn-line: #f3dc8b;
-  --warn-fg: #5c4300;
-  --warn-strong: #8a5a00;
+  /* Notices: a warm amber in the same palette, so they read as "worth a look" rather than "broken". */
+  --warn-bg: #f7f0e1;
+  --warn-line: #eadcbc;
+  --warn-fg: #5a4a24;
+  --warn-strong: #95661a;
   --scrim: rgba(20, 20, 19, .28);
   --drawer-bg: #f5f4ed;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
@@ -36,10 +36,10 @@
     --user-bg: #141413;
     --hover: #30302e;
     --error: #f2998b;
-    --warn-bg: #2a2412;
-    --warn-line: #5a4815;
-    --warn-fg: #f3e2a6;
-    --warn-strong: #fcd34d;
+    --warn-bg: #33302a;
+    --warn-line: #4a4436;
+    --warn-fg: #ece2c8;
+    --warn-strong: #e7c46a;
     --scrim: rgba(0, 0, 0, .45);
     --drawer-bg: #1f1e1d;
   }
@@ -124,7 +124,7 @@ button.chat-title:hover { background: var(--hover); }
 /* Notices, just above the macros. */
 .notices { display: flex; flex-direction: column; gap: 6px; }
 .notice {
-  display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 10px;
+  display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px; border-radius: 12px;
   background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg); font-size: 13px; line-height: 1.45;
 }
 .notice-icon { flex: none; width: 16px; height: 16px; margin-top: 1px; fill: none; stroke: var(--warn-strong); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

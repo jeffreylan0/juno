@@ -35,6 +35,11 @@ export function SelectionCard({ item, onRemove, showPage = true }: { item: Selec
           {KIND_LABEL[kind]}
         </span>
         {kind === 'element' && plan.selection.label && <span className="selection-sub">· {plan.selection.label}</span>}
+        {plan.selection.read && (
+          <span className="selection-sub" data-testid="selection-read" title="Read on this computer from what was on screen">
+            · read from the screen
+          </span>
+        )}
         {showPage && <PageLink url={plan.page.url} title={plan.page.title} />}
         {onRemove && (
           <button type="button" className="icon selection-remove" title="Remove this selection" aria-label="Remove this selection" data-testid="selection-remove" onClick={onRemove}>

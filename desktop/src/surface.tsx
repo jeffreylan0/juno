@@ -24,7 +24,12 @@ export const SURFACE: Surface = {
   sections: MAC ? [{ id: 'permissions', title: 'Permissions', render: () => <Permissions /> }] : [],
   blockedSites: false,
   pdfViewer: false,
-  // Text and Element read the screen through the system's accessibility API,
-  // which comes in the next step of the app (the plan's "Parity on Mac").
-  unavailable: (label) => `${label} is coming to the app soon. Box and Freeform work everywhere.`,
+  ownWindow: true,
+  // Every mode works everywhere; Text and Element on what the app reads off
+  // the screen (lib/screen-text.ts).
+  unavailable: (label) => `${label} doesn't work here`,
+  modeHints: {
+    text: 'Drag across the text',
+    element: 'Click a paragraph · ↑ ↓ to resize',
+  },
 };

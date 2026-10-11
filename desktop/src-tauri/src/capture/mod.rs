@@ -77,6 +77,11 @@ pub fn window_at(point: (f64, f64)) -> Option<Source> {
     platform::window_at(point)
 }
 
+/// Other apps' windows on screen, front to back, in the global space.
+pub fn window_list() -> Vec<(Source, Rect)> {
+    platform::window_list()
+}
+
 pub fn screen_access() -> Access {
     platform::screen_access()
 }

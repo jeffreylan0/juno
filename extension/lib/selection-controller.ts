@@ -13,19 +13,31 @@
 import type { Rect, SelectionKind } from '@shared/payload';
 import { BRAND } from '@/brand';
 import type { BarNotice } from '@/entrypoints/content/bar';
+import { windowTitle, type ScreenReader, type ScreenWindow } from './screen-text';
 import { Overlay, type OverlayHost } from '@/entrypoints/content/overlay';
 import { dismissPageTooltip, showPageTooltip } from './tooltip';
 import { availableModes, detectPdf, readerUrlFor, type PdfContext } from './pdf-detect';
 import { extensionAlive, send, type BarControlMsg, type RuntimeMessage, type SelectionDoneMsg } from './messages';
-import { getSettings, lastKindItem } from './storage';
+import { getSettings, lastKindItem, migrateSettings, settingsItem } from './storage';
 
 export interface SelectionControllerOptions {
   /** Invalidation hook; the content script has one, the reader does not. */
   host?: OverlayHost;
   /** Override the document under test. */
   doc?: Document;
+  /**
+   * The screenshot never sees the overlay (the app: the system leaves its
+   * windows out), so the dim can fade out after a selection instead of
+   * vanishing before the shot.
+   */
+  captureExcludesOverlay?: boolean;
   /** The modes on offer, when the surface decides (the app); otherwise what the page allows. */
   modes?: SelectionKind[];
+  /**
+   * Reads the screen, where Text and Element work on what is on it rather
+   * than on a page (the app; see lib/screen-text.ts).
+   */
+  screen?: ScreenReader;
 }
 
 export class SelectionController {
@@ -45,12 +57,28 @@ export class SelectionController {
   /** The extension was updated or reloaded under this page: nothing more to do here. */
   private gone = false;
   private doc: Document;
+  private screen: ScreenReader | undefined;
+  /**
+   * The send setting, kept current, so arming never waits on storage: a wait
+   * between taking one mode's surface down and putting the next one up shows
+   * as a flash of the undimmed screen.
+   */
+  private adjust: boolean | null = null;
+  private unwatch: (() => void) | null = null;
 
   constructor(opts: SelectionControllerOptions = {}) {
     const doc = (this.doc = opts.doc ?? document);
+    this.screen = opts.screen;
+    void this.waitsForSend().then((a) => (this.adjust ??= a));
+    try {
+      this.unwatch = settingsItem.watch((s) => (this.adjust = migrateSettings(s).adjustBox));
+    } catch {
+      /* no storage here (an orphaned page): read when needed */
+    }
     this.pdf = detectPdf(doc);
     this.modes = opts.modes ?? availableModes(this.pdf);
-    this.overlay = new Overlay({
+    this.overlay = new Overlay(
+      {
       onModeChange: (kind) =>
         this.act(() =>
           this.soon(() => {
@@ -63,7 +91,9 @@ export class SelectionController {
       // Escape while the bar waits: hide it (and the panel), like ✕.
       onEscapeWhileWaiting: () => this.act(() => this.finish()),
       onGhost: () => this.act(() => this.soon(() => void this.toggleGhost())),
-    });
+      },
+      { fadeAfterShot: !!opts.captureExcludesOverlay },
+    );
     // A newer copy of this script took over, or the extension went away.
     opts.host?.onInvalidated(() => this.destroy());
     doc.addEventListener('visibilitychange', this.onVisibility);
@@ -164,6 +194,11 @@ export class SelectionController {
     this.armed = null;
     this.queued = [];
     this.overlay.destroy();
+    try {
+      this.unwatch?.();
+    } catch {
+      /* the extension went away under this page: there is nothing left to stop */
+    }
     this.doc.removeEventListener('visibilitychange', this.onVisibility);
   }
 
@@ -275,6 +310,35 @@ export class SelectionController {
     const devicePixelRatio = window.devicePixelRatio || 1;
     const viewport = { width: innerWidth, height: innerHeight };
 
+    if (kind === 'text' && this.screen) {
+      const adjust = await this.sendSetting();
+      if (!current()) return null;
+      const sel = await this.overlay.selectScreenText(this.modes, this.screen, { adjust });
+      if (!sel) return null;
+      this.commit('text');
+      await this.outOfShot(sel.rect);
+      return {
+        type: 'selection:done',
+        kind: 'text',
+        rect: sel.rect,
+        text: sel.text,
+        html: '',
+        ...(sel.path ? { path: sel.path } : {}),
+        read: { unsure: sel.unsure },
+        devicePixelRatio,
+        viewport,
+        page: pageOf(sel.window),
+      };
+    }
+
+    if (kind === 'element' && this.screen) {
+      const picked = await this.overlay.selectScreenElement(this.modes, this.screen);
+      if (!picked) return null;
+      this.commit('element');
+      await this.outOfShot(picked.rect);
+      return { type: 'selection:done', kind: 'element', rect: picked.rect, label: picked.label, devicePixelRatio, viewport, page: pageOf(picked.window) };
+    }
+
     if (kind === 'text') {
       const sel = await this.overlay.selectText(this.modes);
       if (!sel) return null;
@@ -283,7 +347,7 @@ export class SelectionController {
     }
 
     if (kind === 'box') {
-      const adjust = await this.waitsForSend();
+      const adjust = await this.sendSetting();
       if (!current()) return null;
       const armed = this.overlay.selectBox(this.modes, { adjust });
       if (this.pdf.isPdf) this.offerReader();
@@ -297,7 +361,7 @@ export class SelectionController {
     }
 
     if (kind === 'freeform') {
-      const adjust = await this.waitsForSend();
+      const adjust = await this.sendSetting();
       if (!current()) return null;
       const armed = this.overlay.selectFreeform(this.modes, { adjust });
       if (this.pdf.isPdf) this.offerReader();
@@ -329,6 +393,11 @@ export class SelectionController {
   private async outOfShot(rect: Rect): Promise<void> {
     this.overlay.clearFor(rect);
     await nextPaint();
+  }
+
+  /** The send setting, from memory once known (a resolved await adds no frame). */
+  private async sendSetting(): Promise<boolean> {
+    return (this.adjust ??= await this.waitsForSend());
   }
 
   /** The setting: a drawn box or outline waits for Send (or Enter) instead of going at once. */
@@ -363,6 +432,11 @@ export class SelectionController {
       ],
     });
   }
+}
+
+/** A selection's page in the app: the window it was made over. */
+function pageOf(window: ScreenWindow | undefined): { url: string; title: string } {
+  return { url: '', title: window ? windowTitle(window) : '' };
 }
 
 function nextPaint(): Promise<void> {

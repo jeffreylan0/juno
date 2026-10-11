@@ -66,7 +66,7 @@ const box = (x0: number, y0: number, x1: number, y1: number) =>
     [x1, y1],
   ]);
 
-it('the shortcut brings the bar up over the display, armed in the last mode; Element and Text are not here yet', async () => {
+it('the shortcut brings the bar up over the display, armed in the last mode, with every mode on offer', async () => {
   // The real key, through the X server, to the app's global shortcut.
   const pressed = Date.now();
   await app.xdo('key', 'alt+shift+s');
@@ -82,8 +82,7 @@ it('the shortcut brings the bar up over the display, armed in the last mode; Ele
     `[...${bar(`querySelectorAll('.chip')`)}].map((c) => ({ kind: c.dataset.kind, disabled: c.disabled, hint: c.parentElement.dataset.hint }))`,
   );
   expect(chips.map((c) => c.kind)).toEqual(['box', 'freeform', 'element', 'text']);
-  expect(chips.filter((c) => c.disabled).map((c) => c.kind)).toEqual(['element', 'text']);
-  expect(chips.find((c) => c.kind === 'text')!.hint).toMatch(/coming to the app soon/);
+  expect(chips.filter((c) => c.disabled)).toEqual([]);
   // Armed, the screen is dimmed a little; Send waits off the bar (selections go when drawn, by default).
   await waitFor('the dim', async () => (await app.read('overlay', `getComputedStyle(${bar(`querySelector('.backdrop')`)}).backgroundColor`)) === 'rgba(20, 20, 19, 0.26)');
   expect(await app.read('overlay', `getComputedStyle(${bar(`querySelector('.ask')`)}).display`)).toBe('none');
@@ -135,7 +134,7 @@ it('"Turn on Screen Recording" steps the bar aside for System Settings; next tim
   expect(await app.read('overlay', bar(`querySelector('[data-testid=notice-restart]').textContent`))).toBe('Restart');
 });
 
-it('a box over known pixels: the panel opens docked right, the chat gets exactly that crop, and the bar waits', async () => {
+it('a box over known pixels: the panel opens as a card at the top right, the chat gets exactly that crop, and the bar waits', async () => {
   await app.summon();
   await armed();
   await box(150, 150, 250, 250);
@@ -152,8 +151,12 @@ it('a box over known pixels: the panel opens docked right, the chat gets exactly
     const w = await app.window('panel');
     return w?.visible && w.width > 0 ? w : null;
   });
+  // A card 12 px in from the top right, as tall as its chat needs, not the screen.
   expect(panel.width).toBe(420);
-  expect(panel.x + panel.width).toBe(SCREEN.width);
+  expect(panel.x + panel.width).toBe(SCREEN.width - 12);
+  expect(panel.y).toBe(12);
+  expect(panel.height).toBeGreaterThanOrEqual(440);
+  expect(panel.height).toBeLessThan(SCREEN.height - 24);
 
   const o = await waiting();
   expect(o.regions).toHaveLength(1);
@@ -308,6 +311,11 @@ it('two selections go into one chat, each with its own crop', async () => {
   expect(await pixels((await cropOf(chat, 0)).dataUrl, [[50, 50]])).toEqual([RED]);
   expect(await pixels((await cropOf(chat, 1)).dataUrl, [[50, 50]])).toEqual([BLUE]);
   await waitFor('both in the panel', async () => (await app.read('panel', `document.querySelectorAll('[data-testid=selection]').length`)) === 2);
+  // The panel grew downwards to fit them, from where its top was.
+  await waitFor('the panel grown to fit its chat', async () => {
+    const w = await app.window('panel');
+    return w && w.y === 12 && w.height > 460 ? w : null;
+  });
 });
 
 it('the ghost on the bar: the next selection is a temporary chat, in memory only, gone when finished', async () => {
@@ -344,4 +352,65 @@ it('the gear on the bar opens settings: the app’s own shortcut, no blocked sit
   expect(text).not.toContain('Blocked sites');
   expect(text).not.toContain("browser's PDF viewer");
   expect(text).toContain("the window's title go to the AI you picked");
+});
+
+/** The fixture's two paragraphs (fixture.css): 34px text from x = 100, lines 41px tall from y = 380 and 500. */
+const Q1_Y = 400;
+const Q2_Y = 520;
+
+const say = () => app.read<string>('overlay', bar(`querySelector('.say').textContent`));
+
+it('Text: the app reads the screen on this computer, and a drag across words selects exactly them', async () => {
+  await app.summon();
+  await armed();
+  await app.eval('overlay', bar(`querySelector('.chip[data-kind=text]').click()`));
+  await armed('text');
+  await waitFor('the screen read', async () => (await say()) === 'Drag across the text', 30_000);
+
+  // From just left of "Find" to well past "square.": the selection runs to the nearest words.
+  await app.drag([
+    [96, Q1_Y],
+    [400, Q1_Y],
+    [900, Q1_Y],
+  ]);
+  const chat = await selections(1);
+  const item = chat.items[0]!;
+  expect(item.plan!.selection.kind).toBe('text');
+  expect(item.plan!.parts.map((p) => p.kind)).toEqual(['text']);
+  expect((item.plan!.parts[0] as unknown as { text: string }).text).toBe('Find the area of the red square.');
+  await waitFor('the text in the panel', async () => (await app.read('panel', `document.querySelector('[data-testid=selection-text]')?.textContent`)) === 'Find the area of the red square.');
+  expect(await app.read('panel', `!!document.querySelector('[data-testid=selection-read]')`)).toBe(true);
+});
+
+it('Element: hovering lights up the paragraph, ↑ widens it to the screen, and a click picks it', async () => {
+  await app.summon();
+  await armed();
+  await app.eval('overlay', bar(`querySelector('.chip[data-kind=element]').click()`));
+  await armed('element');
+  await waitFor('the screen read', async () => (await say()).startsWith('Click a paragraph'), 30_000);
+
+  await app.xdo('mousemove', '150', String(Q2_Y));
+  const tag = () => app.read<string | null>('overlay', bar(`querySelector('[data-testid=element-tag]')?.textContent ?? null`));
+  await waitFor('the paragraph lit up', async () => (await tag()) === 'Paragraph');
+  await app.xdo('key', 'Up');
+  await waitFor('the screen lit up', async () => (await tag()) === 'Screen');
+  await app.xdo('key', 'Down');
+  await waitFor('the paragraph again', async () => (await tag()) === 'Paragraph');
+  await app.xdo('click', '1');
+
+  const chat = await selections(1);
+  const plan = chat.items[0]!.plan!;
+  expect(plan.selection.kind).toBe('element');
+  expect(plan.selection.label).toBe('Paragraph');
+  // "Show your work." and a little room around it, not the screen.
+  const { part, dataUrl } = await cropOf(chat);
+  expect(part.width).toBeGreaterThan(180);
+  expect(part.width).toBeLessThan(420);
+  expect(part.height).toBeGreaterThan(24);
+  expect(part.height).toBeLessThan(70);
+  const r = plan.selection.rect as { x: number; y: number };
+  expect(r.x).toBeGreaterThan(80);
+  expect(r.x).toBeLessThan(110);
+  // Dark text in it, on the fixture's white.
+  expect(await pixels(dataUrl, [[2, 2]])).toEqual([WHITE]);
 });

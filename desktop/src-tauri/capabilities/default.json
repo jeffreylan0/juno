@@ -5,6 +5,7 @@
   "windows": ["core", "overlay", "panel", "settings", "fixture"],
   "permissions": [
     "core:default",
+    "core:window:allow-start-dragging",
     "opener:default",
     {
       "identifier": "http:default",

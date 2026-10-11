@@ -1,5 +1,25 @@
 /*
- * What the app's pages need beyond the extension's stylesheets: they fill a
- * window of their own rather than a side panel or a tab.
+ * What the app's pages need beyond the extension's stylesheets: the panel
+ * and settings are cards (card.ts), like the bar.
  */
 html, body, #root { height: 100%; }
+
+/* A card: the window is see-through on macOS and the page draws the rounded card in it. */
+html.card, html.card body { background: transparent; overflow: hidden; }
+html.card .panel, html.card .page {
+  height: 100%; background: var(--bg); overflow: hidden;
+  animation: card-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+html.card.mac .panel, html.card.mac .page {
+  border-radius: 14px; border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+}
+html.card .panel { transform-origin: top right; }
+html.card.leaving .panel, html.card.leaving .page { animation: card-out 150ms ease-in forwards; }
+@keyframes card-in { from { opacity: 0; transform: translateY(-6px) scale(0.985); } }
+@keyframes card-out { to { opacity: 0; transform: translateY(-4px) scale(0.985); } }
+@media (prefers-reduced-motion: reduce) { html.card .panel, html.card .page, html.card.leaving .panel, html.card.leaving .page { animation-duration: 1ms; } }
+
+/* Settings scroll inside the card, under its top bar. */
+html.card .page { overflow-y: auto; scroll-behavior: smooth; scroll-padding-top: 72px; }
+html.card .top { cursor: default; }
+html.card .topbar { cursor: default; user-select: none; -webkit-user-select: none; }
