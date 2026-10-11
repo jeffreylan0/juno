@@ -77,15 +77,62 @@ it('the shortcut brings the bar up over the display, armed in the last mode; Ele
   expect(await app.read('overlay', '[innerWidth, innerHeight]')).toEqual([SCREEN.width, SCREEN.height]);
   expect(await app.window('overlay')).toMatchObject({ x: 0, y: 0, visible: true });
 
-  const chips = await app.read<{ kind: string; disabled: boolean; title: string }[]>(
+  const chips = await app.read<{ kind: string; disabled: boolean; hint: string }[]>(
     'overlay',
-    `[...${bar(`querySelectorAll('.chip')`)}].map((c) => ({ kind: c.dataset.kind, disabled: c.disabled, title: c.title }))`,
+    `[...${bar(`querySelectorAll('.chip')`)}].map((c) => ({ kind: c.dataset.kind, disabled: c.disabled, hint: c.parentElement.dataset.hint }))`,
   );
   expect(chips.map((c) => c.kind)).toEqual(['box', 'freeform', 'element', 'text']);
   expect(chips.filter((c) => c.disabled).map((c) => c.kind)).toEqual(['element', 'text']);
-  expect(chips.find((c) => c.kind === 'text')!.title).toMatch(/coming to the app soon/);
+  expect(chips.find((c) => c.kind === 'text')!.hint).toMatch(/coming to the app soon/);
+  // Armed, the screen is dimmed a little; Send waits off the bar (selections go when drawn, by default).
+  await waitFor('the dim', async () => (await app.read('overlay', `getComputedStyle(${bar(`querySelector('.backdrop')`)}).backgroundColor`)) === 'rgba(20, 20, 19, 0.26)');
+  expect(await app.read('overlay', `getComputedStyle(${bar(`querySelector('.ask')`)}).display`)).toBe('none');
   // The panel waits for the first selection.
   expect(await app.window('panel')).toBeUndefined();
+});
+
+it('opening the app brings the bar straight up, armed, as the shortcut does', async () => {
+  await app.close();
+  app = await App.launch({ opened: true });
+  await armed('box');
+  expect(await app.read('overlay', `${bar(`querySelector('[data-testid=bar-notice]')`)}.classList.contains('on')`)).toBe(false);
+});
+
+it('before macOS lets the app see the screen, the bar asks for it; "Not now" selects anyway', async () => {
+  await app.close();
+  app = await App.launch({ env: { SAI_TEST_SCREEN_ACCESS: 'denied' } });
+  await app.summon();
+  // Up, but nothing armed: the note under the row is what to do first.
+  await waiting();
+  const notice = () => app.read<string | null>('overlay', `${bar(`querySelector('[data-testid=bar-notice].on')`)}?.dataset.id ?? null`);
+  await waitFor('the permission note', async () => (await notice()) === 'screen-permission');
+  expect(await app.read('overlay', bar(`querySelector('[data-testid=bar-notice]').textContent`))).toContain('Needs Screen Recording permission');
+
+  await app.eval('overlay', bar(`querySelector('[data-testid=notice-later]').click()`));
+  await armed('box');
+  expect(await notice()).toBeNull();
+  // Not asked again this time round.
+  await app.xdo('mousemove', '640', '400');
+  await app.xdo('key', 'Escape');
+  await waitFor('the overlay hidden', async () => !(await app.overlay()).visible);
+  await app.summon();
+  await armed('box');
+  expect(await notice()).toBeNull();
+});
+
+it('"Turn on Screen Recording" steps the bar aside for System Settings; next time it says to restart', async () => {
+  await app.close();
+  app = await App.launch({ env: { SAI_TEST_SCREEN_ACCESS: 'denied' } });
+  await app.summon();
+  const notice = () => app.read<string | null>('overlay', `${bar(`querySelector('[data-testid=bar-notice].on')`)}?.dataset.id ?? null`);
+  await waitFor('the permission note', async () => (await notice()) === 'screen-permission');
+  await app.eval('overlay', bar(`querySelector('[data-testid=notice-screen-enable]').click()`));
+  await waitFor('the overlay hidden', async () => !(await app.overlay()).visible);
+
+  await app.summon();
+  await waiting();
+  await waitFor('the restart note', async () => (await notice()) === 'screen-restart');
+  expect(await app.read('overlay', bar(`querySelector('[data-testid=notice-restart]').textContent`))).toBe('Restart');
 });
 
 it('a box over known pixels: the panel opens docked right, the chat gets exactly that crop, and the bar waits', async () => {
@@ -198,7 +245,7 @@ it('✕ on the bar finishes the chat: the bar and the panel go, and the chat sta
   const chat = await selections(1);
   const { regions } = await waiting();
   const b = regions[0]!;
-  // The red ✕ is the bar's first control: a real click on it.
+  // The ✕ is the bar's first control: a real click on it.
   await app.xdo('mousemove', String(b.x + 23), String(b.y + b.height / 2));
   await waitFor('the bar taking the click', async () => (await app.overlay()).ignoring === false);
   await app.xdo('click', '1');

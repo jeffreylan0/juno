@@ -2,8 +2,8 @@
  * Small pieces of the core that are worth testing on their own.
  */
 
-/** The tooltips the core asks the overlay to show (overlay/tips.ts has their words). */
-export type OverlayTip = 'screen-permission' | 'shortcut-taken';
+/** The notes the core asks the bar to carry under its row (overlay/notices.ts has their words). */
+export type OverlayNotice = 'screen-permission' | 'screen-restart' | 'shortcut-taken';
 
 /**
  * A selection's "page" title in the app: the window it was made over, and

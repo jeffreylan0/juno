@@ -1,5 +1,5 @@
 /**
- * Who answers, chosen right beside the macros instead of in settings: the
+ * Who answers, chosen right beside Send instead of in settings: the
  * major Claude and ChatGPT models, a local model, or placeholder answers.
  *
  * Models from a vendor with no key saved are listed but disabled with "add
@@ -34,8 +34,8 @@ export function ModelPicker({ settings, keys }: { settings: Settings; keys: Keys
   };
 
   return (
-    // A native <select> is as wide as its widest option, which would push the
-    // macros onto a second line. The visible part is a label sized to the
+    // A native <select> is as wide as its widest option, which would crowd
+    // Send off the row. The visible part is a label sized to the
     // current choice; the real select sits invisibly on top of it, so the
     // dropdown, keyboard and screen readers all behave natively.
     <label className="model-picker" title={`Who answers: ${describe(value, settings)}`}>

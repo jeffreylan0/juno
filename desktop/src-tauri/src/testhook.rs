@@ -12,6 +12,9 @@
 //! - `GET /overlay` — what of the overlay takes the pointer
 //! - `POST /fixture?x=&y=&w=&h=` — a window with known content to select over
 //! - `POST /quit`
+//!
+//! `SAI_TEST_SCREEN_ACCESS=denied` makes the app behave as macOS does before
+//! Screen Recording is allowed.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -69,6 +72,15 @@ fn serve(app: &AppHandle, mut stream: TcpStream) -> std::io::Result<()> {
     let text = reply.to_string();
     write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}", text.len())?;
     stream.flush()
+}
+
+/// What a test says the system allows, in place of asking it.
+pub fn screen_access() -> Option<crate::capture::Access> {
+    match std::env::var("SAI_TEST_SCREEN_ACCESS").ok()?.as_str() {
+        "denied" => Some(crate::capture::Access::Denied),
+        "granted" => Some(crate::capture::Access::Granted),
+        _ => None,
+    }
 }
 
 fn param(query: &str, name: &str) -> Option<f64> {

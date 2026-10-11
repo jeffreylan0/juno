@@ -84,7 +84,9 @@ test('the panel holds a conversation: a first answer, then a follow-up on the sa
   // so check the document's focus rather than the window's).
   expect(await box.evaluate((el) => document.activeElement === el)).toBe(true);
   const send = panel.locator('.composer .send');
-  await expect(send).toHaveText(/Send/);
+  await expect(send).toHaveAccessibleName('Send');
+  // Who answers sits beside Send, as in Claude.
+  await expect(panel.locator('.composer-row').getByTestId('model-picker')).toHaveCount(1);
   // Nothing to send until something is typed (or a macro is picked).
   await expect(send).toBeDisabled();
   await box.fill('Explain this step by step.');

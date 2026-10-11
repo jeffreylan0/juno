@@ -10,8 +10,8 @@
  *  - the top bar: chat menu (left), the chat's name (click to rename), the
  *    temporary-chat ghost and settings (right);
  *  - the chat: selections as they arrive, questions and answers;
- *  - notices (no key, disconnected, …), then the answer macros with the model
- *    picker beside them, and a large question box.
+ *  - notices (no key, disconnected, …), then the answer macros, and the
+ *    question box, with who answers beside Send, as in Claude.
  *
  * Every question carries the selections made since the last one. The box
  * starts empty (or with the student's own default prompt); Enter or Send asks
@@ -281,7 +281,6 @@ export function Panel() {
               </button>
             ))}
           </div>
-          {settings && <ModelPicker settings={settings} keys={keys} />}
         </div>
         <form
           className={`composer${askable ? '' : ' off'}`}
@@ -309,13 +308,13 @@ export function Panel() {
           />
           <div className="composer-row">
             <span className="composer-hint">Shift + Enter for a new line</span>
+            {settings && <ModelPicker settings={settings} keys={keys} />}
             {busy ? (
-              <button type="button" className="send stop" onClick={stop}>
-                Stop
+              <button type="button" className="send stop" aria-label="Stop" title="Stop" onClick={stop}>
+                <Icon name="stop" />
               </button>
             ) : (
-              <button type="submit" className="send" disabled={!canSend}>
-                Send
+              <button type="submit" className="send" aria-label="Send" title="Send (Enter)" disabled={!canSend}>
                 <Icon name="send" />
               </button>
             )}

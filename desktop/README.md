@@ -8,8 +8,10 @@ This is the plan's spike and its *Box, Freeform and the panel on Mac* phase, bui
 
 | Area | State |
 | --- | --- |
-| Option+Shift+S (Alt+Shift+S on Windows), anywhere | global shortcut, no permission; the menu bar (tray) icon's *Select* does the same. If another app holds the key, a tooltip says so once and Settings explains it |
-| The bar | the extension's bar, unchanged, in a transparent overlay over the whole display under the pointer, opening from its middle, armed in the last mode used; above full-screen apps and on every Space (macOS); the shortcut moves it to the display under the pointer |
+| Option+Shift+S (Alt+Shift+S on Windows), anywhere | global shortcut, no permission; the menu bar (tray) icon's *Select*, and opening the app (again), do the same. If another app holds the key, the bar says so once and Settings explains it |
+| The bar | the extension's bar — one quiet dark row in the manner of Claude's quick entry — in a transparent overlay over the whole display under the pointer, opening from its middle, armed in the last mode used, with the screen dimmed a little while a selection is armed; small tooltips come up after a moment; above full-screen apps and on every Space (macOS); the shortcut moves it to the display under the pointer |
+| Sending | as the setting says (*After drawing a selection*): at once, or once ↑ on the bar (or Enter) is pressed, after adjusting a box or redrawing an outline |
+| Screen Recording (macOS) | until it is allowed, the bar comes up with nothing armed and a note under its row: *Turn on Screen Recording* (the system's prompt, then System Settings) or *Not now* (select anyway); once asked, the note offers *Restart* |
 | Box, Freeform | the extension's drawing code; the selection is captured natively and cropped (and masked) natively: ScreenCaptureKit on macOS 14+ with the app's own windows filtered out, GDI on Windows with the app's windows excluded by display affinity |
 | Element, Text | chips shown but off ("coming to the app soon"): they need the accessibility API, the plan's next phase |
 | While the bar waits | clicks go through to the app beneath everywhere but on the bar and its tooltips |
@@ -38,7 +40,7 @@ pnpm desktop:dev          # the app with live reload (Vite on :5180)
 pnpm desktop:build        # a release .app and .dmg in desktop/src-tauri/target/release/bundle
 ```
 
-The app lives in the menu bar (no Dock icon). The first Option+Shift+S asks for **Screen Recording**: turn *Selection AI* on in System Settings → Privacy & Security → Screen & System Audio Recording, then press *Restart* in the tooltip (macOS applies the switch to a fresh process only). During development macOS may ask for Screen Recording and for keychain access again after a rebuild, because each build is a new unsigned binary.
+The app lives in the menu bar (no Dock icon). Opening it brings the bar straight up (`--hidden` starts it without, for starting at login). The first time, the bar asks for **Screen Recording**: *Turn on Screen Recording*, switch *Selection AI* on in System Settings → Privacy & Security → Screen & System Audio Recording, then press *Restart* on the bar (macOS applies the switch to a fresh process only). During development macOS may ask for Screen Recording and for keychain access again after a rebuild, because each build is a new unsigned binary.
 
 Accounts and hosted answers read the same `extension/.env.local` as the extension (`WXT_SUPABASE_URL`, `WXT_SUPABASE_KEY`, `WXT_GATEWAY_URL`).
 
@@ -46,14 +48,14 @@ Accounts and hosted answers read the same `extension/.env.local` as the extensio
 
 *Gate: overlay and capture work across displays and over full-screen apps, or the overlay goes native.*
 
-1. Option+Shift+S over Preview: the bar opens from its middle at the bottom of the screen, Box armed; the cursor is a crosshair everywhere.
+1. Open the app: the bar opens from its middle at the bottom of the screen, asking for Screen Recording the first time. After that, Option+Shift+S over Preview: the screen dims a little, the bar comes up with Box armed, the cursor is a crosshair everywhere, and resting it a moment shows *Drag to select* beside it.
 2. Drag a box over part of a PDF: the panel opens docked right, the selection shows in it, and Explain answers (placeholder answers need no key).
 3. The bar waits: clicking and scrolling in Preview work everywhere except on the bar.
 4. Freeform: the panel shows only the inside of the shape; ✕ closes bar and panel; Escape before selecting closes the bar.
 5. Full screen: put Preview (or Keynote) in full screen, press the shortcut: the bar comes up over it, a box works, the panel appears next to it without leaving the full-screen Space.
 6. Two displays (ideally Retina + standard, one left of the main display): with the pointer on each, the shortcut brings the bar to that display and a box there is cropped exactly (no offset, no scaling).
 7. Stage Manager on: the same.
-8. Screen Recording off (System Settings): the shortcut shows the yellow tooltip with *Open System Settings* and *Restart*.
+8. Screen Recording off (System Settings): the shortcut brings the bar up with the note under it; *Turn on Screen Recording* opens System Settings, and the next shortcut offers *Restart*.
 
 Anything that fails in 1, 3, 5 or 6 is the spike's question: whether the transparent overlay holds up, or becomes a small native window.
 
@@ -74,7 +76,7 @@ desktop/
 ├── src/
 │   ├── platform/         the WebExtension API the shared code uses, over the native core (browser.ts), files for screenshots, network, links
 │   ├── core/             the hidden core window: the extension's background, desktop half (the chat half is extension/lib/engine.ts)
-│   ├── overlay/          the overlay window: the extension's SelectionController; which parts take the pointer; tooltips
+│   ├── overlay/          the overlay window: the extension's SelectionController; which parts take the pointer; the bar's notes
 │   ├── panel/, settings/ the extension's panel and settings page; the app's shortcut field and Permissions section
 │   ├── brand.ts, surface.tsx   what the app says differently ("any app", "the menu bar icon")
 ├── web/                  the four pages (and a fixture page for the tests)

@@ -70,7 +70,8 @@ export interface ChatFinishMsg {
  * answers messages with its `tabId`.
  */
 export type BarControlMsg = (
-  | { type: 'bar:show'; mode: SelectionKind; ghost: boolean }
+  /** `arm: false`: the bar comes up with nothing armed (the app, before it may see the screen). */
+  | { type: 'bar:show'; mode: SelectionKind; ghost: boolean; arm?: boolean }
   | { type: 'bar:hide' }
   | { type: 'bar:ghost'; on: boolean }
 ) & { tabId?: number };
