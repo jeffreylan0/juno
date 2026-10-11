@@ -155,6 +155,15 @@ export interface OverlayOptions {
    * gone before the tab is captured.
    */
   fadeAfterShot?: boolean;
+  /**
+   * The page beneath is not this document's to scroll (the app: the overlay
+   * is a window of its own over other apps). A wheel while Box or Freeform is
+   * armed calls this instead, and the window lets the pointer through to
+   * whatever is beneath until the pointer moves to select. Text and Element
+   * work on a reading of the screen that scrolling would leave behind, so
+   * they keep the wheel.
+   */
+  scrollThrough?: () => void;
 }
 
 /** How long the dim takes to fade when a selection ends. */
@@ -784,6 +793,10 @@ export class Overlay {
         // pinned to the viewport and cannot follow the page, so scrolling
         // would hand back a crop of something the user never framed.
         if (this.state !== 'armed') return;
+        if (this.options.scrollThrough) {
+          if (this.kind === 'box' || this.kind === 'freeform') this.options.scrollThrough();
+          return;
+        }
         applyWheel(scrollTargetAt(e.clientX, e.clientY, this.host), e);
       };
       surface?.addEventListener('wheel', onWheel, { passive: false });

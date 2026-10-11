@@ -20,9 +20,14 @@ export const test = base.extend<{ context: BrowserContext; extensionId: string; 
     // launch fixes that; waiting longer does not.
     for (let attempt = 1; ; attempt++) {
       const userDataDir = mkdtempSync(join(tmpdir(), 'selection-ai-'));
+      const executablePath = process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined;
       const context = await chromium.launchPersistentContext(userDataDir, {
         headless: true,
-        executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined,
+        // Full Chromium in its new headless mode: Playwright's default headless
+        // browser (chromium-headless-shell, since 1.49) cannot load extensions,
+        // so every test would wait for a worker that never starts.
+        channel: executablePath ? undefined : 'chromium',
+        executablePath,
         args: [`--disable-extensions-except=${EXTENSION_PATH}`, `--load-extension=${EXTENSION_PATH}`],
       });
       if ((await findWorker(context, 10_000)) || attempt === 3) {

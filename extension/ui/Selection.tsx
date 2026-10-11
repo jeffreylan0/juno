@@ -15,11 +15,27 @@
  * No token counts or routing details here.
  */
 import { useState } from 'react';
-import type { ImagePart, Part, Point } from '@shared/payload';
+import type { ImagePart, Part, Point, SelectionKind } from '@shared/payload';
 import type { SelectionItem } from '@/lib/chats';
 import { KIND_ICON, KIND_LABEL } from '@/lib/kinds';
 import { ShapesIcon } from './icons';
 import { useImage } from './useChat';
+
+/**
+ * A selection just made, before it lands: its kind, and a soft shimmer where
+ * the screenshot (or text) will be.
+ */
+export function IncomingSelection({ kind }: { kind: SelectionKind }) {
+  return (
+    <section className="selection incoming" data-testid="selection-incoming" data-kind={kind} aria-busy="true">
+      <div className="selection-head">
+        <ShapesIcon shapes={KIND_ICON[kind]} />
+        <span className="selection-kind">{KIND_LABEL[kind]}</span>
+      </div>
+      <div className="selection-placeholder" aria-label="Adding the selection…" />
+    </section>
+  );
+}
 
 /** Lines of captured text shown before "Show all". */
 const COLLAPSED_LINES = 14;

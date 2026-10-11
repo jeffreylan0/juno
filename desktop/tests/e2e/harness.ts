@@ -72,7 +72,7 @@ export class App {
   }
 
   /**
-   * A fresh app on a fresh display, with its core and overlay pages loaded.
+   * A fresh app on a fresh display, with its core, overlay and panel pages loaded.
    * Started with --hidden unless `opened` (as the student opens it, when the
    * bar comes straight up); `env` adds to its environment.
    */
@@ -110,6 +110,8 @@ export class App {
       await waitFor('the test hook', () => it.windows().then((w) => w.some((x) => x.label === 'overlay')), 30_000);
       await waitFor('the core page', () => it.read('core', `typeof browser === 'object'`), 30_000);
       await waitFor('the overlay page', () => it.read('overlay', `typeof browser === 'object'`), 30_000);
+      // The panel is made at start too, hidden, so a selection never waits for it.
+      await waitFor('the panel page', () => it.read('panel', `!!document.querySelector('.panel')`), 30_000);
     } catch (err) {
       // Never leave a half-started app behind for the next test, and say why.
       const exited = it.app.exitCode !== null ? ` (the app exited with ${it.app.exitCode})` : '';

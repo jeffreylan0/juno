@@ -23,11 +23,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
+tauri-plugin-autostart = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSError", "NSDictionary", "NSValue", "NSGeometry", "NSThread", "NSRange"] }
-objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSRunningApplication", "NSWorkspace", "NSApplication", "NSResponder", "NSScreen", "NSGraphics"] }
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSRunningApplication", "NSWorkspace", "NSApplication", "NSResponder", "NSScreen", "NSGraphics", "NSButton", "NSControl", "NSView"] }
 objc2-screen-capture-kit = { version = "0.3", features = ["SCShareableContent", "SCScreenshotManager", "SCStream", "SCError", "block2"] }
 objc2-core-graphics = "0.3"
 objc2-core-foundation = "0.3"

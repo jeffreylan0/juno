@@ -9,21 +9,25 @@
 //!   the bar waits, clicks go through to the app beneath except on the bar
 //!   and its tooltips (`passthrough`).
 //! - `panel`: the answer panel, a floating card at the top right of the
-//!   display the selection was made on, as tall as its chat needs (up to the
-//!   screen). Closing it finishes the chat, as ✕ on Chrome's side panel does.
-//! - `settings`: the settings page, a card in the middle of the screen.
+//!   display the selection was made on, most of the screen tall and growing
+//!   with its chat. Made hidden at start and kept: a selection only has to
+//!   show it, never wait for it to load. Closing it hides it and finishes
+//!   the chat, as ✕ on Chrome's side panel does.
+//! - `settings`: the settings page, a card in the middle of the screen. It
+//!   shows itself once its page has drawn (`window_show`), so it never
+//!   flashes white or empty; opening it takes the bar away.
 //!
-//! The panel and settings are cards like the bar: no title bar (their top
-//! bar drags them), rounded on macOS (Windows 11 rounds them itself), with
-//! the system's shadow. Each is made hidden and shows itself once its page
-//! has drawn (`window_show`), so it never flashes white or empty.
+//! The panel and settings are cards like the bar, with no title bar to see
+//! (their top bar drags them): on macOS ordinary windows whose title bar is
+//! hidden, so the system rounds them and draws their shadow; on Windows
+//! windows without one, which Windows 11 rounds.
 
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use tauri::utils::config::BackgroundThrottlingPolicy;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::geometry::{self, Display, Placement, Rect, Space};
 
@@ -34,8 +38,8 @@ pub const SETTINGS: &str = "settings";
 
 /// The panel's width, in CSS pixels (Chrome's side panel is 320–ish to 600).
 pub const PANEL_WIDTH: f64 = 420.0;
-/// The panel's height before its chat has anything in it, and the least it fits to.
-pub const PANEL_HEIGHT: f64 = 440.0;
+/// The panel's height before it is placed on a display (it starts at most of the display's: geometry.rs).
+pub const PANEL_HEIGHT: f64 = 560.0;
 /// Settings, CSS pixels (less on a small screen).
 const SETTINGS_SIZE: (f64, f64) = (760.0, 680.0);
 
@@ -52,6 +56,9 @@ pub struct OverlayState {
     pub main_scale: f64,
     /// What the overlay was last told: ignore the pointer or not.
     pub ignoring: Option<bool>,
+    /// The pointer when the student scrolled over an armed selection: the
+    /// scroll goes to the app beneath until the pointer moves from here.
+    pub scroll_anchor: Option<(f64, f64)>,
 }
 
 pub type SharedOverlay = Arc<Mutex<OverlayState>>;
@@ -195,6 +202,7 @@ pub fn hide_overlay(app: &AppHandle, state: &SharedOverlay) -> tauri::Result<()>
         s.visible = false;
         s.interactive = false;
         s.regions.clear();
+        s.scroll_anchor = None;
     }
     if let Some(w) = app.get_webview_window(OVERLAY) {
         w.hide()?;
@@ -210,21 +218,30 @@ pub fn focus_overlay(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// A card window: no title bar, the system's shadow, transparent on macOS
-/// (where the page rounds it), made hidden until its page has drawn.
+/// A card window (see the top of this file), made hidden.
 fn card<'a>(app: &'a AppHandle, label: &'a str, url: &str, title: &str) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
-    WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
         .title(title)
-        .decorations(false)
-        .shadow(true)
-        .transparent(cfg!(target_os = "macos"))
         .resizable(true)
         .visible(false)
         .focused(false)
-        .content_protected(cfg!(windows))
+        .content_protected(cfg!(windows));
+    #[cfg(target_os = "macos")]
+    let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.decorations(false).shadow(true);
+    builder
 }
 
-/// Shows a card once its page has drawn (window_show), or after a moment whatever happens.
+/// A card just made: on macOS its title bar's buttons go too (the page has its own ✕).
+fn finish_card(window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    mac::hide_window_buttons(window);
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
+}
+
+/// Shows settings once their page has drawn (window_show), or after a moment whatever happens.
 fn show_soon(window: &WebviewWindow) {
     let w = window.clone();
     thread::spawn(move || {
@@ -239,87 +256,84 @@ fn show_soon(window: &WebviewWindow) {
 pub fn show_window(window: &WebviewWindow) -> tauri::Result<()> {
     unhide(window.app_handle());
     window.show()?;
-    window.set_focus()?;
-    refresh_shadow_soon(window);
-    Ok(())
+    window.set_focus()
 }
 
-/// macOS works out a see-through window's shadow from what it shows when it
-/// appears, which for a card fading in is nothing: once it is in (or has
-/// changed size), the shadow is worked out again.
-fn refresh_shadow_soon(window: &WebviewWindow) {
-    #[cfg(target_os = "macos")]
-    {
-        let w = window.clone();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(260));
-            mac::refresh_shadow(&w);
-        });
-    }
-    #[cfg(not(target_os = "macos"))]
-    let _ = window;
-}
-
-/// Opens the panel at the top right of the overlay's display (or the
-/// pointer's), or brings it forward if it is open. `focus` gives it the
-/// keyboard, so the student can type a question straight away.
-pub fn open_panel(app: &AppHandle, state: &SharedOverlay, focus: bool) -> tauri::Result<()> {
-    let display = state.lock().unwrap().display.clone().or_else(|| display_under_pointer(app).map(|(d, _)| d));
-    unhide(app);
-    if let Some(window) = app.get_webview_window(PANEL) {
-        window.show()?;
-        if focus {
-            window.set_focus()?;
-        }
-        return Ok(());
+/// The panel, made hidden at start and kept (see the top of this file).
+pub fn make_panel(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    if let Some(w) = app.get_webview_window(PANEL) {
+        return Ok(w);
     }
     let window = card(app, PANEL, "web/panel.html", "Selection AI")
         .inner_size(PANEL_WIDTH, PANEL_HEIGHT)
         .min_inner_size(320.0, 320.0)
         .always_on_top(true)
+        // Hidden most of the time, yet it must be ready the moment it shows.
+        .background_throttling(BackgroundThrottlingPolicy::Disabled)
         .build()?;
+    finish_card(&window);
     #[cfg(target_os = "macos")]
     mac::float_above_everything(&window, false);
-    if let Some(d) = &display {
-        place(&window, d.panel_placement(Space::native(), PANEL_WIDTH, PANEL_HEIGHT))?;
+    Ok(window)
+}
+
+/// Shows the panel, or brings it forward. Coming back from hidden, it goes
+/// to the top right of the display the selection is on (the overlay's, or
+/// the pointer's), most of that display tall. `focus` gives it the keyboard,
+/// so the student can type a question straight away.
+pub fn open_panel(app: &AppHandle, state: &SharedOverlay, focus: bool) -> tauri::Result<()> {
+    let display = state.lock().unwrap().display.clone().or_else(|| display_under_pointer(app).map(|(d, _)| d));
+    unhide(app);
+    let window = make_panel(app)?;
+    if !window.is_visible().unwrap_or(false) {
+        if let Some(d) = &display {
+            place(&window, d.panel_placement(Space::native(), PANEL_WIDTH, d.panel_height()))?;
+        }
     }
-    show_soon(&window);
+    window.show()?;
+    if focus {
+        window.set_focus()?;
+    }
     Ok(())
 }
 
 /// The panel's page asks for the height its chat needs (CSS pixels): it
 /// grows, or shrinks, downwards from where its top is, never past the
-/// usable area of its display less the margin, nor below where it started.
-/// Says the height it got.
+/// usable area of its display less the margin, nor below its starting
+/// height. Says the height it got.
 pub fn fit_panel(app: &AppHandle, height: f64) -> tauri::Result<f64> {
     let Some(window) = app.get_webview_window(PANEL) else { return Ok(height) };
     let scale = window.scale_factor()?;
     let size = window.inner_size()?.to_logical::<f64>(scale);
     let top = window.outer_position()?.to_logical::<f64>(scale).y;
-    let limit = match window.current_monitor()? {
+    let (limit, least) = match window.current_monitor()? {
         Some(m) => {
             let (k, work) = (m.scale_factor(), m.work_area());
-            (work.position.y as f64 + work.size.height as f64) / k - geometry::CARD_MARGIN - top
+            let bottom = (work.position.y as f64 + work.size.height as f64) / k - geometry::CARD_MARGIN;
+            (bottom - top, work.size.height as f64 / k * geometry::PANEL_SHARE)
         }
-        None => height,
+        None => (height, PANEL_HEIGHT),
     };
-    let h = height.min(limit).max(PANEL_HEIGHT.min(limit)).round();
+    let h = height.max(least).min(limit).round();
     if (h - size.height).abs() >= 1.0 {
         window.set_size(LogicalSize::new(size.width, h))?;
-        refresh_shadow_soon(&window);
     }
     Ok(h)
 }
 
+/// Hides the panel; it is kept for the next selection.
 pub fn close_panel(app: &AppHandle) -> tauri::Result<()> {
     if let Some(w) = app.get_webview_window(PANEL) {
-        w.destroy()?;
+        w.hide()?;
     }
+    yield_focus(app);
     Ok(())
 }
 
 /// Opens settings (at `#section` if given), or brings them forward.
 pub fn open_settings(app: &AppHandle, hash: Option<&str>) -> tauri::Result<()> {
+    // The bar goes, and the dim with it: settings are not a selection (core/main.ts).
+    let _ = app.emit_to(CORE, "app:settings", ());
     let hash = hash.map(|h| h.trim_start_matches('#')).filter(|h| h.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
     unhide(app);
     if let Some(w) = app.get_webview_window(SETTINGS) {
@@ -336,6 +350,7 @@ pub fn open_settings(app: &AppHandle, hash: Option<&str>) -> tauri::Result<()> {
         None => "web/settings.html".to_string(),
     };
     let window = card(app, SETTINGS, &url, "Selection AI Settings").inner_size(SETTINGS_SIZE.0, SETTINGS_SIZE.1).min_inner_size(520.0, 420.0).build()?;
+    finish_card(&window);
     if let Some((d, _)) = display_under_pointer(app) {
         place(&window, d.centred_placement(Space::native(), SETTINGS_SIZE.0, SETTINGS_SIZE.1))?;
     }
@@ -357,7 +372,16 @@ pub fn start_passthrough(app: AppHandle, state: SharedOverlay) {
                 continue;
             }
             let want_ignore = if snapshot.interactive {
-                false
+                // Scrolling over an armed selection goes to the app beneath
+                // (overlay_scroll_through), until the pointer moves to select.
+                match (snapshot.scroll_anchor, app.cursor_position()) {
+                    (Some(a), Ok(p)) if (p.x - a.0).hypot(p.y - a.1) <= 4.0 => true,
+                    (Some(_), _) => {
+                        state.lock().unwrap().scroll_anchor = None;
+                        false
+                    }
+                    _ => false,
+                }
             } else {
                 match (&snapshot.display, app.cursor_position()) {
                     (Some(display), Ok(p)) => {
@@ -382,7 +406,7 @@ pub fn start_passthrough(app: AppHandle, state: SharedOverlay) {
 
 #[cfg(target_os = "macos")]
 pub mod mac {
-    use objc2_app_kit::{NSFloatingWindowLevel, NSPopUpMenuWindowLevel, NSWindow, NSWindowCollectionBehavior};
+    use objc2_app_kit::{NSFloatingWindowLevel, NSPopUpMenuWindowLevel, NSWindow, NSWindowButton, NSWindowCollectionBehavior};
     use tauri::WebviewWindow;
 
     /// Above full-screen apps and on every Space. The overlay goes above the
@@ -405,14 +429,18 @@ pub mod mac {
         });
     }
 
-    /// Works a see-through window's shadow out again from what it shows now.
-    pub fn refresh_shadow(window: &WebviewWindow) {
+    /// A card's title bar is hidden, its traffic lights too: the page has its own ✕.
+    pub fn hide_window_buttons(window: &WebviewWindow) {
         let Ok(ptr) = window.ns_window() else { return };
         let ptr = ptr as usize;
         let _ = window.run_on_main_thread(move || {
             // SAFETY: a live NSWindow owned by this window, used on the main thread.
             let ns_window: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
-            ns_window.invalidateShadow();
+            for b in [NSWindowButton::CloseButton, NSWindowButton::MiniaturizeButton, NSWindowButton::ZoomButton] {
+                if let Some(button) = ns_window.standardWindowButton(b) {
+                    button.setHidden(true);
+                }
+            }
         });
     }
 }

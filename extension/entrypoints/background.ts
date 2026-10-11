@@ -172,6 +172,10 @@ export default defineBackground(() => {
         // (Firefox opened its sidebar on the icon click instead: it counts
         // only the browser's own UI as a gesture.)
         if (!import.meta.env.FIREFOX) void openPanel(sender.tab?.id);
+        // A placeholder in the panel until the selection itself arrives.
+        void browser.runtime
+          .sendMessage({ type: 'selection:incoming', kind: msg.kind, at: Date.now(), windowId: sender.tab?.windowId })
+          .catch(() => {});
         return;
       case 'selection:done':
         // Answered as soon as the screenshot is taken: the bar waits for
