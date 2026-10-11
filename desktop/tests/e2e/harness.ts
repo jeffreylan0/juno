@@ -79,7 +79,13 @@ export class App {
   static async launch(opts: { opened?: boolean; env?: Record<string, string> } = {}): Promise<App> {
     const display = displays++;
     const xvfb = spawn('Xvfb', [`:${display}`, '-screen', '0', `${SCREEN.width}x${SCREEN.height}x24`, '-nolisten', 'tcp'], { stdio: 'ignore' });
-    await waitFor('the X server', () => existsSync(`/tmp/.X11-unix/X${display}`));
+    // Answering, not just there: a socket left by an X server killed earlier
+    // exists before this one listens, and the app would start against nothing.
+    await waitFor('the X server', async () => {
+      if (!existsSync(`/tmp/.X11-unix/X${display}`)) return false;
+      await run('xdotool', ['getdisplaygeometry'], { env: { ...process.env, DISPLAY: `:${display}` } });
+      return true;
+    });
     const data = mkdtempSync(join(tmpdir(), 'sai-desktop-'));
     const port = 47000 + display;
     const app = spawn(BINARY, opts.opened ? [] : ['--hidden'], {
@@ -117,6 +123,9 @@ export class App {
     await this.hook('POST', '/quit').catch(() => {});
     await Promise.race([new Promise((r) => this.app.once('exit', r)), sleep(3000)]);
     this.app.kill('SIGKILL');
+    // Asked to stop, the X server removes its socket and lock; killed, it leaves them behind.
+    this.xvfb.kill('SIGTERM');
+    await Promise.race([new Promise((r) => this.xvfb.once('exit', r)), sleep(2000)]);
     this.xvfb.kill('SIGKILL');
     rmSync(this.data, { recursive: true, force: true });
   }

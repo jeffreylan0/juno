@@ -3,8 +3,14 @@
 //!
 //! - `local`: one JSON file per key under `<store>/local/`, read into
 //!   memory at start. Except the API keys and the account session (`keys`,
-//!   `account`), which go to the system keychain (macOS Keychain, Windows
-//!   Credential Manager) as one item.
+//!   `account`), which go together into one file only this user can read,
+//!   `<store>/secrets.json` — the protection the browser gives the
+//!   extension's own storage.
+//!
+//!   Not the system keychain: macOS ties a keychain item to the exact build
+//!   that made it, so every new build (and every development build) had to
+//!   ask for the keychain password, and once refused, asked again at every
+//!   read. Signed with a Developer ID, the app could go back to it.
 //! - `session`: memory only, gone when the app quits — temporary chats and
 //!   their screenshots never touch the disk, as in the extension.
 //! - screenshots of saved chats: files under `<store>/images/<chat id>/`.
@@ -26,7 +32,7 @@ use base64::Engine;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-/// Local keys that hold secrets and live in the keychain, not in files.
+/// Local keys that hold secrets and live in the private secrets file, not with the other values.
 const SECRET_KEYS: [&str; 2] = ["keys", "account"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,7 +62,7 @@ pub struct Change {
 
 pub type Changes = HashMap<String, Change>;
 
-/// Where the keychain item (or, on Linux and in test builds, a file) is kept.
+/// Where the secrets are kept (a private file; a stand-in in tests).
 pub trait Secrets: Send + Sync {
     fn load(&self) -> io::Result<Map<String, Value>>;
     fn save(&self, secrets: &Map<String, Value>) -> io::Result<()>;
@@ -71,8 +77,7 @@ pub struct Store {
 
 struct Local {
     values: HashMap<String, Value>,
-    /// Secrets are read from the keychain the first time they are needed, so
-    /// starting the app never asks for keychain access by itself.
+    /// Secrets are read the first time they are needed, not at start.
     secrets_loaded: bool,
 }
 
@@ -109,8 +114,12 @@ impl Store {
             Area::Local => {
                 let mut local = self.local.lock().unwrap();
                 let wants_secret = keys.is_none_or(|k| k.iter().any(|k| is_secret(k)));
+                // Secrets that cannot be read never stop the rest from being:
+                // settings, chats and the panel carry on without the keys.
                 if wants_secret {
-                    self.load_secrets(&mut local)?;
+                    if let Err(e) = self.load_secrets(&mut local) {
+                        eprintln!("[selection-ai] could not read the secrets: {e}");
+                    }
                 }
                 Ok(pick(&local.values, keys))
             }
@@ -131,8 +140,8 @@ impl Store {
             }
             Area::Local => {
                 let mut local = self.local.lock().unwrap();
-                // Secrets first, and only into memory once the keychain has
-                // them: a refused write must not look saved until a restart.
+                // Secrets first, and only into memory once they are on disk: a
+                // failed write must not look saved until a restart.
                 if items.keys().any(|k| is_secret(k)) {
                     self.load_secrets(&mut local)?;
                     let mut next = secrets_of(&local.values);
@@ -282,107 +291,8 @@ pub fn decode_key(name: &str) -> Option<String> {
 
 // ── Secrets ──────────────────────────────────────────────────────────────
 
-/// The system keychain: the secrets as JSON in generic passwords under
-/// "Selection AI". Windows keeps at most 2560 bytes (1280 UTF-16 units) per
-/// credential, less than a signed-in session plus two API keys, so the JSON
-/// is split across "secrets", "secrets.1", … there; the first holds the
-/// count and is written last, so a write cut short leaves the old one whole.
-#[cfg(all(any(target_os = "macos", windows), not(feature = "test-hook")))]
-pub struct Keychain;
-
-#[cfg(all(any(target_os = "macos", windows), not(feature = "test-hook")))]
-impl Keychain {
-    const SERVICE: &'static str = "Selection AI";
-    const MAX_UNITS: usize = if cfg!(windows) { 1200 } else { usize::MAX };
-
-    fn entry(n: usize) -> io::Result<keyring::Entry> {
-        let account = if n == 0 { "secrets".to_string() } else { format!("secrets.{n}") };
-        keyring::Entry::new(Self::SERVICE, &account).map_err(io::Error::other)
-    }
-
-    /// The chunk's text, or None if there is no such credential.
-    fn read(n: usize) -> io::Result<Option<String>> {
-        match Self::entry(n)?.get_password() {
-            Ok(text) => Ok(Some(text)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(io::Error::other(e)),
-        }
-    }
-
-    fn delete(n: usize) -> io::Result<bool> {
-        match Self::entry(n)?.delete_credential() {
-            Ok(()) => Ok(true),
-            Err(keyring::Error::NoEntry) => Ok(false),
-            Err(e) => Err(io::Error::other(e)),
-        }
-    }
-}
-
-#[cfg(all(any(target_os = "macos", windows), not(feature = "test-hook")))]
-impl Secrets for Keychain {
-    fn load(&self) -> io::Result<Map<String, Value>> {
-        let Some(first) = Self::read(0)? else { return Ok(Map::new()) };
-        let json = join_chunks(&first, |n| Self::read(n).ok().flatten());
-        Ok(json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default())
-    }
-
-    fn save(&self, secrets: &Map<String, Value>) -> io::Result<()> {
-        let count = if secrets.is_empty() {
-            0
-        } else {
-            let chunks = split_chunks(&serde_json::to_string(secrets)?, Self::MAX_UNITS);
-            for (n, chunk) in chunks.iter().enumerate().skip(1) {
-                Self::entry(n)?.set_password(chunk).map_err(io::Error::other)?;
-            }
-            Self::entry(0)?.set_password(&chunks[0]).map_err(io::Error::other)?;
-            chunks.len()
-        };
-        // Whatever is left from a longer (or any) earlier value.
-        if count == 0 {
-            Self::delete(0)?;
-        }
-        let mut n = count.max(1);
-        while Self::delete(n)? {
-            n += 1;
-        }
-        Ok(())
-    }
-}
-
-/// Splits `text` into credentials of at most `max_units` UTF-16 units; the
-/// first starts with how many there are ("3\n…").
-#[cfg_attr(not(all(any(target_os = "macos", windows), not(feature = "test-hook"))), allow(dead_code))]
-pub fn split_chunks(text: &str, max_units: usize) -> Vec<String> {
-    let mut chunks = vec![String::new()];
-    let mut units = 0;
-    for c in text.chars() {
-        if units + c.len_utf16() > max_units && !chunks.last().unwrap().is_empty() {
-            chunks.push(String::new());
-            units = 0;
-        }
-        chunks.last_mut().unwrap().push(c);
-        units += c.len_utf16();
-    }
-    let count = chunks.len();
-    chunks[0].insert_str(0, &format!("{count}\n"));
-    chunks
-}
-
-/// Puts the chunks back together; None if any is missing.
-#[cfg_attr(not(all(any(target_os = "macos", windows), not(feature = "test-hook"))), allow(dead_code))]
-pub fn join_chunks(first: &str, mut read: impl FnMut(usize) -> Option<String>) -> Option<String> {
-    let (count, head) = first.split_once('\n')?;
-    let count: usize = count.parse().ok()?;
-    let mut out = head.to_string();
-    for n in 1..count {
-        out.push_str(&read(n)?);
-    }
-    Some(out)
-}
-
-/// A file readable only by this user: Linux (a development target, with no
-/// keychain to rely on) and end-to-end test builds.
-#[cfg_attr(all(any(target_os = "macos", windows), not(feature = "test-hook"), not(test)), allow(dead_code))]
+/// A file readable only by this user (0600 on macOS and Linux; on Windows
+/// the user's own application data folder already is).
 pub struct SecretsFile(pub PathBuf);
 
 impl Secrets for SecretsFile {
@@ -411,17 +321,9 @@ impl Secrets for SecretsFile {
     }
 }
 
-/// The keychain where there is one, else a private file.
+/// Where the app keeps its secrets: `secrets.json` in the store, private to this user.
 pub fn system_secrets(dir: &Path) -> Box<dyn Secrets> {
-    #[cfg(all(any(target_os = "macos", windows), not(feature = "test-hook")))]
-    {
-        let _ = dir;
-        Box::new(Keychain)
-    }
-    #[cfg(not(all(any(target_os = "macos", windows), not(feature = "test-hook"))))]
-    {
-        Box::new(SecretsFile(dir.join("secrets.json")))
-    }
+    Box::new(SecretsFile(dir.join("secrets.json")))
 }
 
 // ── Screenshots ──────────────────────────────────────────────────────────
@@ -635,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn secrets_go_to_the_keychain_and_are_read_only_when_wanted() {
+    fn secrets_are_kept_apart_and_read_only_when_wanted() {
         let dir = temp_dir("secrets");
         let secrets = std::sync::Arc::new(MemorySecrets(Mutex::new(Map::new()), Mutex::new(0)));
         struct Shared(std::sync::Arc<MemorySecrets>);
@@ -648,7 +550,7 @@ mod tests {
             }
         }
         let store = Store::open(&dir, Box::new(Shared(secrets.clone()))).unwrap();
-        // Reading settings does not touch the keychain.
+        // Reading settings does not read the secrets.
         store.get(Area::Local, Some(&keys(&["settings"]))).unwrap();
         assert_eq!(*secrets.1.lock().unwrap(), 0);
 
@@ -668,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_keychain_write_changes_nothing() {
+    fn a_failed_secrets_write_changes_nothing() {
         struct Refusing;
         impl Secrets for Refusing {
             fn load(&self) -> io::Result<Map<String, Value>> {
@@ -688,21 +590,25 @@ mod tests {
     }
 
     #[test]
-    fn long_secrets_are_split_for_windows_and_put_back_together() {
-        // A signed-in session and two keys, with an accented name: past one credential.
-        let text = format!("{{\"account\":\"{}é\",\"keys\":\"{}\"}}", "j".repeat(1500), "k".repeat(900));
-        let chunks = split_chunks(&text, 1200);
-        assert_eq!(chunks.len(), 3);
-        assert!(chunks[0].starts_with("3\n"));
-        for c in &chunks {
-            assert!(c.encode_utf16().count() <= 1200 + 3, "{}", c.len());
+    fn unreadable_secrets_never_stop_the_rest() {
+        struct Unreadable;
+        impl Secrets for Unreadable {
+            fn load(&self) -> io::Result<Map<String, Value>> {
+                Err(io::Error::other("refused"))
+            }
+            fn save(&self, _: &Map<String, Value>) -> io::Result<()> {
+                Err(io::Error::other("refused"))
+            }
         }
-        let back = join_chunks(&chunks[0], |n| chunks.get(n).cloned()).unwrap();
-        assert_eq!(back, text);
-        // A chunk gone missing: nothing, rather than half a secret.
-        assert_eq!(join_chunks(&chunks[0], |n| if n == 2 { None } else { chunks.get(n).cloned() }), None);
-        // Short values stay whole (macOS has no limit).
-        assert_eq!(split_chunks("{}", usize::MAX), vec!["1\n{}".to_string()]);
+        let dir = temp_dir("unreadable");
+        let store = Store::open(&dir, Box::new(Unreadable)).unwrap();
+        let mut items = Map::new();
+        items.insert("settings".into(), json!({ "provider": "mock" }));
+        store.set(Area::Local, items).unwrap();
+        // Everything, or the keys themselves: what can be read comes back.
+        assert_eq!(store.get(Area::Local, None).unwrap()["settings"]["provider"], "mock");
+        assert!(store.get(Area::Local, Some(&keys(&["keys", "settings"]))).unwrap().contains_key("settings"));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]

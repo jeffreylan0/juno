@@ -416,6 +416,7 @@ export class Bar {
     wrap.setAttribute('aria-label', 'Selection mode');
     for (const kind of KIND_ORDER) {
       const available = this.modes.includes(kind);
+      if (!available && SURFACE.hideUnavailable) continue;
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'chip';

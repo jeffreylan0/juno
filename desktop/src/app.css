@@ -23,3 +23,6 @@ html.card.leaving .panel, html.card.leaving .page { animation: card-out 150ms ea
 html.card .page { overflow-y: auto; scroll-behavior: smooth; scroll-padding-top: 72px; }
 html.card .top { cursor: default; }
 html.card .topbar { cursor: default; user-select: none; -webkit-user-select: none; }
+
+/* Settings → Selection AI: the Quit button's key. */
+.quit-key { margin-left: 8px; color: var(--muted); }

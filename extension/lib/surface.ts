@@ -26,6 +26,8 @@ export interface Surface {
   unavailable: (label: string, kind: string) => string;
   /** The panel and settings are windows of their own, with their own ✕ (the app). */
   ownWindow: boolean;
+  /** Modes not on offer are left off the bar, rather than shown switched off (the app). */
+  hideUnavailable?: boolean;
   /** The bar's instruction for a mode, where it differs from the page's. */
   modeHints?: Partial<Record<'box' | 'freeform' | 'element' | 'text', string>>;
 }

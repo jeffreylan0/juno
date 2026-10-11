@@ -27,7 +27,7 @@ Weeks 1–2 of the build plan are done: the workspace, the shared payload schema
 | Providers | mock, local (Ollama), BYOK (Anthropic + OpenAI), hosted (the Worker, for accounts with a plan) |
 | Eval | 5 seed problems of 100; mock and image-only routes run |
 | Worker, Supabase | built: token check against the project's signing keys, per-account monthly quota, Anthropic and OpenAI streamed in one shape; schema with row level security, tested on PostgreSQL. Stripe: webhook → plan mapping only; no checkout yet |
-| Desktop app | Tauri 2, built from the extension's code: the shortcut, the bar in a transparent overlay over any app, Box and Freeform with native capture (ScreenCaptureKit on macOS), the panel docked right, settings, keys in the keychain. Tested end to end on Linux, type-checked for macOS and Windows; not yet run on a Mac. Element and Text (accessibility API) next |
+| Desktop app | Tauri 2, built from the extension's code: the shortcut (or a click on the menu bar icon), the bar in a transparent overlay over any app, Box and Freeform with native capture (ScreenCaptureKit on macOS), the panel and settings as cards, keys in a private file, Screen Recording the only permission. Tested end to end on Linux, built for macOS and Windows on CI, run on a Mac by the product owner. Text and Element are off until the way in is chosen (desktop/README.md) |
 
 The surfaces are deliberately unstyled beyond a block of CSS tokens at the top of `ui/panel.css`, `entrypoints/options/options.css` and `entrypoints/reader/reader.css`, plus the `--sai-*` variables the in-page bar and tooltips read. Replacing those blocks re-themes everything.
 

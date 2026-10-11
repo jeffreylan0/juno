@@ -5,7 +5,9 @@
  * does not have (blocked sites, the PDF reader).
  */
 import type { Surface } from '../../extension/lib/surface';
-import { MAC, WINDOWS } from './os';
+import { BRAND } from './brand';
+import { MAC } from './os';
+import { AppSection } from './settings/AppSection';
 import { Permissions } from './settings/Permissions';
 import { ShortcutField } from './settings/ShortcutField';
 
@@ -15,16 +17,17 @@ export const SURFACE: Surface = {
   kind: 'desktop',
   anywhere: 'any app',
   source: 'window',
-  keysKept: MAC
-    ? "Your keys stay in this Mac's keychain."
-    : WINDOWS
-      ? "Your keys stay in Windows' Credential Manager."
-      : 'Your keys stay in a private file on this computer.',
+  // A private file in the app's folder, as the browser keeps the extension's (store.rs).
+  keysKept: 'Your keys stay in a private file on this computer that only your account can read.',
   shortcutField: () => <ShortcutField />,
-  sections: MAC ? [{ id: 'permissions', title: 'Permissions', render: () => <Permissions /> }] : [],
+  sections: [
+    ...(MAC ? [{ id: 'permissions', title: 'Permissions', render: () => <Permissions /> }] : []),
+    { id: 'app', title: BRAND.name, render: () => <AppSection /> },
+  ],
   blockedSites: false,
   pdfViewer: false,
   ownWindow: true,
+  hideUnavailable: true,
   // Every mode works everywhere; Text and Element on what the app reads off
   // the screen (lib/screen-text.ts).
   unavailable: (label) => `${label} doesn't work here`,

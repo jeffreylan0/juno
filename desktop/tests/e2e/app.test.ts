@@ -337,7 +337,7 @@ it('the ghost on the bar: the next selection is a temporary chat, in memory only
   });
 });
 
-it('the gear on the bar opens settings: the app’s own shortcut, no blocked sites, keys kept by the system', async () => {
+it('the gear on the bar opens settings: the app’s own shortcut, no blocked sites, keys in a private file, and Quit', async () => {
   await app.summon();
   await armed();
   await app.eval('overlay', bar(`querySelector('.gear').click()`));
@@ -352,6 +352,8 @@ it('the gear on the bar opens settings: the app’s own shortcut, no blocked sit
   expect(text).not.toContain('Blocked sites');
   expect(text).not.toContain("browser's PDF viewer");
   expect(text).toContain("the window's title go to the AI you picked");
+  expect(text).toContain('only your account can read');
+  expect(text).toContain('Quit Selection AI');
 });
 
 /** The fixture's two paragraphs (fixture.css): 34px text from x = 100, lines 41px tall from y = 380 and 500. */
@@ -413,4 +415,16 @@ it('Element: hovering lights up the paragraph, ↑ widens it to the screen, and 
   expect(r.x).toBeLessThan(110);
   // Dark text in it, on the fixture's white.
   expect(await pixels(dataUrl, [[2, 2]])).toEqual([WHITE]);
+});
+
+it('Quit in settings ends the app (the menu bar icon starts a selection when clicked, so Quit lives here and in its right-click menu)', async () => {
+  await app.summon();
+  await armed();
+  await app.eval('overlay', bar(`querySelector('.gear').click()`));
+  await waitFor('quick settings', () => app.read('overlay', `!!${bar(`querySelector('.more')`)}`));
+  await app.eval('overlay', bar(`querySelector('.more').click()`));
+  await waitFor('the settings page', () => app.read('settings', `!!document.querySelector('[data-testid=quit]')`));
+  await app.eval('settings', `document.querySelector('[data-testid=quit]').click()`);
+  await waitFor('the app to quit', () => app.app.exitCode !== null || app.app.signalCode !== null, 10_000);
+  expect(app.app.exitCode).toBe(0);
 });

@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "icons": "node scripts/icons.mjs && tauri icon src-tauri/icons/app.png -o src-tauri/icons",
     "tauri": "tauri",
-    "build:e2e": "SAI_E2E=1 vite build && CARGO_TARGET_DIR=src-tauri/target/e2e cargo build --manifest-path src-tauri/Cargo.toml --features test-hook,custom-protocol",
+    "build:e2e": "SAI_E2E=1 VITE_SCREEN_MODES=1 vite build && CARGO_TARGET_DIR=src-tauri/target/e2e cargo build --manifest-path src-tauri/Cargo.toml --features test-hook,custom-protocol",
     "test:e2e": "pnpm build:e2e && vitest run --config vitest.e2e.config.ts",
     "test:native": "cargo test --manifest-path src-tauri/Cargo.toml"
   },
