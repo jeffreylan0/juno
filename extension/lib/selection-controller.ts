@@ -23,6 +23,8 @@ export interface SelectionControllerOptions {
   host?: OverlayHost;
   /** Override the document under test. */
   doc?: Document;
+  /** The modes on offer, when the surface decides (the app); otherwise what the page allows. */
+  modes?: SelectionKind[];
 }
 
 export class SelectionController {
@@ -46,7 +48,7 @@ export class SelectionController {
   constructor(opts: SelectionControllerOptions = {}) {
     const doc = (this.doc = opts.doc ?? document);
     this.pdf = detectPdf(doc);
-    this.modes = availableModes(this.pdf);
+    this.modes = opts.modes ?? availableModes(this.pdf);
     this.overlay = new Overlay({
       onModeChange: (kind) =>
         this.act(() =>
@@ -254,12 +256,13 @@ export class SelectionController {
   private async select(kind: SelectionKind, current: () => boolean): Promise<SelectionDoneMsg | null> {
     const page = { url: location.href, title: document.title };
     const devicePixelRatio = window.devicePixelRatio || 1;
+    const viewport = { width: innerWidth, height: innerHeight };
 
     if (kind === 'text') {
       const sel = await this.overlay.selectText(this.modes);
       if (!sel) return null;
       this.commit('text');
-      return { type: 'selection:done', kind: 'text', rect: sel.rect, text: sel.text, html: sel.html, devicePixelRatio, page };
+      return { type: 'selection:done', kind: 'text', rect: sel.rect, text: sel.text, html: sel.html, devicePixelRatio, viewport, page };
     }
 
     if (kind === 'box') {
@@ -273,7 +276,7 @@ export class SelectionController {
       // Only the crop is sent: reading it is the model's job, and scraping
       // page text from under the box garbled real layouts (see planner.ts).
       await this.outOfShot(rect);
-      return { type: 'selection:done', kind: 'box', rect, devicePixelRatio, page };
+      return { type: 'selection:done', kind: 'box', rect, devicePixelRatio, viewport, page };
     }
 
     if (kind === 'freeform') {
@@ -283,7 +286,7 @@ export class SelectionController {
       if (!lasso) return null;
       this.commit('freeform');
       await this.outOfShot(lasso.rect);
-      return { type: 'selection:done', kind: 'freeform', rect: lasso.rect, path: lasso.path, devicePixelRatio, page };
+      return { type: 'selection:done', kind: 'freeform', rect: lasso.rect, path: lasso.path, devicePixelRatio, viewport, page };
     }
 
     const picked = await this.overlay.selectElement(this.modes);
@@ -298,6 +301,7 @@ export class SelectionController {
       label: picked.label,
       clipped: picked.clipped,
       devicePixelRatio,
+      viewport,
       page,
     };
   }

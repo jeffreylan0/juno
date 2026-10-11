@@ -26,6 +26,7 @@ import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import { listChats } from '@/lib/chats';
 import { MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
+import { SURFACE } from '@/lib/surface';
 import type { KeyModel, KeyTestResult } from '@/lib/providers/byok';
 import {
   CHAT_LIMITS,
@@ -74,6 +75,7 @@ const SECTIONS = [
   { id: 'asking', title: 'Asking' },
   { id: 'selecting', title: 'Selecting' },
   { id: 'privacy', title: 'Chats & privacy' },
+  ...SURFACE.sections.map(({ id, title }) => ({ id, title })),
   ...(ACCOUNTS ? [{ id: 'account', title: 'Account' }] : []),
 ];
 
@@ -229,6 +231,11 @@ export function Options() {
         <AskingSection settings={settings} save={save} />
         <SelectingSection settings={settings} save={save} shortcut={shortcut} />
         <PrivacySection settings={settings} save={save} account={account} />
+        {SURFACE.sections.map(({ id, title, render }) => (
+          <Section key={id} id={id} title={title}>
+            {render()}
+          </Section>
+        ))}
         <AccountSection account={account} settings={settings} save={save} />
       </main>
     </div>
@@ -633,18 +640,22 @@ function AskingSection({ settings, save }: { settings: Settings; save: (patch: P
 function SelectingSection({ settings, save, shortcut }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void>; shortcut: string }) {
   return (
     <Section id="selecting" title="Selecting">
-      <div className="field" data-testid="shortcuts">
-        <span className="field-label">Keyboard shortcut</span>
-        <span className="key-row shortcut-row">
-          <span>
-            Start selecting: <kbd>{shortcut || 'not set'}</kbd>
+      {SURFACE.shortcutField ? (
+        SURFACE.shortcutField()
+      ) : (
+        <div className="field" data-testid="shortcuts">
+          <span className="field-label">Keyboard shortcut</span>
+          <span className="key-row shortcut-row">
+            <span>
+              Start selecting: <kbd>{shortcut || 'not set'}</kbd>
+            </span>
+            <button type="button" className="secondary" onClick={openShortcutSettings}>
+              Change…
+            </button>
           </span>
-          <button type="button" className="secondary" onClick={openShortcutSettings}>
-            Change…
-          </button>
-        </span>
-        <small className="help">Same as clicking {BRAND.iconName}. It's changed on the browser's shortcuts page.</small>
-      </div>
+          <small className="help">Same as clicking {BRAND.iconName}. It's changed on the browser's shortcuts page.</small>
+        </div>
+      )}
 
       <div className="field">
         <span className="field-label">After drawing a box</span>
@@ -660,10 +671,12 @@ function SelectingSection({ settings, save, shortcut }: { settings: Settings; sa
         <small className="help">Also in the gear on the selection bar.</small>
       </div>
 
-      <p className="help">
-        In the browser's PDF viewer, only Box and Freeform work. {BRAND.name} can reopen the PDF in its own reader, where
-        everything works.
-      </p>
+      {SURFACE.pdfViewer && (
+        <p className="help">
+          In the browser's PDF viewer, only Box and Freeform work. {BRAND.name} can reopen the PDF in its own reader, where
+          everything works.
+        </p>
+      )}
     </Section>
   );
 }
@@ -695,26 +708,28 @@ function PrivacySection({
     <Section id="privacy" title="Chats & privacy">
       <ChatsField limit={settings.chatLimit} cloud={cloud} save={save} />
 
-      <label className="field">
-        <span className="field-label">Blocked sites</span>
-        <textarea
-          rows={3}
-          value={blocked}
-          placeholder="exam.example.edu"
-          data-testid="blocked-sites"
-          onChange={(e) => {
-            setBlocked(e.target.value);
-            saveBlocked(e.target.value);
-          }}
-        />
-        <small className="help">One site per line, like exam sites. {BRAND.name} stays off on them.</small>
-      </label>
+      {SURFACE.blockedSites && (
+        <label className="field">
+          <span className="field-label">Blocked sites</span>
+          <textarea
+            rows={3}
+            value={blocked}
+            placeholder="exam.example.edu"
+            data-testid="blocked-sites"
+            onChange={(e) => {
+              setBlocked(e.target.value);
+              saveBlocked(e.target.value);
+            }}
+          />
+          <small className="help">One site per line, like exam sites. {BRAND.name} stays off on them.</small>
+        </label>
+      )}
 
       <div className="field" data-testid="what-is-sent">
         <span className="field-label">What's sent and kept</span>
         <p className="help">
-          Only what you select (a screenshot or text) and the page's title go to the AI you picked. Your keys stay in this
-          browser. Your chats stay on this computer{cloud ? ' and in your account' : ''}.
+          Only what you select (a screenshot or text) and the {SURFACE.source}'s title go to the AI you picked.{' '}
+          {SURFACE.keysKept} Your chats stay on this computer{cloud ? ' and in your account' : ''}.
         </p>
         <ul className="help facts">
           <li>

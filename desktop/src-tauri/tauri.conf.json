@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Selection AI",
+  "version": "0.1.0",
+  "identifier": "org.amcpmn.selectionai",
+  "build": {
+    "beforeDevCommand": "pnpm web:dev",
+    "devUrl": "http://localhost:5180",
+    "beforeBuildCommand": "pnpm web:build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost"
+      },
+      "devCsp": null,
+      "dangerousDisableAssetCspModification": ["style-src"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "category": "Education",
+    "shortDescription": "Select anything on screen and ask Claude or ChatGPT about it",
+    "copyright": "© 2026 Selection AI",
+    "macOS": {
+      "minimumSystemVersion": "14.0"
+    }
+  }
+}

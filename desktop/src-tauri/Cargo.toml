@@ -1,0 +1,57 @@
+[package]
+name = "selection-ai-desktop"
+version = "0.1.0"
+description = "Selection AI for the desktop: select anything on screen and ask about it"
+edition = "2021"
+rust-version = "1.90"
+publish = false
+
+[lib]
+name = "selection_ai_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-global-shortcut = "2.4"
+tauri-plugin-http = "2.8"
+tauri-plugin-opener = "2.7"
+tauri-plugin-single-instance = "2.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSError", "NSDictionary", "NSValue", "NSGeometry", "NSThread"] }
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSRunningApplication", "NSWorkspace", "NSApplication", "NSResponder", "NSScreen", "NSGraphics"] }
+objc2-screen-capture-kit = { version = "0.3", features = ["SCShareableContent", "SCScreenshotManager", "SCStream", "SCError", "block2"] }
+objc2-core-graphics = "0.3"
+objc2-core-foundation = "0.3"
+block2 = "0.6"
+keyring = { version = "3.6", features = ["apple-native"] }
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6", features = ["windows-native"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_ProcessStatus"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+
+[features]
+# The built pages (../dist) inside the binary rather than the Vite dev
+# server; the Tauri CLI turns it on for `tauri build`.
+custom-protocol = ["tauri/custom-protocol"]
+# A local HTTP hook that drives the app from end-to-end tests (desktop/tests).
+# Never in a release build: `pnpm desktop:build` leaves it off.
+test-hook = []
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

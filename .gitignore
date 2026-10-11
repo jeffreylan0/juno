@@ -13,3 +13,8 @@ playwright-report/
 safari/
 .DS_Store
 .wrangler/
+
+# Desktop app (desktop/): the web build, Rust targets, Tauri's generated schemas
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
