@@ -25,6 +25,7 @@ use serde_json::{Map, Value};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WebviewWindow, WindowEvent};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 
@@ -156,6 +157,20 @@ fn overlay_pointer(state: State<Shared>, interactive: bool, regions: Vec<Rect>) 
     let mut s = state.overlay.lock().unwrap();
     s.interactive = interactive;
     s.regions = regions;
+    if !interactive {
+        s.scroll_anchor = None;
+    }
+}
+
+/// The student scrolled over an armed selection: the scroll goes to the app
+/// beneath (the overlay lets the pointer through) until the pointer moves,
+/// when the overlay takes it back to select (wm::start_passthrough).
+#[tauri::command(async)]
+fn overlay_scroll_through(app: AppHandle, state: State<Shared>) {
+    let mut s = state.overlay.lock().unwrap();
+    if s.interactive && s.scroll_anchor.is_none() {
+        s.scroll_anchor = app.cursor_position().ok().map(|p| (p.x, p.y));
+    }
 }
 
 #[tauri::command(async)]
@@ -188,10 +203,12 @@ fn settings_open(app: AppHandle, hash: Option<String>) -> Res<()> {
 /// `window.close()` from a page: the panel and settings go; the core and the
 /// overlay are never closed, only hidden.
 #[tauri::command(async)]
-fn window_close(window: WebviewWindow) -> Res<()> {
+fn window_close(app: AppHandle, window: WebviewWindow) -> Res<()> {
     match window.label() {
         wm::CORE => Ok(()),
         wm::OVERLAY => window.hide().map_err(err),
+        // Kept for the next selection (wm.rs).
+        wm::PANEL => wm::close_panel(&app).map_err(err),
         _ => window.destroy().map_err(err),
     }
 }
@@ -353,6 +370,22 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
+/// Settings → Selection AI → Open at login: whether the app starts, in the
+/// menu bar only (`--hidden`), when the student logs in. Off unless they turn
+/// it on. No permission: a launch agent in ~/Library/LaunchAgents on macOS,
+/// the user's Run key on Windows, an autostart entry on Linux.
+#[tauri::command(async)]
+fn login_item(app: AppHandle) -> Res<bool> {
+    app.autolaunch().is_enabled().map_err(err)
+}
+
+#[tauri::command(async)]
+fn login_item_set(app: AppHandle, on: bool) -> Res<bool> {
+    let launcher = app.autolaunch();
+    if on { launcher.enable() } else { launcher.disable() }.map_err(err)?;
+    launcher.is_enabled().map_err(err)
+}
+
 // ── The shortcut and the menu bar icon ───────────────────────────────────
 
 /// The shortcut (or the menu): the core decides what comes up, as the
@@ -409,6 +442,7 @@ pub fn run() {
     let app = builder
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::Builder::new().args(["--hidden"]).build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, pressed, event| {
@@ -436,8 +470,10 @@ pub fn run() {
 
             let handle = app.handle().clone();
             wm::make_core(&handle)?;
-            // Loaded and listening before the shortcut is first pressed.
+            // Loaded and listening before the shortcut is first pressed, and
+            // the panel before the first selection, so neither is waited for.
             wm::overlay(&handle)?;
+            wm::make_panel(&handle)?;
             tray(&handle)?;
             wm::start_passthrough(handle.clone(), overlay);
             Ok(())
@@ -471,6 +507,7 @@ pub fn run() {
             overlay_hide,
             overlay_focus,
             overlay_pointer,
+            overlay_scroll_through,
             panel_open,
             panel_close,
             panel_fit,
@@ -485,6 +522,8 @@ pub fn run() {
             relaunch,
             app_info,
             quit,
+            login_item,
+            login_item_set,
         ])
         .build(tauri::generate_context!())
         .expect("building the app");

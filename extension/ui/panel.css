@@ -167,6 +167,15 @@ a.selection-page:hover { color: var(--fg); text-decoration: underline; }
   box-shadow: 0 0 0 1px var(--line), 0 1px 3px rgba(0, 0, 0, .08);
 }
 .selection-image.shaped { box-shadow: none; border-radius: 0; }
+/* A selection on its way (IncomingSelection): a shimmer the size of a small shot. */
+.selection.incoming { animation: fade 120ms ease-out both; }
+.selection-placeholder {
+  width: min(100%, 260px); height: 120px; border-radius: 6px;
+  background: linear-gradient(100deg, var(--user-bg) 30%, color-mix(in srgb, var(--user-bg) 55%, var(--bg)) 50%, var(--user-bg) 70%) 0 0 / 300% 100%;
+  animation: shimmer 1.1s linear infinite;
+}
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .selection-placeholder { animation: none; } }
 .selection-missing { line-height: 1.4; font-size: 13px; color: var(--muted); padding: 10px 0; }
 .selection-outline { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .selection-outline path { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; stroke-linejoin: round; }

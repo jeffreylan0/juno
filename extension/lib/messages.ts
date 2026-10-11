@@ -183,6 +183,19 @@ export interface PanelCloseMsg {
   windowId?: number;
 }
 
+/**
+ * Background → panel: a selection was just made and is on its way (the
+ * screenshot and crop take a moment). The panel shows a placeholder for it,
+ * so it never opens on nothing.
+ */
+export interface SelectionIncomingMsg {
+  type: 'selection:incoming';
+  kind: SelectionKind;
+  /** When it was made (Date.now()): a selection in the chat from then on is it. */
+  at: number;
+  windowId?: number;
+}
+
 /** The port a panel keeps open to the background, named this. */
 export const PANEL_PORT = 'panel';
 
@@ -251,6 +264,7 @@ export type RuntimeMessage =
   | KeysTestMsg
   | PanelOpenMsg
   | PanelCloseMsg
+  | SelectionIncomingMsg
   | PanelNeedsClickMsg
   | OptionsOpenMsg
   | PinWatchMsg

@@ -8,7 +8,9 @@
  *    up, armed in the last mode used, on the display under the pointer;
  *    while macOS has not let the app see the screen, the bar comes up with
  *    a note asking for it instead (overlay/notices.ts);
- *  - a selection is committed: the panel opens, docked right;
+ *  - a selection is committed: the panel shows (it is made at start and
+ *    kept, so nothing waits for it to load), with a placeholder for the
+ *    selection until it arrives;
  *  - the selection is done: the native core captures that display without
  *    the app's own windows and crops it; the selection joins the chat;
  *  - ✕ on the bar or the panel (or Escape before anything was selected)
@@ -34,10 +36,17 @@ import { pageTitle, type OverlayNotice } from './tips';
 
 const W = WINDOW_ID;
 
-/** Open panels (the app has one; a reload in development briefly makes two). */
+/** The panel's ports (it has one, kept from the start; a reload in development briefly makes two). */
 const panels = new Set<Port>();
-const engine = new ChatEngine({ fetch: appFetch, panelsOpen: () => panels.size > 0 }).start();
+/** Whether the panel is on screen: it is kept, hidden, between chats (wm.rs). */
+let panelShown = false;
+/** Bumped by every show and hide of the panel, so a late hide never undoes a newer show. */
+let panelTurn = 0;
+const engine = new ChatEngine({ fetch: appFetch, panelsOpen: () => panelShown }).start();
 const serial = <T>(task: () => Promise<T>) => engine.serial(task);
+
+/** The panel's exit (card.ts), and a moment for the message to get there. */
+const PANEL_LEAVE_MS = 190;
 
 /** Whether the bar is up. */
 let barUp = false;
@@ -112,13 +121,14 @@ async function finishChat(): Promise<void> {
   await closePanel();
 }
 
-/** The panel plays its exit and closes itself (card.ts); closed from here if it does not. */
+/** The panel plays its exit (card.ts), then is hidden, unless it was shown again meanwhile. */
 async function closePanel(): Promise<void> {
-  if (panels.size) {
-    await browser.tell('panel', { type: 'card:leave' }).catch(() => {});
-    await new Promise((r) => setTimeout(r, 400));
-  }
-  await transport.invoke('panel_close').catch(() => {});
+  if (!panelShown) return;
+  panelShown = false;
+  const turn = ++panelTurn;
+  await browser.tell('panel', { type: 'card:leave' }).catch(() => {});
+  await new Promise((r) => setTimeout(r, PANEL_LEAVE_MS));
+  if (turn === panelTurn) await transport.invoke('panel_close').catch(() => {});
 }
 
 /** Escape stopped a selection: with nothing selected in this chat yet it meant "never mind". */
@@ -134,7 +144,11 @@ async function tellGhost(on: boolean): Promise<void> {
   if (barUp) await tellOverlay({ type: 'bar:ghost', on });
 }
 
+/** Shows the panel, playing its entrance if it was hidden. */
 async function openPanel(): Promise<void> {
+  ++panelTurn;
+  if (!panelShown) await browser.tell('panel', { type: 'card:enter' }).catch(() => {});
+  panelShown = true;
   await transport.invoke('panel_open', { focus: true }).catch((err) => console.warn('[selection-ai] panel', err));
 }
 
@@ -213,8 +227,10 @@ browser.runtime.onConnect.addListener((port) => {
   });
   port.onDisconnect.addListener(() => {
     if (!panels.delete(port) || panels.size) return;
-    // The panel was closed: the bar goes too, and the chat is finished.
+    // The panel's page went away (it is only ever hidden, so a crash or a
+    // reload): the bar goes too, and the chat is finished.
     void finishChat();
+    panelShown = false;
   });
 });
 
@@ -253,6 +269,8 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
       if (barUp) void tellOverlay({ type: 'overlay:notice', notice: screenAsked ? 'screen-restart' : 'screen-permission' });
       return;
     case 'selection:committed':
+      // The panel at once, with a placeholder until the screenshot is in.
+      void browser.tell('panel', { type: 'selection:incoming', kind: msg.kind, at: Date.now() }).catch(() => {});
       void openPanel();
       return;
     case 'selection:done':
@@ -346,6 +364,13 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
 // ── The native core ──────────────────────────────────────────────────────
 
 void transport.listen('app:summon', () => void summon());
+// Settings opened (from the bar's gear or the menu bar icon): the bar goes,
+// and the dim with it. The chat carries on; the shortcut brings the bar back.
+void transport.listen('app:settings', () => {
+  if (!barUp) return;
+  barUp = false;
+  void tellOverlay({ type: 'bar:hide' });
+});
 void browser.ready.then(() => browser.tell('overlay', { type: 'overlay:ping' }));
 
 // Opening the app brings the bar up, as the shortcut does (unless it was

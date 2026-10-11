@@ -48,6 +48,22 @@ async function askAndWait(panel: Page, macro = 'Explain'): Promise<void> {
   await expect(panel.locator('.turn.assistant').nth(before)).toHaveAttribute('data-streaming', 'false', { timeout: 25_000 });
 }
 
+test('the panel holds a place for a selection from the moment it is made until it lands', async ({ context, extensionId, serviceWorker }) => {
+  const page = await context.newPage();
+  const panel = await openPanel(context, extensionId);
+  await panel.evaluate(() => {
+    const w = window as unknown as { sawIncoming: boolean };
+    w.sawIncoming = false;
+    new MutationObserver(() => {
+      if (document.querySelector('[data-testid=selection-incoming]')) w.sawIncoming = true;
+    }).observe(document.body, { subtree: true, childList: true });
+  });
+  await selectOn(page, serviceWorker, panel, 'text.html');
+  expect(await panel.evaluate(() => (window as unknown as { sawIncoming: boolean }).sawIncoming)).toBe(true);
+  // Gone once the selection itself is in.
+  await expect(panel.getByTestId('selection-incoming')).toHaveCount(0);
+});
+
 test('the menu lists saved chats; search, rename and delete work in place', async ({ context, extensionId, serviceWorker }) => {
   const page = await context.newPage();
   let panel = await openPanel(context, extensionId);

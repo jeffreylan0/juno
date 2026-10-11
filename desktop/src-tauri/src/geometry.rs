@@ -115,6 +115,11 @@ impl Display {
         self.card(space, width, height, |work, w, _h, m| (work.x + work.width - m - w, work.y + m))
     }
 
+    /// How tall the panel starts on this display: most of its usable height (CSS pixels).
+    pub fn panel_height(&self) -> f64 {
+        (self.work.height / self.scale * PANEL_SHARE).round()
+    }
+
     /// Settings: a card in the middle of the usable area.
     pub fn centred_placement(&self, space: Space, width: f64, height: f64) -> Placement {
         self.card(space, width, height, |work, w, h, _m| (work.x + (work.width - w) / 2.0, work.y + (work.height - h) / 2.0))
@@ -141,6 +146,9 @@ impl Display {
 
 /// Room between a floating card (the panel, settings) and the edges of the usable area, CSS pixels.
 pub const CARD_MARGIN: f64 = 12.0;
+
+/// How much of a display's usable height the panel starts at (and never shrinks below).
+pub const PANEL_SHARE: f64 = 0.72;
 
 /// The pointer in the system's global space. `cursor` is what Tauri reports,
 /// which on macOS is points times the *main* display's scale.
@@ -243,6 +251,8 @@ mod tests {
         // A card at the top right, 12 pt in from the edges, under the menu bar (37 pt on a notched laptop).
         assert_eq!(desk[0].panel_placement(Space::Points, 420.0, 480.0), Placement::Logical(Rect::new(1080.0, 49.0, 420.0, 480.0)));
         assert_eq!(desk[2].panel_placement(Space::Points, 420.0, 480.0), Placement::Logical(Rect::new(-432.0, -61.0, 420.0, 480.0)));
+        // Most of the display tall to start with: 72% of 945 pt.
+        assert_eq!(desk[0].panel_height(), 680.0);
         // Never taller than the usable height less the margins.
         assert_eq!(desk[0].panel_placement(Space::Points, 420.0, 5000.0), Placement::Logical(Rect::new(1080.0, 49.0, 420.0, 921.0)));
         // Settings, in the middle.

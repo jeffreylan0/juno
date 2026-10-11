@@ -24,6 +24,7 @@
  * inside the Safari in-page overlay.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { SelectionKind } from '@shared/payload';
 import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import { autoTitle, hasUsableSelection, isRemovable, pendingSelections, type AssistantItem, type Chat } from '@/lib/chats';
@@ -35,13 +36,15 @@ import { ChatMenu, TitleInput } from './ChatMenu';
 import { Icon } from './icons';
 import { ModelPicker } from './ModelPicker';
 import { Notices } from './Notices';
-import { SelectionCard } from './Selection';
+import { IncomingSelection, SelectionCard } from './Selection';
 import { useAccount } from './useAccount';
 import { useAiStatus, useChat, useChatList, usePanelSession } from './useChat';
 import { formatShortcut, useShortcut } from './useShortcut';
 
 /** How long a macro's prompt shows in the box before it is sent. */
 const MACRO_FILL_MS = 140;
+/** How long a selection's placeholder waits for it before giving up. */
+const INCOMING_MS = 8000;
 
 const send = (msg: Record<string, unknown>) => browser.runtime.sendMessage(msg).catch(() => undefined);
 const SYNC_EVERY_MS = 5 * 60_000;
@@ -146,10 +149,33 @@ export function Panel() {
     box.style.height = `${Math.min(box.scrollHeight, Math.round(innerHeight * 0.4))}px`;
   }, [draft]);
 
+  // A selection on its way (selection:incoming): a placeholder stands in
+  // for it from the moment it is made until it lands in the chat (a
+  // selection there made since), so the panel never opens on nothing. Given
+  // up after a while should it not come (the selection was dropped).
+  const landed = items.findLast((i) => i.kind === 'selection')?.at ?? 0;
+  const [incoming, setIncoming] = useState<{ kind: SelectionKind; at: number } | null>(null);
+  useEffect(() => {
+    const onMessage = (raw: unknown) => {
+      const msg = raw as { type?: string; kind?: SelectionKind; at?: number; windowId?: number };
+      if (msg?.type !== 'selection:incoming') return;
+      if (msg.windowId !== undefined && windowId !== null && msg.windowId !== windowId) return;
+      setIncoming({ kind: msg.kind ?? 'box', at: msg.at ?? Date.now() });
+    };
+    browser.runtime.onMessage.addListener(onMessage);
+    return () => browser.runtime.onMessage.removeListener(onMessage);
+  }, [windowId]);
+  useEffect(() => {
+    if (!incoming) return;
+    if (landed >= incoming.at) return setIncoming(null);
+    const timer = setTimeout(() => setIncoming(null), INCOMING_MS);
+    return () => clearTimeout(timer);
+  }, [incoming, landed]);
+
   const last = items.at(-1);
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
-  }, [chatId, items.length, last?.kind === 'assistant' ? last.text : '']);
+  }, [chatId, items.length, last?.kind === 'assistant' ? last.text : '', !!incoming]);
 
   const ask = useCallback(
     (question: string) => {
@@ -234,7 +260,7 @@ export function Panel() {
       )}
 
       <div className="thread" ref={threadRef} data-testid="thread">
-        {items.length === 0 && <Empty temporary={temporary} shortcut={shortcut} provider={settings?.provider} />}
+        {items.length === 0 && !incoming && <Empty temporary={temporary} shortcut={shortcut} provider={settings?.provider} />}
         {chat &&
           items.map((item) => {
             switch (item.kind) {
@@ -266,6 +292,7 @@ export function Panel() {
                 );
             }
           })}
+        {incoming && <IncomingSelection kind={incoming.kind} />}
       </div>
 
       <div className="ask">

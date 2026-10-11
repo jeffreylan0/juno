@@ -1,2 +1,4 @@
-/* The overlay page is see-through: only the bar and what is drawn show. */
-html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+/* The overlay page is see-through: only the bar and what is drawn show. It
+   never scrolls, nor bounces: an elastic bounce on a wheel would carry the
+   dim off screen and back (a flash). */
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; overscroll-behavior: none; user-select: none; }

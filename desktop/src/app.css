@@ -1,28 +1,27 @@
 /*
  * What the app's pages need beyond the extension's stylesheets: the panel
- * and settings are cards (card.ts), like the bar.
+ * and settings are cards (card.ts), like the bar. Marked with an attribute,
+ * not a class: the pages have classes of their own (settings' `.card`).
  */
 html, body, #root { height: 100%; }
 
-/* A card: the window is see-through on macOS and the page draws the rounded card in it. */
-html.card, html.card body { background: transparent; overflow: hidden; }
-html.card .panel, html.card .page {
+/* A card: the window itself is the card (the system rounds it and draws its
+   shadow, wm.rs), filled with the page's background; the content rises in. */
+html[data-card], html[data-card] body { background: var(--bg); overflow: hidden; overscroll-behavior: none; }
+html[data-card] .panel, html[data-card] .page {
   height: 100%; background: var(--bg); overflow: hidden;
   animation: card-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
-html.card.mac .panel, html.card.mac .page {
-  border-radius: 14px; border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
-}
-html.card .panel { transform-origin: top right; }
-html.card.leaving .panel, html.card.leaving .page { animation: card-out 150ms ease-in forwards; }
+html[data-card] .panel { transform-origin: top right; }
+html[data-card='leaving'] .panel, html[data-card='leaving'] .page { animation: card-out 150ms ease-in forwards; }
 @keyframes card-in { from { opacity: 0; transform: translateY(-6px) scale(0.985); } }
 @keyframes card-out { to { opacity: 0; transform: translateY(-4px) scale(0.985); } }
-@media (prefers-reduced-motion: reduce) { html.card .panel, html.card .page, html.card.leaving .panel, html.card.leaving .page { animation-duration: 1ms; } }
+@media (prefers-reduced-motion: reduce) { html[data-card] .panel, html[data-card] .page, html[data-card='leaving'] .panel, html[data-card='leaving'] .page { animation-duration: 1ms; } }
 
 /* Settings scroll inside the card, under its top bar. */
-html.card .page { overflow-y: auto; scroll-behavior: smooth; scroll-padding-top: 72px; }
-html.card .top { cursor: default; }
-html.card .topbar { cursor: default; user-select: none; -webkit-user-select: none; }
+html[data-card] .page { overflow-y: auto; scroll-behavior: smooth; scroll-padding-top: 72px; }
+html[data-card] .top { cursor: default; }
+html[data-card] .topbar { cursor: default; user-select: none; -webkit-user-select: none; }
 
 /* Settings → Selection AI: the Quit button's key. */
 .quit-key { margin-left: 8px; color: var(--muted); }

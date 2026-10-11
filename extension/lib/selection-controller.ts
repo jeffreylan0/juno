@@ -31,6 +31,8 @@ export interface SelectionControllerOptions {
    * vanishing before the shot.
    */
   captureExcludesOverlay?: boolean;
+  /** Scrolling while armed goes to what is beneath the overlay (the app; see OverlayOptions). */
+  scrollThrough?: () => void;
   /** The modes on offer, when the surface decides (the app); otherwise what the page allows. */
   modes?: SelectionKind[];
   /**
@@ -92,7 +94,7 @@ export class SelectionController {
       onEscapeWhileWaiting: () => this.act(() => this.finish()),
       onGhost: () => this.act(() => this.soon(() => void this.toggleGhost())),
       },
-      { fadeAfterShot: !!opts.captureExcludesOverlay },
+      { fadeAfterShot: !!opts.captureExcludesOverlay, scrollThrough: opts.scrollThrough },
     );
     // A newer copy of this script took over, or the extension went away.
     opts.host?.onInvalidated(() => this.destroy());

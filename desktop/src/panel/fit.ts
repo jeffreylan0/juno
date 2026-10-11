@@ -1,13 +1,14 @@
 /**
- * The panel is as tall as its chat needs: it starts small (wm.rs) and grows
- * downwards as selections and answers come in, until it reaches the bottom
- * of the screen, when the chat scrolls instead. Within one chat it never
- * shrinks (no jumping while an answer streams); a new chat starts small
- * again. Resized by hand, it stays as the student left it.
+ * The panel is as tall as its chat needs: it starts most of the screen tall
+ * (wm.rs) and grows downwards as selections and answers come in, until it
+ * reaches the bottom of the screen, when the chat scrolls instead. Within
+ * one chat it never shrinks (no jumping while an answer streams); a new chat
+ * starts at the starting height again. Resized by hand, it stays as the
+ * student left it until it is next shown (`reset`), when wm.rs puts it back.
  */
 import { invoke } from '@tauri-apps/api/core';
 
-export function fitToChat(): () => void {
+export function fitToChat(): { reset: () => void; stop: () => void } {
   let chat: string | null = null;
   let asked = 0;
   let pending = false;
@@ -20,8 +21,8 @@ export function fitToChat(): () => void {
     const thread = panel?.querySelector<HTMLElement>('.thread');
     if (!panel || !thread || byHand || pending) return;
     const id = panel.getAttribute('data-chat') ?? '';
-    // Everything but the thread, plus all of the thread, plus the card's border.
-    const needed = Math.ceil(panel.offsetHeight - thread.clientHeight + thread.scrollHeight + 2);
+    // Everything but the thread, plus all of the thread.
+    const needed = Math.ceil(panel.offsetHeight - thread.clientHeight + thread.scrollHeight);
     const want = id === chat ? Math.max(needed, Math.round(innerHeight)) : needed;
     chat = id;
     if (Math.abs(want - innerHeight) < 4) return;
@@ -48,9 +49,16 @@ export function fitToChat(): () => void {
   // Screenshots load after they are put in.
   document.addEventListener('load', soon, true);
   soon();
-  return () => {
-    observer.disconnect();
-    removeEventListener('resize', onResize);
-    document.removeEventListener('load', soon, true);
+  return {
+    reset: () => {
+      byHand = false;
+      chat = null;
+      soon();
+    },
+    stop: () => {
+      observer.disconnect();
+      removeEventListener('resize', onResize);
+      document.removeEventListener('load', soon, true);
+    },
   };
 }

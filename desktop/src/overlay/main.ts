@@ -41,6 +41,9 @@ const controller = new SelectionController({
   screen: SCREEN_MODES ? readScreen : undefined,
   // The system leaves the app's windows out of every screenshot, so the dim can fade after a selection.
   captureExcludesOverlay: true,
+  // A wheel while armed scrolls the app beneath: the window lets the pointer
+  // through until it moves (wm.rs), and the dim stays put meanwhile.
+  scrollThrough: () => void invoke('overlay_scroll_through').catch(() => {}),
 });
 
 const announce = () => void browser.runtime.sendMessage({ type: 'overlay:ready' });
