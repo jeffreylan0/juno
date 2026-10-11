@@ -16,11 +16,7 @@
 import type { Rect, SelectionKind } from '@shared/payload';
 import { Bar, BAR_STYLE, type BarNotice } from './bar';
 import { BoxSelector, HANDLES } from './select-box';
-import { ElementPicker, type PickedElement } from './select-element';
 import { LassoSelector, type Lasso } from './select-freeform';
-import { ScreenElementPicker, ScreenTextSelector, type ScreenTextSelection } from './select-screen';
-import { layoutOf, type Layout, type ScreenRead, type ScreenReader, type Target } from '@/lib/screen-text';
-import { readSelection, type TextSelection } from './select-text';
 import { UI_ATTR, applyWheel, scrollTargetAt } from './scroll';
 
 const STYLE = `
@@ -31,7 +27,7 @@ const STYLE = `
 .backdrop.leaving { pointer-events: none; }
 /* Armed, the screen dims a little: a selection is about to be made. Once one
  * is being drawn, the dim moves outside it (the box's shadow, the lasso's scrim). */
-:host([data-state='armed']) .backdrop.interactive:not(.own-scrim) { background: var(--sai-scrim, rgba(20, 20, 19, 0.26)); animation: sai-dim 180ms ease-out; }
+:host([data-state='armed']) .backdrop.interactive { background: var(--sai-scrim, rgba(20, 20, 19, 0.26)); animation: sai-dim 180ms ease-out; }
 :host([data-state='armed']) .backdrop.interactive.steady { animation: none; }
 @keyframes sai-dim { from { background: transparent; } }
 .box {
@@ -57,16 +53,6 @@ const STYLE = `
 .handle[data-h='s'] { left: 50%; top: 100%; }
 .handle[data-h='sw'] { left: 0; top: 100%; }
 .handle[data-h='w'] { left: 0; top: 50%; }
-.box.element {
-  border: 2px solid var(--sai-accent, #d97757); box-shadow: none; border-radius: 3px;
-  background: color-mix(in srgb, var(--sai-accent, #d97757) 10%, transparent);
-  transition: left 60ms ease, top 60ms ease, width 60ms ease, height 60ms ease;
-}
-.tag {
-  position: fixed; display: none; pointer-events: none; white-space: nowrap;
-  font: 600 11px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-  color: #fff; background: var(--sai-accent, #d97757); padding: 4px 7px; border-radius: 5px;
-}
 .lasso { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; overflow: visible; }
 .lasso-scrim { fill: var(--sai-scrim, rgba(20, 20, 19, 0.26)); }
 .lasso-line {
@@ -74,19 +60,7 @@ const STYLE = `
   stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.45));
 }
 .lasso.kept .lasso-line { stroke-dasharray: none; }
-/* Text and Element on what the app read off the screen (select-screen.ts): the
- * dim with the selection cut out of it, and the selection lightly tinted. */
-.marks { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; overflow: visible; }
-.marks-scrim { fill: var(--sai-scrim, rgba(20, 20, 19, 0.26)); }
-.marks-tint { fill: color-mix(in srgb, var(--sai-accent, #d97757) 22%, transparent); }
-.pick {
-  position: fixed; display: none; pointer-events: none; box-sizing: border-box;
-  border: 2px solid var(--sai-accent, #d97757); border-radius: 6px;
-  box-shadow: 0 0 0 100vmax var(--sai-scrim, rgba(20, 20, 19, 0.26));
-  transition: left 80ms ease, top 80ms ease, width 80ms ease, height 80ms ease;
-}
-.pick[data-kind='screen'] { border-radius: 0; }
-@media (prefers-reduced-motion: reduce) { .box.element, .pick { transition: none; } :host([data-state='armed']) .backdrop.interactive { animation: none; } }
+@media (prefers-reduced-motion: reduce) { :host([data-state='armed']) .backdrop.interactive { animation: none; } }
 /* By the pointer, after it has been there a moment: what to do, or how to stop. */
 .tip {
   position: fixed; left: 0; top: 0; display: flex; align-items: center; gap: 5px;
@@ -112,16 +86,11 @@ const TIP_OFFSET = { x: 12, y: 14 };
 /** How long the pointer is over the screen (or dragging) before the cursor tooltip comes up. */
 export const CURSOR_TIP_DELAY_MS = 600;
 
-/** What the cursor tooltip says while a selection is armed, for the modes drawn on the overlay. */
-const CURSOR_HINT: Partial<Record<SelectionKind, string>> = {
+/** What the cursor tooltip says while a selection is armed. */
+const CURSOR_HINT: Record<SelectionKind, string> = {
   box: 'Drag to select',
   freeform: 'Draw around it',
-  // Only where Text is drawn on the overlay (the app); on a page, the page has the pointer.
-  text: 'Drag across the text',
 };
-
-/** What the bar says while the app reads the screen for Text or Element. */
-export const READING_HINT = 'Reading the screen…';
 
 /**
  * The bar's entrance and exit: it opens outwards from its middle, left and
@@ -157,11 +126,9 @@ export interface OverlayOptions {
   fadeAfterShot?: boolean;
   /**
    * The page beneath is not this document's to scroll (the app: the overlay
-   * is a window of its own over other apps). A wheel while Box or Freeform is
+   * is a window of its own over other apps). A wheel while a selection is
    * armed calls this instead, and the window lets the pointer through to
-   * whatever is beneath until the pointer moves to select. Text and Element
-   * work on a reading of the screen that scrolling would leave behind, so
-   * they keep the wheel.
+   * whatever is beneath until the pointer moves to select.
    */
   scrollThrough?: () => void;
 }
@@ -197,7 +164,7 @@ export class Overlay {
   private root: HTMLElement | null = null;
   private tip: HTMLElement | null = null;
   private bar: Bar | null = null;
-  /** What the selection in progress is drawn on: the drag surface with its box, lasso or highlight. */
+  /** What the selection in progress is drawn on: the drag surface with its box or lasso. */
   private surface: HTMLElement | null = null;
   private state: OverlayState = 'ready';
   /** Cancels whatever selection is currently armed. */
@@ -219,14 +186,6 @@ export class Overlay {
   private tipTimer: ReturnType<typeof setTimeout> | undefined;
   /** The surface just taken away had the screen dimmed (see beginSelection). */
   private wasDimmed = false;
-  /**
-   * What the app read off the screen for Text and Element, kept while
-   * selections follow one another without the bar going back to waiting (the
-   * screen beneath cannot change then: the overlay has the pointer).
-   */
-  private screenRead: Promise<ScreenRead> | null = null;
-  /** The screen is being read: the bar and the cursor say so. */
-  private reading = false;
 
   constructor(
     private handlers: OverlayHandlers,
@@ -249,13 +208,12 @@ export class Overlay {
    * for itself: typing in a field, or a page closing its own dialog
    * (preventDefault), is left alone.
    */
-  ready(modes: SelectionKind[]): void {
+  ready(): void {
     this.abort();
-    this.show(modes);
+    this.show();
     this.clearSurface();
     this.kind = null;
     this.submit = false;
-    this.screenRead = null;
     this.bar!.setKind(null);
     this.setState('ready');
     this.backInShot();
@@ -313,7 +271,7 @@ export class Overlay {
   }
 
   /** Puts the bar up if it is not already, opening from its middle; a bar on its way out comes back. */
-  private show(modes: SelectionKind[]): void {
+  private show(): void {
     if (this.leaving) {
       this.leaving.cancel();
       this.leaving = null;
@@ -337,7 +295,7 @@ export class Overlay {
     tip.className = 'tip';
     tip.setAttribute(UI_ATTR, 'tip');
 
-    const bar = new Bar(modes, {
+    const bar = new Bar({
       onClose: () => {
         this.abort();
         this.handlers.onClose();
@@ -382,8 +340,6 @@ export class Overlay {
     this.state = 'ready';
     this.kind = null;
     this.submit = false;
-    this.screenRead = null;
-    this.reading = false;
     this.confirmCurrent = null;
   }
 
@@ -396,10 +352,10 @@ export class Overlay {
    * The bar, set up to select in `kind`, over a fresh drawing surface.
    * `submit`: the selection waits for Send. Returns the surface.
    */
-  private beginSelection(kind: SelectionKind, modes: SelectionKind[], submit = false, onScreen = false): HTMLElement {
+  private beginSelection(kind: SelectionKind, submit = false): HTMLElement {
     // Switching mode: the screen is dimmed already, so it stays as it is rather than fading in again.
     const dimmed = this.surface ? this.isDimmed() : this.wasDimmed;
-    this.show(modes);
+    this.show();
     this.clearSurface();
     // While selecting, run() owns Escape.
     this.quietKeys();
@@ -408,18 +364,14 @@ export class Overlay {
     this.submit = submit;
     this.bar!.setKind(kind);
 
-    // Box and freeform draw on a surface over the page; text and element
-    // selection need the page itself to receive the pointer. The surface is
-    // a sibling of the bar, not its parent, so clicks on our own controls can
-    // never start a box.
+    // The selection is drawn on a surface over the page. It is a sibling of
+    // the bar, not its parent, so clicks on our own controls can never start
+    // a box.
     const surface = document.createElement('div');
-    const interactive = kind === 'box' || kind === 'freeform' || onScreen;
-    surface.className = interactive ? `backdrop interactive${dimmed ? ' steady' : ''}` : 'backdrop';
-    if (interactive) {
-      surface.addEventListener('pointermove', (e) => this.moveTip(e.clientX, e.clientY));
-      // Onto the bar: the tooltip is about the screen, not the controls.
-      surface.addEventListener('pointerleave', () => this.resetTip());
-    }
+    surface.className = `backdrop interactive${dimmed ? ' steady' : ''}`;
+    surface.addEventListener('pointermove', (e) => this.moveTip(e.clientX, e.clientY));
+    // Onto the bar: the tooltip is about the screen, not the controls.
+    surface.addEventListener('pointerleave', () => this.resetTip());
     const box = document.createElement('div');
     box.className = 'box';
     for (const h of HANDLES) {
@@ -437,7 +389,7 @@ export class Overlay {
 
   /** Whether the screen shows dimmed: a box or outline is armed, drawn or waiting. */
   private isDimmed(): boolean {
-    return !!this.surface?.classList.contains('interactive') && (this.state === 'armed' || this.state === 'drawing' || this.state === 'adjusting');
+    return !!this.surface && (this.state === 'armed' || this.state === 'drawing' || this.state === 'adjusting');
   }
 
   /**
@@ -459,7 +411,6 @@ export class Overlay {
     }
     this.surface = null;
     this.confirmCurrent = null;
-    this.host?.removeAttribute('data-highlight');
   }
 
   private setState(state: OverlayState): void {
@@ -503,11 +454,7 @@ export class Overlay {
    */
   private tipContent(): Node[] | null {
     if (this.state === 'drawing') return [kbd('Esc'), say('to cancel')];
-    if (this.reading) return [say(READING_HINT)];
-    // Only over a surface drawn on: where the page has the pointer (Text and Element on a page), the page's own cursor says enough.
-    const drawnOn = !!this.surface?.classList.contains('interactive');
-    const hint = this.state === 'armed' && this.kind && drawnOn ? CURSOR_HINT[this.kind] : undefined;
-    return hint ? [say(hint)] : null;
+    return this.state === 'armed' && this.kind ? [say(CURSOR_HINT[this.kind])] : null;
   }
 
   private resetTip(): void {
@@ -547,8 +494,8 @@ export class Overlay {
   }
 
   /** Resolves with a viewport rect in CSS pixels, or null when cancelled. */
-  async selectBox(modes: SelectionKind[], options: BoxOptions = { adjust: false }): Promise<Rect | null> {
-    const backdrop = this.beginSelection('box', modes, options.adjust);
+  async selectBox(options: BoxOptions = { adjust: false }): Promise<Rect | null> {
+    const backdrop = this.beginSelection('box', options.adjust);
     const box = backdrop.querySelector<HTMLElement>('.box')!;
     return await this.run((finish) => {
       const selector = new BoxSelector(
@@ -570,45 +517,9 @@ export class Overlay {
     });
   }
 
-  /**
-   * Hover highlights an element, a click (or Enter) picks it. The page keeps
-   * the pointer, so it scrolls and hovers normally; only the picking click is
-   * kept from reaching it.
-   */
-  async selectElement(modes: SelectionKind[]): Promise<PickedElement | null> {
-    const backdrop = this.beginSelection('element', modes);
-    const box = backdrop.querySelector<HTMLElement>('.box')!;
-    box.classList.add('element');
-    const tag = document.createElement('div');
-    tag.className = 'tag';
-    tag.setAttribute('data-testid', 'element-tag');
-    backdrop.append(tag);
-    return await this.run((finish) => {
-      const picker = new ElementPicker(this.host!, {
-        isOurs: isOurUi,
-        onHighlight: (rect, label) => {
-          if (!rect) {
-            box.style.display = 'none';
-            tag.style.display = 'none';
-            return;
-          }
-          Object.assign(box.style, { display: 'block', left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px` });
-          tag.textContent = label;
-          tag.style.display = 'block';
-          // Above the element when there is room, otherwise just inside it.
-          const top = rect.y >= 24 ? rect.y - 22 : rect.y + 4;
-          tag.style.transform = `translate(${Math.max(4, rect.x)}px, ${Math.max(4, top)}px)`;
-          this.host?.setAttribute('data-highlight', label);
-        },
-        onPick: finish,
-      });
-      return picker.attach();
-    });
-  }
-
   /** Draw any closed shape; resolves with its outline and bounding box. */
-  async selectFreeform(modes: SelectionKind[], options: BoxOptions = { adjust: false }): Promise<Lasso | null> {
-    const backdrop = this.beginSelection('freeform', modes, options.adjust);
+  async selectFreeform(options: BoxOptions = { adjust: false }): Promise<Lasso | null> {
+    const backdrop = this.beginSelection('freeform', options.adjust);
     return await this.run((finish) => {
       const lasso = new LassoSelector(
         backdrop,
@@ -624,123 +535,6 @@ export class Overlay {
       );
       this.confirmCurrent = () => void lasso.confirm();
       return lasso.attach();
-    });
-  }
-
-  /**
-   * The screen as the app read it, laid out for selecting: read once while
-   * selections follow one another (switching between Text and Element reuses
-   * it). Meanwhile the bar, the cursor and its tooltip say so; null if it
-   * could not be read, which the bar says too.
-   */
-  private async readScreen(read: ScreenReader, surface: HTMLElement): Promise<Layout | null> {
-    this.reading = true;
-    this.bar?.setInstruction(READING_HINT);
-    surface.style.cursor = 'progress';
-    this.resetTip();
-    try {
-      this.screenRead ??= read();
-      return layoutOf(await this.screenRead, { width: innerWidth, height: innerHeight });
-    } catch {
-      this.screenRead = null;
-      return null;
-    } finally {
-      this.reading = false;
-      this.resetTip();
-    }
-  }
-
-  /** Text in the app: drag across words the app read off the screen. */
-  async selectScreenText(modes: SelectionKind[], read: ScreenReader, options: BoxOptions = { adjust: false }): Promise<ScreenTextSelection | null> {
-    const surface = this.beginSelection('text', modes, options.adjust, true);
-    return await this.run((finish) => {
-      let off = () => {};
-      let stopped = false;
-      void this.readScreen(read, surface).then((layout) => {
-        if (stopped || this.surface !== surface) return;
-        surface.style.cursor = 'default';
-        if (!layout?.lines.length) {
-          this.bar?.setInstruction(layout ? 'No text on this screen' : "Couldn't read the screen");
-          return;
-        }
-        this.bar?.resetInstruction();
-        surface.classList.add('own-scrim');
-        const selector = new ScreenTextSelector(
-          surface,
-          layout,
-          {
-            onDragStart: () => this.setState('drawing'),
-            onDragEnd: (kept) => this.setState(kept && options.adjust ? 'adjusting' : 'armed'),
-            onMove: (x, y) => this.moveTip(x, y),
-            onDone: finish,
-          },
-          options,
-        );
-        this.confirmCurrent = () => void selector.confirm();
-        off = selector.attach();
-      });
-      return () => {
-        stopped = true;
-        off();
-      };
-    });
-  }
-
-  /** Element in the app: a paragraph, line, window or the screen, from what the app read off it. */
-  async selectScreenElement(modes: SelectionKind[], read: ScreenReader): Promise<Target | null> {
-    const surface = this.beginSelection('element', modes, false, true);
-    return await this.run((finish) => {
-      let off = () => {};
-      let stopped = false;
-      void this.readScreen(read, surface).then((layout) => {
-        if (stopped || this.surface !== surface) return;
-        surface.style.cursor = 'default';
-        if (!layout) {
-          this.bar?.setInstruction("Couldn't read the screen");
-          return;
-        }
-        this.bar?.resetInstruction();
-        surface.classList.add('own-scrim');
-        const picker = new ScreenElementPicker(surface, layout, {
-          onHighlight: (t) => (t ? this.host?.setAttribute('data-highlight', t.label) : this.host?.removeAttribute('data-highlight')),
-          onPick: finish,
-        });
-        off = picker.attach();
-      });
-      return () => {
-        stopped = true;
-        off();
-      };
-    });
-  }
-
-  /** Waits for the user to select text on the page. */
-  async selectText(modes: SelectionKind[]): Promise<TextSelection | null> {
-    this.beginSelection('text', modes);
-    return await this.run((finish) => {
-      const onDown = (e: MouseEvent) => {
-        if (isOurUi(e)) return;
-        this.setState('drawing');
-        this.moveTip(e.clientX, e.clientY);
-      };
-      const onMove = (e: PointerEvent) => this.moveTip(e.clientX, e.clientY);
-      const onUp = (e: MouseEvent) => {
-        if (isOurUi(e)) return;
-        // The selection settles a tick after mouseup.
-        setTimeout(() => {
-          const sel = readSelection();
-          this.setState('armed');
-          if (sel) finish(sel);
-        }, 0);
-      };
-      document.addEventListener('mousedown', onDown, true);
-      document.addEventListener('pointermove', onMove, true);
-      document.addEventListener('mouseup', onUp, true);
-      return () => {
-        document.removeEventListener('mousedown', onDown, true);
-        document.removeEventListener('pointermove', onMove, true);
-        document.removeEventListener('mouseup', onUp, true);
-      };
     });
   }
 
@@ -793,10 +587,7 @@ export class Overlay {
         // pinned to the viewport and cannot follow the page, so scrolling
         // would hand back a crop of something the user never framed.
         if (this.state !== 'armed') return;
-        if (this.options.scrollThrough) {
-          if (this.kind === 'box' || this.kind === 'freeform') this.options.scrollThrough();
-          return;
-        }
+        if (this.options.scrollThrough) return this.options.scrollThrough();
         applyWheel(scrollTargetAt(e.clientX, e.clientY, this.host), e);
       };
       surface?.addEventListener('wheel', onWheel, { passive: false });

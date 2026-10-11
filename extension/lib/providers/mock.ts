@@ -34,9 +34,7 @@ function placeholder(req: AskRequest, hash: string): string {
   const lines = [
     `Read: ${fresh.length} part(s) — ${summary || 'nothing'}${earlier ? ` (plus ${earlier} earlier selection(s) in this chat)` : ''}`,
     '',
-    `**Mock answer** (mode: ${plan.mode}, route: ${plan.route}). No recording exists for hash \`${hash.slice(0, 12)}\`.`,
-    '',
-    'Run `pnpm eval:run --route mock --record` with a real provider to record a response for this payload.',
+    `**Placeholder answer** (mode: ${plan.mode}, route: ${plan.route}): no AI was asked. Pick one in Settings → Answers.`,
     '',
     'Rendering check: $E = mc^2$, $$\\int_0^1 x^2\\,dx = \\tfrac{1}{3}$$ and $\\ce{2H2 + O2 -> 2H2O}$.',
   ];

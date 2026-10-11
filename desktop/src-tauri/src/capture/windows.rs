@@ -112,14 +112,6 @@ pub fn window_at(point: (f64, f64)) -> Option<Source> {
     Some(source_of(hwnd))
 }
 
-/// Other apps' visible windows, front to back, with their frames (physical pixels).
-pub fn window_list() -> Vec<(Source, Rect)> {
-    visible_windows()
-        .into_iter()
-        .map(|(hwnd, r)| (source_of(hwnd), Rect::new(r.left as f64, r.top as f64, (r.right - r.left) as f64, (r.bottom - r.top) as f64)))
-        .collect()
-}
-
 /// The program's file name without ".exe", e.g. "WINWORD" or "Acrobat".
 fn process_name(pid: u32) -> Option<String> {
     unsafe {

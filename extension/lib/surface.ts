@@ -7,7 +7,6 @@
 import type { ReactNode } from 'react';
 
 export interface Surface {
-  kind: 'extension' | 'desktop';
   /** Where selections can come from: "Selections from any tab go into this chat." */
   anywhere: string;
   /** What a selection's title comes from: "…and the page's title go to the AI you picked." */
@@ -22,18 +21,11 @@ export interface Surface {
   blockedSites: boolean;
   /** Whether the browser's PDF viewer (and the reader it offers) is a thing here. */
   pdfViewer: boolean;
-  /** Why a mode's chip is off, when it is. */
-  unavailable: (label: string, kind: string) => string;
   /** The panel and settings are windows of their own, with their own ✕ (the app). */
   ownWindow: boolean;
-  /** Modes not on offer are left off the bar, rather than shown switched off (the app). */
-  hideUnavailable?: boolean;
-  /** The bar's instruction for a mode, where it differs from the page's. */
-  modeHints?: Partial<Record<'box' | 'freeform' | 'element' | 'text', string>>;
 }
 
 export const SURFACE: Surface = {
-  kind: 'extension',
   anywhere: 'any tab',
   source: 'page',
   keysKept: 'Your keys stay in this browser.',
@@ -42,6 +34,4 @@ export const SURFACE: Surface = {
   blockedSites: true,
   pdfViewer: true,
   ownWindow: false,
-  // Only the browser's own PDF viewer takes modes away: it has no DOM to read.
-  unavailable: (label, kind) => (kind === 'text' || kind === 'element' ? `${label} needs the PDF reader` : `${label} doesn't work here`),
 };

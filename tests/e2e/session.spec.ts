@@ -78,12 +78,9 @@ test('the bar stays up through a selection and waits; a chip starts the next one
   expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.id, { x: p.x + 5, y: p.y + p.height / 2 })).toBe('problem');
 
   // One click on a chip, and the next selection joins the same chat.
-  await page.locator(`${BAR} .chip[data-kind="text"]`).click();
+  await page.locator(`${BAR} .chip[data-kind="box"]`).click();
   await expect(overlay).toHaveAttribute('data-state', 'armed');
-  await page.mouse.move(p.x + 1, p.y + p.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(p.x + p.width - 2, p.y + p.height / 2, { steps: 10 });
-  await page.mouse.up();
+  await boxAndAsk(page, '#problem');
   await expect(panel.getByTestId('selection')).toHaveCount(2, { timeout: 15_000 });
   await expect(overlay).toHaveAttribute('data-state', 'ready');
 
@@ -363,7 +360,7 @@ test('a bar left behind by a reloaded extension goes quietly at the first click,
   await serviceWorker.evaluate(() => chrome.runtime.reload()).catch(() => {});
   await page.waitForTimeout(1500);
 
-  await page.locator(`${BAR} .chip[data-kind="text"]`).click();
+  await page.locator(`${BAR} .chip[data-kind="freeform"]`).click();
   await expect(page.locator(OVERLAY)).toHaveCount(0);
   await expect(page.locator('selection-ai-tooltip .sai-tip')).toContainText('was updated. Click its icon to start again.');
 });

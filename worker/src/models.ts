@@ -13,7 +13,6 @@ export interface AskBody {
   /** "anthropic/<model>" or "openai/<model>". */
   model: string;
   messages: ChatMessage[];
-  route?: 'small' | 'large';
   /** A temporary chat: nothing cached anywhere it can be avoided. */
   ephemeral?: boolean;
 }

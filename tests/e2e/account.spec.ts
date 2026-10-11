@@ -1,8 +1,9 @@
 /**
  * Accounts end to end: signing in with an emailed code on the settings page,
  * cloud storage for an account that has it (a chat going up, one coming down
- * from "another computer"), hosted answers through the Worker, signing out
- * and deleting the account. Supabase is played by tests/support's fake and
+ * from "another computer"), hosted answers through the Worker, buying and
+ * managing a plan (the Worker's billing routes), signing out and deleting
+ * the account. Supabase is played by tests/support's fake and
  * the Worker by a route, so nothing real is reached.
  */
 import type { BrowserContext, Page, Route, Worker } from '@playwright/test';
@@ -140,15 +141,16 @@ test('an account with a plan gets hosted answers through the Worker, with its to
 }) => {
   const fake = new FakeSupabase();
   await serve(context, fake);
-  fake.entitle('student@example.com', { cloud: false, plan: 'student', monthly_questions: 50 });
+  fake.entitle('student@example.com', { cloud: false, plan: 'plus', monthly_questions: 50 });
   const asked: { auth: string | undefined; body: { model: string; messages: unknown[] } }[] = [];
   await context.route(`${WORKER}/**`, async (route: Route) => {
     const r = route.request();
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' };
     if (r.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
     if (r.url().endsWith('/me')) {
-      return route.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify({ plan: 'student', quota: 50, used: 3 }) });
+      return route.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify({ plan: 'plus', quota: 50, used: 3 }) });
     }
+    if (r.url().endsWith('/billing/prices')) return route.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: '[]' });
     asked.push({ auth: r.headers().authorization, body: r.postDataJSON() });
     const chunks = [
       { choices: [{ delta: { content: 'Hosted: ' } }] },
@@ -168,7 +170,7 @@ test('an account with a plan gets hosted answers through the Worker, with its to
   await expect(options.getByTestId('answer-hosted')).toHaveCount(0);
   await options.goto(`chrome-extension://${extensionId}/options.html#account`);
   await signIn(options, fake, 'student@example.com');
-  await expect(options.getByTestId('hosted-left')).toHaveText('50 of 50 left this month.');
+  await expect(options.getByTestId('hosted-left')).toHaveText('50 of 50 hosted answers left this month.');
   await options.getByTestId('answer-hosted').click();
   await expect(options.getByTestId('hosted-help')).toContainText('keeps no copy');
 
@@ -186,4 +188,65 @@ test('an account with a plan gets hosted answers through the Worker, with its to
   expect(asked).toHaveLength(1);
   expect(asked[0]!.auth).toMatch(/^Bearer at-/); // the account's token, not an API key
   expect(asked[0]!.body.model).toMatch(/^anthropic\/claude-/);
+});
+
+test('a free account is offered Plus at Stripe’s prices; after paying it shows when it renews, and billing opens Stripe’s portal', async ({
+  context,
+  extensionId,
+}) => {
+  const fake = new FakeSupabase();
+  await serve(context, fake);
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' };
+  const plus = { id: 'plus', name: 'Plus', monthly_questions: 600, cloud: true };
+  const offers = [
+    { key: 'plus_monthly', name: 'Plus', amount: 799, currency: 'usd', interval: 'month', intervalCount: 1, passDays: null, plan: plus },
+    { key: 'plus_semester', name: 'Plus', amount: 2499, currency: 'usd', interval: null, intervalCount: 1, passDays: 120, plan: plus },
+  ];
+  const posted: { path: string; auth: string | undefined; body: unknown }[] = [];
+  await context.route(`${WORKER}/**`, async (route: Route) => {
+    const r = route.request();
+    if (r.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    const path = new URL(r.url()).pathname;
+    const json = (body: unknown) => route.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    if (path === '/billing/prices') return json(offers);
+    posted.push({ path, auth: r.headers().authorization, body: r.postDataJSON() });
+    if (path === '/billing/checkout') return json({ url: 'https://checkout.stripe.test/c/pay/cs_1' });
+    if (path === '/billing/portal') return json({ url: 'https://billing.stripe.test/p/session/1' });
+    return route.fulfill({ status: 404, headers: cors });
+  });
+  await context.route('https://*.stripe.test/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Stripe</h1>' }));
+
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${extensionId}/options.html#account`);
+  await signIn(options, fake, 'student@example.com');
+  const account = options.getByTestId('section-account');
+  await expect(account.getByTestId('plan-line')).toHaveText('Free');
+  await expect(account.getByTestId('upgrade')).toContainText('Plus: 600 hosted answers a month, no key needed, and your chats in the cloud.');
+  await expect(account.getByTestId('buy-plus_monthly')).toHaveText('$7.99 a month');
+  await expect(account.getByTestId('buy-plus_semester')).toHaveText('$24.99 for 4 months');
+  await expect(account.getByTestId('manage-billing')).toHaveCount(0);
+
+  // Checkout opens in the browser, for the signed-in account.
+  const checkout = context.waitForEvent('page');
+  await account.getByTestId('buy-plus_monthly').click();
+  expect((await checkout).url()).toBe('https://checkout.stripe.test/c/pay/cs_1');
+  expect(posted).toEqual([{ path: '/billing/checkout', auth: expect.stringMatching(/^Bearer at-/), body: { price: 'plus_monthly' } }]);
+
+  // Paid: Stripe told the Worker, the Worker the database. Back on the page, it shows.
+  fake.subscribe('student@example.com', { period_end: '2026-11-11T12:00:00Z' });
+  await options.bringToFront();
+  await options.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(account.getByTestId('plan-line')).toHaveText('Plus · Renews on November 11, 2026.');
+  await expect(account.getByTestId('hosted-left')).toHaveText('600 of 600 hosted answers left this month.');
+  await expect(account.getByTestId('upgrade')).toHaveCount(0);
+  await expect(account.getByTestId('cloud-sync')).toBeVisible();
+
+  const portal = context.waitForEvent('page');
+  await account.getByTestId('manage-billing').click();
+  expect((await portal).url()).toBe('https://billing.stripe.test/p/session/1');
+
+  // Cancelled in the portal: it says when it ends.
+  fake.subscribe('student@example.com', { period_end: '2026-11-11T12:00:00Z', cancel_at_period_end: true });
+  await options.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(account.getByTestId('plan-line')).toHaveText('Plus · Ends on November 11, 2026.');
 });

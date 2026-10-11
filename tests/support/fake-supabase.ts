@@ -1,7 +1,8 @@
 /**
  * An in-memory stand-in for the parts of Supabase the extension uses: email
- * codes, sessions and refreshes (Auth), the entitlements/usage/chats tables
- * and their functions (supabase/migrations, with the same rules: last write
+ * codes, sessions and refreshes (Auth), what an account gets (my_account:
+ * the free plan, what was given by hand, what it pays for), the chats table
+ * and its functions (supabase/migrations, with the same rules: last write
  * wins, cloud storage needed to save, own rows only), and the screenshots
  * bucket (Storage). Unit tests put it behind fetch; E2E tests behind a
  * Playwright route. It speaks Request → Response, nothing else.
@@ -35,6 +36,16 @@ export class FakeSupabase {
   access = new Map<string, { user: string; expires: number }>();
   refresh = new Map<string, string>();
   entitlements = new Map<string, { cloud: boolean; plan: string | null; monthly_questions: number | null }>();
+  /** What each account pays for, as the Worker's webhook would have saved it. */
+  billing = new Map<string, { kind: 'subscription' | 'pass'; status: string; plan: string; period_end: string | null; cancel_at_period_end: boolean }>();
+  /** The plans table, as the migration seeds it. */
+  plans: Record<string, { name: string; monthly_questions: number; cloud: boolean; rank: number }> = {
+    free: { name: 'Free', monthly_questions: 0, cloud: false, rank: 0 },
+    plus: { name: 'Plus', monthly_questions: 600, cloud: true, rank: 10 },
+    unlimited: { name: 'Unlimited', monthly_questions: 100_000, cloud: true, rank: 100 },
+  };
+  /** Hosted answers used this month, per account. */
+  used = new Map<string, number>();
   chats: Row[] = [];
   objects = new Map<string, { type: string; bytes: Uint8Array }>();
   /** Google sign-ins in flight: the code handed back, and the challenge it was asked with. */
@@ -59,6 +70,40 @@ export class FakeSupabase {
   entitle(email: string, e: { cloud?: boolean; plan?: string | null; monthly_questions?: number | null }): void {
     const user = this.userByEmail(email) ?? this.addUser(email);
     this.entitlements.set(user.id, { cloud: e.cloud ?? true, plan: e.plan ?? null, monthly_questions: e.monthly_questions ?? null });
+  }
+
+  /** A subscription or pass, as Stripe's webhook would have saved it. */
+  subscribe(email: string, b: { kind?: 'subscription' | 'pass'; status?: string; plan?: string; period_end?: string | null; cancel_at_period_end?: boolean } = {}): void {
+    const user = this.userByEmail(email) ?? this.addUser(email);
+    this.billing.set(user.id, {
+      kind: b.kind ?? 'subscription',
+      status: b.status ?? 'active',
+      plan: b.plan ?? 'plus',
+      period_end: b.period_end === undefined ? new Date(Date.now() + 20 * 86_400_000).toISOString() : b.period_end,
+      cancel_at_period_end: b.cancel_at_period_end ?? false,
+    });
+  }
+
+  /** public.account_of(), worked out the same way. */
+  accountOf(userId: string) {
+    const grant = this.entitlements.get(userId);
+    const b = this.billing.get(userId);
+    const active = !!b && (b.kind === 'pass' ? b.status === 'paid' : ['active', 'trialing', 'past_due'].includes(b.status));
+    const paid = active ? b!.plan : 'free';
+    const granted = grant?.plan ?? 'free';
+    const best = [paid, granted].sort((x, y) => this.plans[y]!.rank - this.plans[x]!.rank)[0]!;
+    const quota = Math.max(this.plans[paid]!.monthly_questions, grant ? (grant.monthly_questions ?? this.plans[granted]!.monthly_questions) : 0);
+    const cloud = this.plans[paid]!.cloud || (!!grant && (grant.cloud || this.plans[granted]!.cloud));
+    return {
+      plan: best,
+      plan_name: this.plans[best]!.name,
+      cloud,
+      quota,
+      used: this.used.get(userId) ?? 0,
+      period: new Date().toISOString().slice(0, 8) + '01',
+      billing: b ? { ...b, active } : null,
+      customer: !!b,
+    };
   }
 
   addUser(email: string): FakeUser {
@@ -174,11 +219,7 @@ export class FakeSupabase {
 
   private async rest(req: Request, url: URL, path: string, user: FakeUser): Promise<Response> {
     const q = url.searchParams;
-    if (path === 'entitlements' && req.method === 'GET') {
-      const e = this.entitlements.get(user.id);
-      return this.json(200, e ? [e] : []);
-    }
-    if (path === 'usage' && req.method === 'GET') return this.json(200, []);
+    if (path === 'rpc/my_account') return this.json(200, this.accountOf(user.id));
     if (path === 'chats' && req.method === 'GET') {
       let rows = this.chats.filter((r) => r.user_id === user.id).sort((a, b) => a.synced - b.synced || (a.id < b.id ? -1 : 1));
       const or = q.get('or');
@@ -197,7 +238,7 @@ export class FakeSupabase {
     if (path === 'rpc/push_chats') {
       const { p_rows } = (await req.json()) as { p_rows: { id: string; updated_ms: number; deleted?: boolean; data?: unknown }[] };
       if (!Array.isArray(p_rows) || p_rows.length > 50) return this.json(400, { code: '22023', message: 'push_chats takes an array of at most 50 chats' });
-      const cloud = !!this.entitlements.get(user.id)?.cloud;
+      const cloud = this.accountOf(user.id).cloud;
       if (p_rows.some((r) => !r.deleted) && !cloud) return this.json(403, { code: '42501', message: 'new row violates row-level security policy for table "chats"' });
       let n = 0;
       for (const r of p_rows) {
@@ -220,6 +261,7 @@ export class FakeSupabase {
     if (path === 'rpc/delete_me') {
       this.users.delete(user.id);
       this.entitlements.delete(user.id);
+      this.billing.delete(user.id);
       this.chats = this.chats.filter((r) => r.user_id !== user.id);
       return this.json(200, null);
     }
@@ -256,7 +298,7 @@ export class FakeSupabase {
     }
     if (path.startsWith('screenshots/') && req.method === 'POST') {
       const key = decodeURIComponent(path.slice(12));
-      if (!own(key) || !this.entitlements.get(user.id)?.cloud) {
+      if (!own(key) || !this.accountOf(user.id).cloud) {
         return this.json(400, { statusCode: '403', error: 'Unauthorized', message: 'new row violates row-level security policy' });
       }
       if (this.objects.has(key) && req.headers.get('x-upsert') !== 'true') return this.json(400, { statusCode: '409', error: 'Duplicate' });

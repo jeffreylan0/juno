@@ -23,13 +23,10 @@
 import { browser, transport } from '../platform/install';
 import { WINDOW_ID, type Port } from '../platform/browser';
 import { appFetch } from '../platform/net';
-import { deleteAccount } from '@/lib/account/cloud';
-import { currentSession } from '@/lib/account/session';
-import { deleteAllChats, deleteChat, getChat, listChats, renameChat } from '@/lib/chats';
-import { endChat, ensureCurrent, getCurrent, panelOpened, replaceGone, setTemporary, switchTo } from '@/lib/current';
-import { ChatEngine, type KeptCapture } from '@/lib/engine';
+import { getChat } from '@/lib/chats';
+import { endChat, ensureCurrent, getCurrent, panelOpened, setTemporary, switchTo } from '@/lib/current';
+import { ChatEngine, reply, type KeptCapture } from '@/lib/engine';
 import { PANEL_PORT, isRuntimeMessage, type BarControlMsg, type PanelPortMsg, type RuntimeMessage, type SelectionDoneMsg } from '@/lib/messages';
-import { testKey } from '@/lib/providers/byok';
 import { lastKindItem } from '@/lib/storage';
 import type { NoticeReply } from '../overlay/notices';
 import { pageTitle, type OverlayNotice } from './tips';
@@ -174,14 +171,9 @@ interface CaptureFailure {
 async function handleSelectionDone(msg: SelectionDoneMsg): Promise<void> {
   // The chat it was made for, fixed now (current.ts).
   const into = serial(() => ensureCurrent(W));
-  // Text read off the screen goes as text; its picture only when the
-  // reading may not be exact (screen-text.ts, needsPicture).
-  const shot: Promise<Captured | undefined> =
-    msg.kind === 'text' && !msg.read?.unsure
-      ? Promise.resolve(undefined)
-      : transport.invoke<Captured>('capture_selection', {
-          request: { rect: msg.rect, path: msg.path ?? null, viewport: msg.viewport ?? { width: 0, height: 0 } },
-        });
+  const shot = transport.invoke<Captured>('capture_selection', {
+    request: { rect: msg.rect, path: msg.path ?? null, viewport: msg.viewport ?? { width: 0, height: 0 } },
+  });
   void engine.keepSelection({
     selection: msg,
     windowId: W,
@@ -189,7 +181,6 @@ async function handleSelectionDone(msg: SelectionDoneMsg): Promise<void> {
     capture: async (): Promise<KeptCapture | undefined> => {
       try {
         const c = await shot;
-        if (!c) return undefined;
         // The window it was made over names it; the overlay's own page never does.
         return { dataUrl: c.dataUrl, width: c.width, height: c.height, page: { url: '', title: c.source ? pageTitle(c.source) : '' } };
       } catch (raw) {
@@ -236,23 +227,12 @@ browser.runtime.onConnect.addListener((port) => {
 
 // ── Messages from the overlay, the panel and settings ───────────────────
 
-/** Replies once the work is done, whether it worked or not (as the background's reply()). */
-function reply(work: Promise<unknown>, sendResponse: (value: unknown) => void): true {
-  work.then(
-    (value) => sendResponse(value ?? true),
-    (err) => {
-      console.warn('[selection-ai] command failed', err);
-      sendResponse(null);
-    },
-  );
-  return true;
-}
-
 const DESKTOP_MESSAGES = new Set(['overlay:ready', 'screen:enable', 'screen:later', 'screen:denied']);
 
 browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
   if (!isRuntimeMessage(raw) && !DESKTOP_MESSAGES.has((raw as { type?: string })?.type ?? '')) return;
   const msg = raw as RuntimeMessage | NoticeReply | { type: 'overlay:ready' };
+  if (isRuntimeMessage(msg) && engine.handles(msg)) return engine.handle(msg, sendResponse);
   switch (msg.type) {
     case 'overlay:ready':
       overlayLoaded();
@@ -285,18 +265,6 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
     case 'options:open':
       void transport.invoke('settings_open', { hash: null });
       return;
-    case 'plan:get':
-      void engine.planFor(undefined).then(sendResponse);
-      return true;
-    case 'chat:send':
-      void engine.sendChat(msg.chatId, msg.question);
-      return;
-    case 'chat:retry':
-      void engine.retryChat(msg.chatId);
-      return;
-    case 'chat:stop':
-      engine.abortStream(msg.chatId);
-      return;
     case 'chat:temporary':
       return reply(
         serial(() => setTemporary(W, msg.on)).then((current) => {
@@ -313,49 +281,6 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
         }),
         sendResponse,
       );
-    case 'chat:rename':
-      return reply(serial(() => renameChat(msg.chatId, msg.title)), sendResponse);
-    case 'chat:delete':
-      engine.stopStream(msg.chatId);
-      return reply(
-        serial(async () => {
-          await deleteChat(msg.chatId);
-          await replaceGone([msg.chatId]);
-        }),
-        sendResponse,
-      );
-    case 'chats:delete-all':
-      return reply(
-        serial(async () => {
-          const ids = (await listChats()).map((c) => c.id);
-          ids.forEach((id) => engine.stopStream(id));
-          await deleteAllChats();
-          await engine.sync?.deleteAll();
-          await replaceGone(ids);
-        }),
-        sendResponse,
-      );
-    case 'chat:drop-selection':
-      return reply(serial(() => engine.dropSelection(msg.chatId, msg.itemId)), sendResponse);
-    case 'ai:check':
-      return reply(engine.aiStatus(!!msg.force), sendResponse);
-    case 'keys:test':
-      void testKey(appFetch, msg.vendor, msg.key).then(sendResponse);
-      return true;
-    case 'sync:now':
-      engine.sync?.soon(0);
-      return;
-    case 'account:delete':
-      void (async () => {
-        const s = await currentSession();
-        if (!s) return { error: 'Signed out already.' };
-        await deleteAccount(s.user.id);
-        await engine.sync?.reset();
-        return { ok: true };
-      })()
-        .catch((err: Error) => ({ error: err.message }))
-        .then(sendResponse);
-      return true;
     default:
       return;
   }
@@ -364,8 +289,9 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
 // ── The native core ──────────────────────────────────────────────────────
 
 void transport.listen('app:summon', () => void summon());
-// Settings opened (from the bar's gear or the menu bar icon): the bar goes,
-// and the dim with it. The chat carries on; the shortcut brings the bar back.
+// Settings are on screen (wm::show_window; from the bar's gear or the menu
+// bar icon): the bar goes, and the dim with it. The chat carries on; the
+// shortcut brings the bar back.
 void transport.listen('app:settings', () => {
   if (!barUp) return;
   barUp = false;

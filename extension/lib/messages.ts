@@ -31,23 +31,8 @@ export interface SelectionDoneMsg {
   kind: SelectionKind;
   rect: Rect;
   devicePixelRatio: number;
-  /** The selected text (text selections only; boxes and elements send pixels). */
-  text?: string;
-  html?: string;
-  /** Element selections: what was picked, in words. */
-  label?: string;
-  /** Element selections: part of it was off screen and could not be captured. */
-  clipped?: boolean;
-  /**
-   * Freeform selections: the outline, in viewport CSS pixels. Text read off
-   * the screen (the app): the highlight's outline, for its picture.
-   */
+  /** Freeform selections: the outline, in viewport CSS pixels. */
   path?: Point[];
-  /**
-   * Text the app read off the screen rather than a page's own characters;
-   * `unsure`: the picture should go along with it (screen-text.ts, needsPicture).
-   */
-  read?: { unsure: boolean };
   /** The viewport the rect is in, CSS pixels (the app crops a whole display with it). */
   viewport?: { width: number; height: number };
   page: { url: string; title: string };

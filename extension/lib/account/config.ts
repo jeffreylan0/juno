@@ -15,14 +15,3 @@ export const ACCOUNTS = !!(SUPABASE_URL && SUPABASE_KEY);
 
 /** The private bucket screenshots go to, as <user id>/<chat id>/<image id>. */
 export const SCREENSHOT_BUCKET = 'screenshots';
-
-/** Questions a month on hosted answers, by plan; mirrors public.monthly_quota(). */
-export function monthlyQuota(plan: string | null, override: number | null): number {
-  if (typeof override === 'number') return override;
-  return plan === 'student' ? 600 : plan === 'unlimited' ? 100_000 : 0;
-}
-
-/** The first day of this month (UTC), as the usage table keys it. */
-export function usagePeriod(now = new Date()): string {
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;
-}

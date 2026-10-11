@@ -63,10 +63,8 @@ export function partToText(p: Part, index: number): string {
 }
 
 /**
- * What goes in the question box when a selection lands, per mode. These are
- * the shipped defaults; the settings page lets the student rewrite them, and
- * `sendBehavior` decides whether they are sent straight away or wait for an
- * edit.
+ * The question asked per mode when none is typed: the eval's fixed modes, and
+ * what settings saved before macros existed are migrated from (storage.ts).
  */
 export const DEFAULT_PROMPTS: Record<Mode, string> = {
   ask: 'Explain this step by step.',
@@ -112,7 +110,9 @@ export function selectionPrompt(plan: Plan, question: string | undefined): strin
   return attachmentsPrompt([{ kind: plan.selection.kind, page: plan.page, parts: plan.parts }], question, plan.mode);
 }
 
-const KIND_WORD: Record<Attachment['kind'], string> = { box: 'box', freeform: 'freeform shape', element: 'element', text: 'text' };
+const KIND_WORD: Record<Attachment['kind'], string> = { box: 'box', freeform: 'freeform shape' };
+/** A chat saved by an earlier version may hold other kinds ('text', 'element'). */
+const kindWord = (kind: string) => KIND_WORD[kind as Attachment['kind']] ?? 'selection';
 
 /**
  * The text of a user turn that brings selections. One selection reads as it
@@ -130,9 +130,8 @@ export function attachmentsPrompt(attachments: Attachment[], question: string | 
   let n = 0;
   const blocks = attachments.map((a, i) => {
     const from = a.page.title ? ` from "${a.page.title}"` : '';
-    const what = a.label ? `${KIND_WORD[a.kind]}: ${a.label}` : KIND_WORD[a.kind];
     const parts = a.parts.map((p) => partToText(p, n++)).join('\n\n');
-    return `Selection ${i + 1} (${what})${from}:\n${parts}`;
+    return `Selection ${i + 1} (${kindWord(a.kind)})${from}:\n${parts}`;
   });
   return `The student selected ${attachments.length} things:\n\n${blocks.join('\n\n')}\n\nQuestion: ${q}`;
 }

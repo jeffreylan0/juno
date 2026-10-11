@@ -17,7 +17,7 @@
  * do not sign the student out.
  */
 import { storage } from '#imports';
-import { ACCOUNTS, SUPABASE_KEY, SUPABASE_URL, monthlyQuota, usagePeriod } from './config';
+import { ACCOUNTS, SUPABASE_KEY, SUPABASE_URL } from './config';
 
 export interface AccountUser {
   id: string;
@@ -32,16 +32,36 @@ export interface AccountSession {
   user: AccountUser;
 }
 
-/** What the account may use, as last read from the server. */
+/**
+ * What the account gets, as last read from the server (public.account_of:
+ * the free plan, what it was given by hand, and what it pays for, together).
+ */
 export interface Entitlement {
+  /** The plan shown: 'free', 'plus', … */
+  plan: string;
+  planName: string;
   cloud: boolean;
-  plan: string | null;
   /** Hosted answers a month (0: none). */
   quota: number;
   /** Hosted answers used this month. */
   used: number;
+  /** The paid plan running, or the latest one (to say a payment failed, or it ended). */
+  billing: Billing | null;
+  /** A Stripe customer: the billing portal (card, invoices) is open to it. */
+  customer: boolean;
   /** When this was read, in ms. */
   checkedAt: number;
+}
+
+export interface Billing {
+  kind: 'subscription' | 'pass';
+  /** Stripe's subscription status (active, past_due, canceled, …), or paid / refunded for a pass. */
+  status: string;
+  /** It gives the plan now. */
+  active: boolean;
+  /** When the period ends: renews then, or stops if cancelled; a pass runs out then. In ms. */
+  periodEnd: number | null;
+  cancelAtPeriodEnd: boolean;
 }
 
 export const sessionItem = storage.defineItem<AccountSession | null>('local:account', { fallback: null });
@@ -279,25 +299,42 @@ export async function apiJson<T>(path: string, init: RequestInit = {}): Promise<
   return (text ? JSON.parse(text) : null) as T;
 }
 
-/** Reads what the account may use (and has used this month), and keeps it. */
+/** public.my_account(), as the database says it. */
+interface AccountRow {
+  plan: string;
+  plan_name: string;
+  cloud: boolean;
+  quota: number;
+  used: number;
+  billing: { kind: 'subscription' | 'pass'; status: string; active: boolean; period_end: string | null; cancel_at_period_end: boolean } | null;
+  customer: boolean;
+}
+
+/** Reads what the account gets (and has used this month), and keeps it. */
 export async function refreshEntitlement(): Promise<Entitlement | null> {
   const s = await currentSession();
   if (!s) {
     await entitlementItem.setValue(null);
     return null;
   }
-  const [rows, usage] = await Promise.all([
-    apiJson<{ cloud: boolean; plan: string | null; monthly_questions: number | null }[]>(
-      '/rest/v1/entitlements?select=cloud,plan,monthly_questions&limit=1',
-    ),
-    apiJson<{ used: number }[]>(`/rest/v1/usage?select=used&period=eq.${usagePeriod()}&limit=1`).catch(() => []),
-  ]);
-  const row = rows[0];
+  const a = await apiJson<AccountRow>('/rest/v1/rpc/my_account', { method: 'POST', body: '{}' });
+  const b = a.billing;
   const ent: Entitlement = {
-    cloud: !!row?.cloud,
-    plan: row?.plan ?? null,
-    quota: row ? monthlyQuota(row.plan, row.monthly_questions) : 0,
-    used: usage[0]?.used ?? 0,
+    plan: a.plan,
+    planName: a.plan_name,
+    cloud: !!a.cloud,
+    quota: a.quota ?? 0,
+    used: a.used ?? 0,
+    billing: b
+      ? {
+          kind: b.kind,
+          status: b.status,
+          active: !!b.active,
+          periodEnd: b.period_end ? Date.parse(b.period_end) : null,
+          cancelAtPeriodEnd: !!b.cancel_at_period_end,
+        }
+      : null,
+    customer: !!a.customer,
     checkedAt: Date.now(),
   };
   // Signed out (or in as someone else) while this was in flight: not theirs.

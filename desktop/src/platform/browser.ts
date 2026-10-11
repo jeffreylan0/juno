@@ -36,12 +36,6 @@ export class Ev<L extends Listener> {
   removeListener(l: L): void {
     this.set.delete(l);
   }
-  hasListener(l: L): boolean {
-    return this.set.has(l);
-  }
-  hasListeners(): boolean {
-    return this.set.size > 0;
-  }
   get listeners(): L[] {
     return [...this.set];
   }
@@ -86,6 +80,11 @@ interface Wire {
 
 let counter = 0;
 const uid = () => `${Date.now().toString(36)}-${(counter++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+/** Where Google sign-in comes back to: the app's own link (lib.rs hands it to settings as `app:deep-link`). */
+export const AUTH_REDIRECT = 'selectionai://auth/callback';
+/** How long a sign-in in the browser is waited for. */
+const AUTH_WAIT_MS = 10 * 60_000;
 
 export interface BrowserOptions {
   /** The label of the window that plays the background. */
@@ -304,9 +303,7 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
     storage: { local, session, onChanged: anyChanged },
     runtime: {
       id: RUNTIME_ID,
-      lastError: undefined,
       getURL: (path: string) => `${origin}/${path.replace(/^\//, '').replace(/^options\.html/, 'web/settings.html')}`,
-      getManifest: () => ({ manifest_version: 3, name: 'Selection AI', version: '0.1.0' }),
       sendMessage,
       onMessage,
       connect,
@@ -318,6 +315,31 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
     },
     tabs: {
       create: openTab,
+    },
+    /**
+     * The extension's sign-in (lib/account/session.ts), in the app: the
+     * page opens in the student's browser, and the answer comes back
+     * through the app's link.
+     */
+    identity: {
+      getRedirectURL: () => AUTH_REDIRECT,
+      launchWebAuthFlow: ({ url }: { url: string; interactive?: boolean }) =>
+        new Promise<string>((resolve, reject) => {
+          let off = () => {};
+          const timer = setTimeout(() => {
+            off();
+            reject(new Error('Sign-in timed out'));
+          }, AUTH_WAIT_MS);
+          void t
+            .listen<string>('app:deep-link', (back) => {
+              if (!back.startsWith(AUTH_REDIRECT)) return;
+              clearTimeout(timer);
+              off();
+              resolve(back);
+            })
+            .then((unlisten) => (off = unlisten));
+          opts.openUrl?.(url);
+        }),
     },
     commands: {
       /** The shortcut the app registered, reported as the extension's toolbar shortcut. */
@@ -332,5 +354,3 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
   };
   return browser;
 }
-
-export type DesktopBrowser = ReturnType<typeof createBrowser>;

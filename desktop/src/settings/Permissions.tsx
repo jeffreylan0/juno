@@ -1,10 +1,8 @@
 /**
  * Settings → Permissions (macOS). Screen Recording is the one permission the
- * app asks for: every mode works on what is on screen, and Text and Element
- * read it on this Mac rather than through accessibility access, which would
- * let the app read and control every other app. macOS asks once; after that
- * it is a switch in System Settings, and the app has to restart before the
- * switch takes effect.
+ * app asks for: a selection is a screenshot of what is on screen. macOS asks
+ * once; after that it is a switch in System Settings, and the app has to
+ * restart before the switch takes effect.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
@@ -49,7 +47,7 @@ export function Permissions() {
           It is the <b>only</b> permission {BRAND.name} asks for: no accessibility access, no microphone, no keystrokes.
           macOS names the switch &ldquo;Screen &amp; System Audio Recording&rdquo;; {BRAND.name} never records audio.
         </li>
-        <li>Text and Element read the words on screen on this Mac. Only what you select goes to the AI you picked.</li>
+        <li>Only the area you select is captured, and it goes only to the AI you picked.</li>
       </ul>
     </div>
   );

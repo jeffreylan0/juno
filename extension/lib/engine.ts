@@ -9,11 +9,13 @@
  * and how the bar and the panel are shown are the host's business.
  */
 import type { AskRequest, Attachment, ChatTurn } from '@shared/payload';
+import { deleteAccount } from './account/cloud';
 import { currentSession, sessionItem } from './account/session';
 import { ChatSync } from './account/sync';
 import type { CaptureResult } from './capture';
 import {
   attachmentOf,
+  deleteAllChats,
   deleteChat,
   discardChat,
   getChat,
@@ -21,8 +23,10 @@ import {
   historyOf,
   isRemovable,
   latestSelection,
+  listChats,
   pendingSelections,
   pruneChats,
+  renameChat,
   retitle,
   saveChat,
   settleStreaming,
@@ -37,9 +41,10 @@ import {
 } from './chats';
 import { addSelection, allCurrent, discardOrphans, onTemporaryDiscarded, replaceGone, type Current } from './current';
 import { deletePartImages, hydrateParts, hydratePlan } from './images';
-import type { SelectionDoneMsg } from './messages';
+import type { RuntimeMessage, SelectionDoneMsg } from './messages';
 import { buildPlan } from './planner';
 import { callModel, type ProviderContext } from './providers';
+import { testKey } from './providers/byok';
 import { chooseRoute } from './router';
 import { STATUS_KEY, STATUS_TTL_MS, checkStatus, statusFromAnswer, type AiStatus } from './status';
 import {
@@ -56,8 +61,36 @@ import {
   type Settings,
 } from './storage';
 
-/** How often a streaming answer is written back to the thread. */
+/** How often a streaming answer is written back to its chat. */
 const STREAM_SAVE_MS = 120;
+
+/** Replies once the work is done, whether it worked or not (null if it threw). */
+export function reply(work: Promise<unknown>, sendResponse: (value: unknown) => void): true {
+  work.then(
+    (value) => sendResponse(value ?? true),
+    (err) => {
+      console.warn('[selection-ai] command failed', err);
+      sendResponse(null);
+    },
+  );
+  return true;
+}
+
+/** The messages the extension's background and the app's core answer alike (ChatEngine.handle). */
+const SHARED: ReadonlySet<string> = new Set([
+  'plan:get',
+  'chat:send',
+  'chat:retry',
+  'chat:stop',
+  'chat:rename',
+  'chat:delete',
+  'chats:delete-all',
+  'chat:drop-selection',
+  'ai:check',
+  'keys:test',
+  'sync:now',
+  'account:delete',
+]);
 
 export interface EngineHost {
   /** Where answers, connection checks and key checks go out. */
@@ -172,8 +205,75 @@ export class ChatEngine {
     this.streams.get(chatId)?.abort();
   }
 
-  streaming(chatId: string): boolean {
-    return this.streams.has(chatId);
+  /** Whether handle() answers this message. */
+  handles(msg: RuntimeMessage): boolean {
+    return SHARED.has(msg.type);
+  }
+
+  /**
+   * Answers the messages the extension and the app share: chats, the AI's
+   * status and key checks, the cloud copy, the account. Returns what an
+   * onMessage listener returns (true: the reply comes later).
+   */
+  handle(msg: RuntimeMessage, sendResponse: (value: unknown) => void): true | undefined {
+    const serial = <T>(task: () => Promise<T>) => this.serial(task);
+    switch (msg.type) {
+      case 'plan:get':
+        void this.planFor(msg.tabId).then(sendResponse);
+        return true;
+      case 'chat:send':
+        void this.sendChat(msg.chatId, msg.question);
+        return;
+      case 'chat:retry':
+        void this.retryChat(msg.chatId);
+        return;
+      case 'chat:stop':
+        this.abortStream(msg.chatId);
+        return;
+      case 'chat:rename':
+        return reply(serial(() => renameChat(msg.chatId, msg.title)), sendResponse);
+      case 'chat:delete':
+        this.stopStream(msg.chatId);
+        return reply(
+          serial(async () => {
+            await deleteChat(msg.chatId);
+            await replaceGone([msg.chatId]);
+          }),
+          sendResponse,
+        );
+      case 'chats:delete-all':
+        return reply(
+          serial(async () => {
+            const ids = (await listChats()).map((c) => c.id);
+            ids.forEach((id) => this.stopStream(id));
+            await deleteAllChats();
+            await this.sync?.deleteAll();
+            await replaceGone(ids);
+          }),
+          sendResponse,
+        );
+      case 'chat:drop-selection':
+        return reply(serial(() => this.dropSelection(msg.chatId, msg.itemId)), sendResponse);
+      case 'ai:check':
+        return reply(this.aiStatus(!!msg.force), sendResponse);
+      case 'keys:test':
+        void testKey(this.host.fetch, msg.vendor, msg.key).then(sendResponse);
+        return true;
+      case 'sync:now':
+        this.sync?.soon(0);
+        return;
+      case 'account:delete':
+        void (async () => {
+          const s = await currentSession();
+          if (!s) return { error: 'Signed out already.' };
+          await deleteAccount(s.user.id);
+          await this.sync?.reset();
+          return { ok: true };
+        })()
+          .catch((err: Error) => ({ error: err.message }))
+          .then(sendResponse);
+        return true;
+    }
   }
 
   /** The chat limit dropped a chat: tell the panels, once. */
@@ -229,7 +329,7 @@ export class ChatEngine {
     await beforeAsk?.();
     const usable = !notice && plan.parts.length > 0;
     // Auto-send waits its turn: an answer already streaming is not cut off.
-    if (usable && shouldAutoSend(current, msg.kind) && !this.streams.has(chat.id)) void this.sendChat(chat.id, fallbackQuestion(current));
+    if (usable && shouldAutoSend(current) && !this.streams.has(chat.id)) void this.sendChat(chat.id, fallbackQuestion(current));
     return chat;
   }
 

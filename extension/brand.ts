@@ -19,7 +19,7 @@ export const BRAND = {
   shortName: 'Selection AI',
   /** Store and manifest description. Max 132 characters (Chrome). */
   description:
-    'Select text, a box, an element or any shape and ask Claude or ChatGPT about exactly that. Math, chemistry and physics render properly.',
+    'Draw a box or any shape around a problem and ask Claude or ChatGPT about exactly that. Math, chemistry and physics render properly.',
   /** Tooltip on the toolbar button. */
   actionTitle: 'Selection AI — select and ask',
   /** How user-facing copy refers to the toolbar button. */
@@ -27,7 +27,7 @@ export const BRAND = {
 } as const;
 
 /** Firefox add-on id. Stable forever; see above. */
-export const GECKO_ID = 'selection-ai@amcpmn.org';
+export const GECKO_ID = 'selection-ai@humanbn.org';
 
 /**
  * The public half of the key that fixes the Chrome extension id at

@@ -11,7 +11,7 @@
  * a CORS preflight the vendor may refuse.
  */
 import type { AskRequest, ModelRef } from '@shared/payload';
-import { estimateCostUsd } from '../router';
+import { COMPANY, estimateCostUsd } from '../router';
 import { describeStreamError, ensureVendorOk, vendorFetch } from './errors';
 import { sseData, streamOpenAIChat, toChatMessages, type ChatMessage, type ContentPart } from './openai-compat';
 import { ProviderError, type ProviderContext, type ProviderDriver, type StreamResult } from './types';
@@ -238,7 +238,7 @@ export type KeyTestResult = { ok: true; models: KeyModel[] } | { ok: false; erro
 export async function testKey(fetchImpl: typeof fetch, vendor: 'anthropic' | 'openai', key: string): Promise<KeyTestResult> {
   const trimmed = key.trim();
   if (!trimmed) return { ok: false, error: 'Paste a key first.', code: 'no-key' };
-  const name = vendor === 'anthropic' ? 'Anthropic' : 'OpenAI';
+  const name = COMPANY[vendor];
   try {
     const res =
       vendor === 'anthropic'

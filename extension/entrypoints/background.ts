@@ -20,23 +20,20 @@
  * the browser half: tabs, the toolbar icon, the side panel, captureVisibleTab.
  */
 import type { SelectionKind } from '@shared/payload';
-import { deleteAccount } from '@/lib/account/cloud';
-import { currentSession } from '@/lib/account/session';
 import { captureVisible, cropDataUrl } from '@/lib/capture';
-import { deleteAllChats, deleteChat, getChat, listChats, renameChat } from '@/lib/chats';
+import { getChat } from '@/lib/chats';
 import {
   endChat,
   ensureCurrent,
   getBarTab,
   getCurrent,
   panelOpened,
-  replaceGone,
   setBarTab,
   setTemporary,
   switchTo,
   type Current,
 } from '@/lib/current';
-import { ChatEngine } from '@/lib/engine';
+import { ChatEngine, reply } from '@/lib/engine';
 import {
   PANEL_PORT,
   isRuntimeMessage,
@@ -45,15 +42,12 @@ import {
   type RuntimeMessage,
   type SelectionDoneMsg,
 } from '@/lib/messages';
-import { testKey } from '@/lib/providers/byok';
 import { getSettings, lastKindItem, type Settings } from '@/lib/storage';
 
 const CONTENT_SCRIPT = 'content-scripts/content.js';
 
 const COMMAND_KINDS: Record<string, SelectionKind> = {
   'select-box': 'box',
-  'select-text': 'text',
-  'select-element': 'element',
   'select-freeform': 'freeform',
 };
 /** True when a plan is waiting and the panel could not be opened for it. */
@@ -63,17 +57,6 @@ let panelPending = false;
  * Answers a message once the work is done, whether it worked or not, so the
  * sender is never left waiting. Returns true: the listener's "reply later".
  */
-function reply(work: Promise<unknown>, sendResponse: (value: unknown) => void): true {
-  work.then(
-    (value) => sendResponse(value ?? true),
-    (err) => {
-      console.warn('[selection-ai] command failed', err);
-      sendResponse(null);
-    },
-  );
-  return true;
-}
-
 /** Open panels, per window. Usually one; tests open the panel page as a tab too. */
 const panels = new Map<number, Set<chrome.runtime.Port>>();
 
@@ -163,6 +146,7 @@ export default defineBackground(() => {
   browser.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
     if (!isRuntimeMessage(raw)) return;
     const msg: RuntimeMessage = raw;
+    if (engine.handles(msg)) return engine.handle(msg, sendResponse);
     switch (msg.type) {
       case 'selection:committed':
         // First statement, before any await: this is the drag's (or the
@@ -189,18 +173,6 @@ export default defineBackground(() => {
       case 'chat:finish':
         if (sender.tab?.windowId !== undefined) return reply(finishChat(sender.tab.windowId), sendResponse);
         return;
-      case 'plan:get':
-        void engine.planFor(msg.tabId).then(sendResponse);
-        return true;
-      case 'chat:send':
-        void engine.sendChat(msg.chatId, msg.question);
-        return;
-      case 'chat:retry':
-        void engine.retryChat(msg.chatId);
-        return;
-      case 'chat:stop':
-        engine.abortStream(msg.chatId);
-        return;
       case 'chat:temporary': {
         // From the panel (which names its window) or the bar (whose tab does).
         const w = msg.windowId ?? sender.tab?.windowId;
@@ -221,35 +193,6 @@ export default defineBackground(() => {
           }),
           sendResponse,
         );
-      case 'chat:rename':
-        return reply(serial(() => renameChat(msg.chatId, msg.title)), sendResponse);
-      case 'chat:delete':
-        engine.stopStream(msg.chatId);
-        return reply(
-          serial(async () => {
-            await deleteChat(msg.chatId);
-            await replaceGone([msg.chatId]);
-          }),
-          sendResponse,
-        );
-      case 'chats:delete-all':
-        return reply(
-          serial(async () => {
-            const ids = (await listChats()).map((c) => c.id);
-            ids.forEach((id) => engine.stopStream(id));
-            await deleteAllChats();
-            await engine.sync?.deleteAll();
-            await replaceGone(ids);
-          }),
-          sendResponse,
-        );
-      case 'chat:drop-selection':
-        return reply(serial(() => engine.dropSelection(msg.chatId, msg.itemId)), sendResponse);
-      case 'ai:check':
-        return reply(engine.aiStatus(!!msg.force), sendResponse);
-      case 'keys:test':
-        void testKey(globalThis.fetch.bind(globalThis), msg.vendor, msg.key).then(sendResponse);
-        return true;
       case 'panel:open':
         // Sent from a click on the page's tooltip, which carries a real gesture.
         void openPanel(sender.tab?.id);
@@ -260,20 +203,6 @@ export default defineBackground(() => {
       case 'pin:watch':
         void watchForPin();
         return;
-      case 'sync:now':
-        engine.sync?.soon(0);
-        return;
-      case 'account:delete':
-        void (async () => {
-          const s = await currentSession();
-          if (!s) return { error: 'Signed out already.' };
-          await deleteAccount(s.user.id);
-          await engine.sync?.reset();
-          return { ok: true };
-        })()
-          .catch((err: Error) => ({ error: err.message }))
-          .then(sendResponse);
-        return true;
       case 'reader:hello':
         // The reader cannot know its own tab id without the tabs permission,
         // and we cannot recognise it by URL for the same reason. One hello
@@ -514,7 +443,7 @@ async function openPanel(tabId: number | undefined): Promise<boolean> {
       setPanelPending(false);
       return true;
     }
-    if (import.meta.env.SAFARI) return true; // overlay.ts renders the panel in-page
+    if (import.meta.env.SAFARI) return true; // no docked panel (the in-page one is still to do)
     const sp = (browser as unknown as { sidePanel?: { open(o: { tabId?: number; windowId?: number }): Promise<void> } })
       .sidePanel;
     if (!sp) return false;
@@ -618,9 +547,9 @@ async function handleSelectionDone(msg: SelectionDoneMsg, tab: chrome.tabs.Tab |
   const into = serial(() => ensureCurrent(windowId));
   // captureVisibleTab takes whichever tab the window shows; if that is no
   // longer this one, the screenshot would be of another page.
-  const shown = msg.kind === 'text' || (await browser.tabs.get(tabId).catch(() => undefined))?.active !== false;
+  const shown = (await browser.tabs.get(tabId).catch(() => undefined))?.active !== false;
   if (!shown) return;
-  const shot = msg.kind === 'text' ? Promise.resolve(null) : captureWithRetry(windowId);
+  const shot = captureWithRetry(windowId);
   void keepSelection(msg, tabId, windowId, shot, into);
   await shot.catch(() => undefined);
 }

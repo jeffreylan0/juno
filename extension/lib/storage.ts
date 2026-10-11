@@ -5,7 +5,6 @@
 import { storage } from '#imports';
 import { DEFAULT_MACROS, DEFAULT_PROMPT, DEFAULT_PROMPTS, type Macro } from '@shared/prompts';
 import type { ModelRef, Provider, SelectionKind } from '@shared/payload';
-import { MAJOR_MODELS } from './router';
 
 export type { Macro } from '@shared/prompts';
 
@@ -14,16 +13,15 @@ export type { Macro } from '@shared/prompts';
  * - `prefill`: the default prompt goes in the box, editable, and nothing is
  *   sent until the student asks. No surprise spend. The default.
  * - `auto`: the ask goes out immediately with the default prompt.
- * - `auto-box`: screenshots (box, freeform, element) go out immediately; text waits.
  */
-export type SendBehavior = 'prefill' | 'auto' | 'auto-box';
+export type SendBehavior = 'prefill' | 'auto';
 
 /** How many saved chats this computer keeps; the oldest goes first. */
 export const CHAT_LIMITS = [10, 25, 50, 100] as const;
 export const DEFAULT_CHAT_LIMIT = 10;
 
 /** Bumped when a default changes in a way stored settings must pick up. */
-export const SETTINGS_VERSION = 3;
+export const SETTINGS_VERSION = 4;
 
 /**
  * Where hosted plans are served from. A build setting, not a student one: it
@@ -117,6 +115,8 @@ export async function getSettings(): Promise<Settings> {
  * v3: the question box starts empty (the macros do the asking), unless the
  * student had written their own default prompt; the hosted-plan URL stopped
  * being a setting.
+ * v4: every selection is a screenshot, so "ask right away, screenshots only"
+ * is simply "ask right away".
  */
 export function migrateSettings(stored: unknown): Settings {
   const s = (stored && typeof stored === 'object' ? stored : {}) as Partial<Settings> & {
@@ -137,6 +137,7 @@ export function migrateSettings(stored: unknown): Settings {
   if ((s.version ?? 1) < 3) {
     if (s.defaultPrompt === undefined || s.defaultPrompt === V2_DEFAULT_PROMPT) merged.defaultPrompt = '';
   }
+  if ((merged.sendBehavior as string) === 'auto-box') merged.sendBehavior = 'auto';
   merged.macros = sanitizeMacros(merged.macros);
   if (!(CHAT_LIMITS as readonly number[]).includes(merged.chatLimit)) merged.chatLimit = DEFAULT_CHAT_LIMIT;
   merged.version = SETTINGS_VERSION;
@@ -184,8 +185,6 @@ export function fallbackQuestion(s: Pick<Settings, 'defaultPrompt' | 'macros'>):
   return s.defaultPrompt.trim() || s.macros[0]?.prompt.trim() || 'Explain this.';
 }
 
-export { MAJOR_MODELS };
-
 /** Drops malformed entries and gives every macro a unique id. */
 export function sanitizeMacros(macros: unknown): Macro[] {
   if (!Array.isArray(macros)) return DEFAULT_MACROS.map((m) => ({ ...m }));
@@ -211,9 +210,7 @@ export async function getKeys(): Promise<Keys> {
   return await keysItem.getValue();
 }
 
-/** Whether a selection of this kind should be sent without waiting for the student. */
-export function shouldAutoSend(settings: Settings, kind: SelectionKind): boolean {
-  if (settings.sendBehavior === 'auto') return true;
-  if (settings.sendBehavior === 'auto-box') return kind !== 'text';
-  return false;
+/** Whether a selection should be sent without waiting for the student. */
+export function shouldAutoSend(settings: Settings): boolean {
+  return settings.sendBehavior === 'auto';
 }

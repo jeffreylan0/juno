@@ -8,7 +8,6 @@ export type Shape = readonly ['path' | 'circle' | 'rect', Readonly<Record<string
 export type Shapes = readonly Shape[];
 
 export const ICON_PATHS = {
-  check: [['path', { d: 'M5 12.5l4.5 4.5L19 7.5' }]],
   menu: [['path', {d:"M4 7h16M4 12h16M4 17h16"}]],
   search: [['circle', {cx:"11",cy:"11",r:"6.5"}], ['path', {d:"m20 20-4.2-4.2"}]],
   pencil: [['path', {d:"M16.5 3.8a2.1 2.1 0 0 1 3 3L8 18.3l-4 1 1-4z"}]],

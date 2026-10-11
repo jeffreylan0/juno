@@ -4,4 +4,3 @@
  * works as is on top of the app's `browser` (browser.ts).
  */
 export { storage } from '@wxt-dev/storage';
-export const browser = (globalThis as unknown as { browser: unknown }).browser;

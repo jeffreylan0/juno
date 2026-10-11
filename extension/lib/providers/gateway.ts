@@ -21,7 +21,6 @@ export const gatewayDriver: ProviderDriver = {
         {
           model: `${model.vendor}/${model.model}`,
           messages: toChatMessages(req),
-          route: req.plan.route,
           // A temporary chat: nothing cached anywhere it can be avoided (worker/src/models.ts).
           ...(ctx.ephemeral ? { ephemeral: true } : {}),
         },

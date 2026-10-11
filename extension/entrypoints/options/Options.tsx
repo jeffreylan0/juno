@@ -25,7 +25,7 @@ import { DEFAULT_MACROS, DEFAULT_PROMPT } from '@shared/prompts';
 import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import { listChats } from '@/lib/chats';
-import { MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
+import { COMPANY, MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
 import { SURFACE } from '@/lib/surface';
 import type { KeyModel, KeyTestResult } from '@/lib/providers/byok';
 import {
@@ -58,7 +58,6 @@ const CHOICES: { id: Choice; name: string; sub: string }[] = [
 ];
 
 const VENDOR_OF: Partial<Record<Choice, Vendor>> = { claude: 'anthropic', chatgpt: 'openai' };
-const VENDOR_NAME: Record<Vendor, string> = { anthropic: 'Anthropic', openai: 'OpenAI' };
 const KEY_HINT: Record<Vendor, string> = { anthropic: 'sk-ant-…', openai: 'sk-…' };
 const KEY_PAGE: Record<Vendor, string> = {
   anthropic: 'https://console.anthropic.com/settings/keys',
@@ -68,7 +67,6 @@ const KEY_PAGE: Record<Vendor, string> = {
 const SEND: { id: SendBehavior; label: string; help: string }[] = [
   { id: 'prefill', label: 'Wait for me', help: 'Nothing is asked until you press Enter or a macro.' },
   { id: 'auto', label: 'Ask right away', help: 'Asks the default prompt, or the first macro. Each selection costs a question.' },
-  { id: 'auto-box', label: 'Ask right away, screenshots only', help: 'Text selections still wait for you.' },
 ];
 
 const SECTIONS = [
@@ -392,9 +390,11 @@ function KeyAndModel({
   const [check, setCheck] = useState<Check>({ state: 'idle' });
   const lastChecked = useRef('');
   const table = MODEL_TABLE[vendor];
-  const choices: KeyModel[] =
-    listed ?? MAJOR_MODELS[vendor].map((id) => ({ id, name: MODEL_NAMES[id] ?? id, vision: true }));
   const override = settings.modelOverride?.vendor === vendor ? settings.modelOverride.model : '';
+  // Selections are screenshots: only models that read images are offered (one picked before stays, marked).
+  const choices: KeyModel[] = (listed ?? MAJOR_MODELS[vendor].map((id) => ({ id, name: MODEL_NAMES[id] ?? id, vision: true }))).filter(
+    (m) => m.vision || m.id === override,
+  );
   const checking = 'state' in check && check.state === 'checking';
 
   const run = async (key: string) => {
@@ -417,7 +417,7 @@ function KeyAndModel({
     <div className="sub" data-testid="keys">
       <div className="field">
         <span className="field-label">
-          {VENDOR_NAME[vendor]} API key ·{' '}
+          {COMPANY[vendor]} API key ·{' '}
           <a className="link" href={KEY_PAGE[vendor]} target="_blank" rel="noopener noreferrer">
             get one
           </a>
@@ -427,7 +427,7 @@ function KeyAndModel({
             type="password"
             autoComplete="off"
             spellCheck={false}
-            aria-label={`${VENDOR_NAME[vendor]} API key`}
+            aria-label={`${COMPANY[vendor]} API key`}
             placeholder={KEY_HINT[vendor]}
             value={draft}
             data-testid="key-input"
@@ -453,8 +453,8 @@ function KeyAndModel({
         </span>
         <KeyStatus check={check} hasKey={!!savedKey} />
         <p className="help">
-          Stays in this browser and only goes to {VENDOR_NAME[vendor]}. Clear the field to remove it. Tip: set a monthly
-          spend limit in {VENDOR_NAME[vendor]}'s console.
+          {SURFACE.keysKept} It only ever goes to {COMPANY[vendor]}. Clear the field to remove it. Tip: set a monthly spend
+          limit in {COMPANY[vendor]}'s console.
         </p>
       </div>
 
@@ -466,12 +466,12 @@ function KeyAndModel({
           onChange={(e) => void save({ modelOverride: e.target.value ? { vendor, model: e.target.value } : null })}
         >
           <option value="">
-            Automatic — {MODEL_NAMES[table.small]} for text, {MODEL_NAMES[table.large]} for screenshots
+            Automatic — {MODEL_NAMES[table.large]}
           </option>
           {choices.map((m) => (
             <option key={m.id} value={m.id}>
               {m.name}
-              {m.vision ? '' : ' (text only)'}
+              {m.vision ? '' : " (can't read screenshots)"}
             </option>
           ))}
           {override && !choices.some((m) => m.id === override) && <option value={override}>{override}</option>}
@@ -683,8 +683,8 @@ function SelectingSection({ settings, save, shortcut }: { settings: Settings; sa
 
       {SURFACE.pdfViewer && (
         <p className="help">
-          In the browser's PDF viewer, only Box and Freeform work. {BRAND.name} can reopen the PDF in its own reader, where
-          everything works.
+          In the browser's PDF viewer the page can't scroll while you select. {BRAND.name} can reopen the PDF in its own reader,
+          where it can.
         </p>
       )}
     </Section>
@@ -738,7 +738,7 @@ function PrivacySection({
       <div className="field" data-testid="what-is-sent">
         <span className="field-label">What's sent and kept</span>
         <p className="help">
-          Only what you select (a screenshot or text) and the {SURFACE.source}'s title go to the AI you picked.{' '}
+          Only what you select (a screenshot) and the {SURFACE.source}'s title go to the AI you picked.{' '}
           {SURFACE.keysKept} Your chats stay on this computer{cloud ? ' and in your account' : ''}.
         </p>
         <ul className="help facts">

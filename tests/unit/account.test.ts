@@ -305,7 +305,7 @@ describe('cloud copies', () => {
     const uid = await ready();
     const s = startSync();
     fake.entitle('a@example.com', { cloud: false }); // the server now refuses
-    await entitlementItem.setValue({ cloud: true, plan: null, quota: 0, used: 0, checkedAt: Date.now() }); // we do not know yet
+    await entitlementItem.setValue({ plan: 'free', planName: 'Free', cloud: true, quota: 0, used: 0, billing: null, customer: false, checkedAt: Date.now() }); // we do not know yet
     await s.now();
     expect((await syncStatusItem.getValue()).state).toBe('error');
     fake.entitle('a@example.com', { cloud: true });

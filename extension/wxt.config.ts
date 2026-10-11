@@ -16,7 +16,7 @@ for (const file of ['.env', '.env.local']) {
 }
 
 // The E2E build signs in against a fake Supabase that the tests play with
-// Playwright routes (tests/e2e/fake-supabase.ts); nothing reaches a real one.
+// Playwright routes (tests/support/fake-supabase.ts); nothing reaches a real one.
 if (process.env.E2E === '1') {
   process.env.WXT_SUPABASE_URL ??= 'https://e2e-project.supabase.co';
   process.env.WXT_SUPABASE_KEY ??= 'sb_publishable_e2e';
@@ -52,7 +52,7 @@ export default defineConfig({
     server: {
       // Vite 8 restricts dev-server CORS to http(s) localhost origins, so an
       // extension page asking for a module gets no Access-Control-Allow-Origin
-      // and every script in sidepanel.html / popup.html is blocked. Extension
+      // and every script in sidepanel.html / notice.html is blocked. Extension
       // origins have to be allowed explicitly; without this `pnpm dev` serves
       // blank pages while `pnpm build` works fine.
       cors: { origin: [/^https?:\/\/(?:[^:]+\.)?localhost(?::\d+)?$/, /^chrome-extension:\/\//, /^moz-extension:\/\//] },
@@ -104,17 +104,13 @@ export default defineConfig({
       // bound to _execute_action, the browser's own "click the icon" command,
       // so the shortcut behaves exactly like the icon: same user gesture, same
       // activeTab grant, same panel opening. The per-mode commands have no
-      // default key; students can bind them. (Text used to ship Alt+Shift+A,
-      // but that is Chrome's own "focus inactive dialogs", so Chrome silently
-      // left it unassigned.)
+      // default key; students can bind them.
       commands: {
         _execute_action: {
           suggested_key: { default: 'Alt+Shift+S', mac: 'Alt+Shift+S' },
           description: `Start a selection, like clicking ${BRAND.iconName}`,
         },
-        'select-text': { description: 'Start a text selection' },
         'select-box': { description: 'Start a box selection' },
-        'select-element': { description: 'Start an element selection' },
         'select-freeform': { description: 'Start a freeform selection' },
       },
       // No default_popup: clicking the icon brings up the selection bar with a
@@ -144,8 +140,8 @@ export default defineConfig({
             // 140: the first Firefox that shows data-collection consent at install.
             strict_min_version: '140.0',
             // Firefox asks for consent to this at install. What leaves the
-            // browser is what the student selects (text or a screenshot of
-            // part of a page) and that page's title, sent to the AI they
+            // browser is what the student selects (a screenshot of part of
+            // a page) and that page's title, sent to the AI they
             // picked (through our server for hosted answers, which keeps no
             // copy). Without it the extension cannot answer, so it is
             // required. Signing in (optional) sends an email address to our
@@ -160,7 +156,8 @@ export default defineConfig({
     }
 
     if (browser === 'safari') {
-      // Safari has no docked panel; overlay.ts renders the same Panel in-page.
+      // Safari has no docked panel. Not built yet: the Safari phase needs the
+      // Panel rendered in-page (the plan's week 12).
       return { ...base, permissions: base.permissions.filter((p) => p !== 'sidePanel') };
     }
 

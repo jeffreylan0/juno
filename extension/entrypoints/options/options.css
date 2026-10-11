@@ -136,3 +136,8 @@ button:disabled { opacity: .5; cursor: default; }
 /* A checkbox with its label. */
 label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
 label.check input { margin: 0; padding: 0; }
+
+/* Account → Plan: hosted answers used, and upgrading. */
+.usage { display: flex; flex-direction: column; gap: 4px; }
+.usage meter { width: 100%; max-width: 320px; height: 8px; accent-color: var(--accent); }
+.upgrade { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; background: var(--accent-bg); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 12px; }

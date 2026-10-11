@@ -102,7 +102,7 @@ test('the panel holds a conversation: a first answer, then a follow-up on the sa
   const answers = panel.locator('.turn.assistant');
   await expect(answers).toHaveCount(1);
   await expect(answers.first()).toHaveAttribute('data-streaming', 'false', { timeout: 25_000 });
-  await expect(answers.first()).toContainText('Mock answer');
+  await expect(answers.first()).toContainText('Placeholder answer');
   // Students never see model or token lines by default.
   await expect(panel.locator('.usage')).toHaveCount(0);
 
@@ -205,7 +205,7 @@ test('the bar’s ✕ finishes the chat; it stays in the menu and opens again fr
   await rows.first().locator('.chat-open').click();
   await expect(again.getByTestId('chat-menu')).toHaveCount(0);
   await expect(again.locator('.turn.user')).toHaveCount(1);
-  await expect(again.locator('.turn.assistant')).toContainText('Mock answer');
+  await expect(again.locator('.turn.assistant')).toContainText('Placeholder answer');
   expect((await savedChats(serviceWorker)).length).toBe(1);
 });
 
@@ -274,31 +274,6 @@ test('a selection can be taken back before it is asked about', async ({ context,
   await expect(panel.getByTestId('empty')).toBeVisible();
   // An empty chat is not kept.
   await expect.poll(async () => (await savedChats(serviceWorker)).length).toBe(0);
-});
-
-test('a text selection shows the text it captured', async ({ context, extensionId, serviceWorker }) => {
-  const page = await context.newPage();
-  const { url, tabId } = await openFixture(page, serviceWorker, 'text.html');
-  const panel = await openPanel(context, extensionId);
-  await page.bringToFront();
-  await startSelection(serviceWorker, 'text', url);
-  await expect(page.locator('selection-ai-overlay')).toHaveCount(1);
-
-  // Select the problem sentence with a real drag, as a student would.
-  const p = (await page.locator('#problem').boundingBox())!;
-  await page.mouse.move(p.x + 1, p.y + p.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(p.x + p.width - 2, p.y + p.height / 2, { steps: 10 });
-  await page.mouse.up();
-
-  await expect.poll(async () => (await getPlan(panel, tabId))?.selection.kind ?? null, { timeout: 15_000 }).toBe('text');
-  // Before this preview, a text selection produced a one-line chip and an
-  // empty panel, which read as "it did not work".
-  await expect(panel.getByTestId('selection-kind')).toHaveText('Text');
-  await expect(panel.getByTestId('selection-text')).toContainText('Balance the equation');
-  // Text is sent as text alone; no screenshot rides along.
-  await expect(panel.locator('.selection-image')).toHaveCount(0);
-  expect((await getPlan(panel, tabId))!.parts.map((p) => p.kind)).toEqual(['text']);
 });
 
 test('escape cancels without producing a plan', async ({ context, extensionId, serviceWorker }) => {

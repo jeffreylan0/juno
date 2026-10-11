@@ -57,9 +57,9 @@ test('one toolbar click arms a box selection with the bar in place', async ({ co
 
   const bar = page.locator(BAR);
   await expect(bar.locator('.chip[data-kind="box"]')).toHaveAttribute('aria-pressed', 'true');
-  // Every mode is on offer, in the bar's order.
-  await expect(bar.locator('.chip')).toHaveText(['Box', 'Freeform', 'Element', 'Text']);
-  for (const kind of ['freeform', 'element', 'text']) await expect(bar.locator(`.chip[data-kind="${kind}"]`)).toBeEnabled();
+  // Both modes are on offer, in the bar's order.
+  await expect(bar.locator('.chip')).toHaveText(['Box', 'Freeform']);
+  await expect(bar.locator('.chip[data-kind="freeform"]')).toBeEnabled();
   await expect(bar.locator('.close')).toBeVisible();
   await expect(bar.locator('.ask')).toBeHidden();
   await expect(bar.locator('.gear')).toBeVisible();
@@ -498,7 +498,7 @@ test('the main shortcut is the icon\'s own shortcut, Alt+Shift+S', async ({ serv
   // Every mode can have a shortcut of its own, unbound until the student
   // picks one: every default we could ship collides with some browser.
   const names = commands.map((c) => c.name).sort();
-  expect(names).toEqual(['_execute_action', 'select-box', 'select-element', 'select-freeform', 'select-text']);
+  expect(names).toEqual(['_execute_action', 'select-box', 'select-freeform']);
   for (const c of commands.filter((c) => c.name !== '_execute_action')) expect(c.shortcut, c.name).toBe('');
 });
 
@@ -507,13 +507,13 @@ test('the icon starts the mode last picked from the chips', async ({ context, se
   await armed(serviceWorker, page);
   await expect(page.locator(`${BAR} .chip[data-kind="box"]`)).toHaveAttribute('aria-pressed', 'true');
 
-  await page.locator(`${BAR} .chip[data-kind="element"]`).click();
-  await expect(page.locator(`${BAR} .chip[data-kind="element"]`)).toHaveAttribute('aria-pressed', 'true');
+  await page.locator(`${BAR} .chip[data-kind="freeform"]`).click();
+  await expect(page.locator(`${BAR} .chip[data-kind="freeform"]`)).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('Escape');
   await expect(page.locator(OVERLAY)).toHaveCount(0);
 
   // Next time, the icon picks up where the student left off.
-  await expect.poll(async () => serviceWorker.evaluate(async () => (await chrome.storage.local.get('lastSelectionKind')).lastSelectionKind)).toBe('element');
+  await expect.poll(async () => serviceWorker.evaluate(async () => (await chrome.storage.local.get('lastSelectionKind')).lastSelectionKind)).toBe('freeform');
   await clickToolbar(serviceWorker, `${FIXTURE_ORIGIN}/text.html`);
-  await expect(page.locator(`${BAR} .chip[data-kind="element"]`)).toHaveAttribute('aria-pressed', 'true', { timeout: 10_000 });
+  await expect(page.locator(`${BAR} .chip[data-kind="freeform"]`)).toHaveAttribute('aria-pressed', 'true', { timeout: 10_000 });
 });

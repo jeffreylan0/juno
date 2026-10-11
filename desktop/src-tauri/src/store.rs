@@ -239,7 +239,7 @@ fn is_secret(key: &str) -> bool {
     SECRET_KEYS.contains(&key)
 }
 
-/// The secrets among the local values, as the keychain item holds them.
+/// The secrets among the local values, as secrets.json holds them.
 fn secrets_of(values: &HashMap<String, Value>) -> Map<String, Value> {
     SECRET_KEYS.iter().filter_map(|k| values.get(*k).map(|v| (k.to_string(), v.clone()))).collect()
 }

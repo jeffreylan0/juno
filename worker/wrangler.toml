@@ -1,17 +1,18 @@
-# Hosted answers (see src/index.ts). Secrets are set with `wrangler secret put`,
-# never committed: SUPABASE_URL, SUPABASE_SECRET_KEY, ANTHROPIC_API_KEY,
-# OPENAI_API_KEY, and STRIPE_WEBHOOK_SECRET once billing exists.
+# Hosted answers and billing (see src/index.ts). Secrets are set with
+# `wrangler secret put`, never committed: SUPABASE_URL, SUPABASE_SECRET_KEY,
+# ANTHROPIC_API_KEY, OPENAI_API_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET.
 name = "selection-ai"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-ENVIRONMENT = "development"
 # Cloudflare account id, to send answers through an AI Gateway named
 # "selection-ai" (rate limits, spend analytics; logging is switched off per
 # request). Empty: the Worker calls the vendors directly.
 AI_GATEWAY_ID = ""
-
-[env.production]
-vars = { ENVIRONMENT = "production" }
+# The prices on offer: Stripe lookup keys, in the order the apps show them
+# (supabase/README.md). Empty: no plans are offered.
+STRIPE_PRICES = "plus_monthly,plus_yearly,plus_semester"
+# "on" once Stripe Tax is set up in the Stripe dashboard.
+STRIPE_TAX = ""
