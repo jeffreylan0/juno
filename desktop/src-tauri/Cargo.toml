@@ -24,19 +24,19 @@ serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
 tauri-plugin-autostart = "2"
+tauri-plugin-deep-link = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSError", "NSDictionary", "NSValue", "NSGeometry", "NSThread", "NSRange"] }
-objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSRunningApplication", "NSWorkspace", "NSApplication", "NSResponder", "NSScreen", "NSGraphics", "NSButton", "NSControl", "NSView"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSError"] }
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSResponder", "NSButton", "NSControl", "NSView"] }
 objc2-screen-capture-kit = { version = "0.3", features = ["SCShareableContent", "SCScreenshotManager", "SCStream", "SCError", "block2"] }
 objc2-core-graphics = "0.3"
 objc2-core-foundation = "0.3"
 block2 = "0.6"
-objc2-vision = { version = "0.3", default-features = false, features = ["std", "VNRequest", "VNRecognizeTextRequest", "VNRequestHandler", "VNObservation", "VNTypes", "objc2-core-graphics", "objc2-core-foundation"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_System_WinRT", "Foundation", "Foundation_Collections", "Graphics_Imaging", "Media_Ocr", "Storage_Streams"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = "0.13"

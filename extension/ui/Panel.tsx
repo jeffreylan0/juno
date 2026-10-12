@@ -20,8 +20,8 @@
  * The panel never writes a chat. It sends commands to the background, which
  * owns every chat, and renders whatever is stored.
  *
- * Runs in the Chrome/Edge side panel, the Firefox sidebar, and (from week 12)
- * inside the Safari in-page overlay.
+ * Runs in the Chrome/Edge side panel, the Firefox sidebar and the app's panel
+ * window. (Safari has no docked panel; showing it in the page is still to do.)
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { SelectionKind } from '@shared/payload';

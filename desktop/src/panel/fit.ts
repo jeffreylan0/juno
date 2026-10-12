@@ -8,7 +8,7 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 
-export function fitToChat(): { reset: () => void; stop: () => void } {
+export function fitToChat(): { reset: () => void } {
   let chat: string | null = null;
   let asked = 0;
   let pending = false;
@@ -44,8 +44,7 @@ export function fitToChat(): { reset: () => void; stop: () => void } {
     if (!pending && asked && Math.abs(innerHeight - asked) > 8) byHand = true;
   };
   addEventListener('resize', onResize);
-  const observer = new MutationObserver(soon);
-  observer.observe(document.getElementById('root')!, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-chat', 'src', 'class'] });
+  new MutationObserver(soon).observe(document.getElementById('root')!, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-chat', 'src', 'class'] });
   // Screenshots load after they are put in.
   document.addEventListener('load', soon, true);
   soon();
@@ -54,11 +53,6 @@ export function fitToChat(): { reset: () => void; stop: () => void } {
       byHand = false;
       chat = null;
       soon();
-    },
-    stop: () => {
-      observer.disconnect();
-      removeEventListener('resize', onResize);
-      document.removeEventListener('load', soon, true);
     },
   };
 }

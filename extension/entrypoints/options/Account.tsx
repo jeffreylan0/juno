@@ -1,10 +1,14 @@
 /**
  * Account: optional. Signing in (Google, or a code sent by email) is what
- * cloud storage and hosted answers hang on; both are given per account (see
- * supabase/migrations). Without a Supabase project in the build there is no
- * section at all.
+ * plans hang on: hosted answers and cloud storage, bought with Stripe
+ * (lib/account/billing.ts) or given by hand (supabase/README.md). The
+ * section is the account's dashboard: the plan and what is next for it,
+ * hosted answers used this month, buying or managing it, cloud storage,
+ * deleting the account. Without a Supabase project in the build there is
+ * no section at all.
  */
 import { useEffect, useState, type FormEvent } from 'react';
+import { offers, openPortal, priceLabel, startCheckout, type Offer } from '@/lib/account/billing';
 import { ACCOUNTS } from '@/lib/account/config';
 import {
   AccountError,
@@ -14,6 +18,7 @@ import {
   signInWithGoogle,
   signOut,
   verifyEmailCode,
+  type Entitlement,
   type SyncStatus,
 } from '@/lib/account/session';
 import type { Settings } from '@/lib/storage';
@@ -83,7 +88,7 @@ function SignIn() {
 
   return (
     <div className="field" data-testid="sign-in">
-      <p className="help">Optional. Sign in to keep your chats in the cloud, if your account has it.</p>
+      <p className="help">Optional. Sign in for a plan with hosted answers (no key needed) and your chats in the cloud.</p>
       {!sentTo ? (
         <>
           {GOOGLE && (
@@ -160,12 +165,24 @@ function SignedIn({ account, settings, save }: { account: AccountState; settings
   const [error, setError] = useState('');
   const [checkError, setCheckError] = useState('');
 
-  // What the account may use can change on the server (you flag an account):
-  // read it again whenever this page opens, and catch up the cloud copy.
+  // What the account gets changes on the server (a payment, a cancellation,
+  // a plan you give by hand): read it again when this page opens, and when
+  // it comes back into view (from Stripe's pages, say). And catch up the
+  // cloud copy.
   useEffect(() => {
-    setCheckError('');
-    void refreshEntitlement().catch((err: Error) => setCheckError(err.message));
+    const check = () => {
+      if (document.visibilityState !== 'visible') return;
+      setCheckError('');
+      void refreshEntitlement().catch((err: Error) => setCheckError(err.message));
+    };
+    check();
     void browser.runtime.sendMessage({ type: 'sync:now' }).catch(() => {});
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('focus', check);
+    return () => {
+      document.removeEventListener('visibilitychange', check);
+      window.removeEventListener('focus', check);
+    };
   }, [user.id]);
 
   const remove = async () => {
@@ -192,35 +209,32 @@ function SignedIn({ account, settings, save }: { account: AccountState; settings
         </span>
       </div>
 
-      <div className="field" data-testid="cloud">
-        <span className="field-label">Cloud storage</span>
-        {!ent ? (
-          <p className={`help${checkError ? ' bad' : ''}`} data-testid="cloud-checking">
-            {checkError ? `Couldn't check your account: ${checkError}` : 'Checking…'}
-          </p>
-        ) : ent.cloud ? (
-          <>
-            <label className="check">
-              <input type="checkbox" checked={settings.cloudSync} data-testid="cloud-sync" onChange={(e) => void save({ cloudSync: e.target.checked })} />
-              Keep my chats in the cloud too
-            </label>
-            <small className="help">Your chats and screenshots, on every computer you sign in on. Temporary chats never go.</small>
-            {settings.cloudSync && <SyncLine status={account.sync} />}
-          </>
-        ) : (
-          <p className="help" data-testid="no-cloud">
-            Not on for this account.
-          </p>
-        )}
-      </div>
+      {!ent ? (
+        <p className={`help${checkError ? ' bad' : ''}`} data-testid="account-checking">
+          {checkError ? `Couldn't check your account: ${checkError}` : 'Checking…'}
+        </p>
+      ) : (
+        <>
+          <PlanField ent={ent} />
 
-      {ent && ent.quota > 0 && (
-        <div className="field">
-          <span className="field-label">Hosted answers</span>
-          <p className="help" data-testid="hosted-left">
-            {Math.max(0, ent.quota - ent.used)} of {ent.quota} left this month.
-          </p>
-        </div>
+          <div className="field" data-testid="cloud">
+            <span className="field-label">Cloud storage</span>
+            {ent.cloud ? (
+              <>
+                <label className="check">
+                  <input type="checkbox" checked={settings.cloudSync} data-testid="cloud-sync" onChange={(e) => void save({ cloudSync: e.target.checked })} />
+                  Keep my chats in the cloud too
+                </label>
+                <small className="help">Your chats and screenshots, on every computer you sign in on. Temporary chats never go.</small>
+                {settings.cloudSync && <SyncLine status={account.sync} />}
+              </>
+            ) : (
+              <p className="help" data-testid="no-cloud">
+                Not included in your plan.
+              </p>
+            )}
+          </div>
+        </>
       )}
 
       <div className="field">
@@ -230,7 +244,10 @@ function SignedIn({ account, settings, save }: { account: AccountState; settings
           </button>
         ) : (
           <div className="confirm-row">
-            <span>Delete your account and everything in the cloud? Chats on this computer stay.</span>
+            <span>
+              Delete your account and everything in the cloud?{ent?.billing?.active ? ' Your subscription ends now, without a refund.' : ''} Chats on this
+              computer stay.
+            </span>
             <button type="button" className="danger" disabled={deleting} onClick={() => void remove()} data-testid="confirm-delete-account">
               {deleting ? 'Deleting…' : 'Delete account'}
             </button>
@@ -242,6 +259,97 @@ function SignedIn({ account, settings, save }: { account: AccountState; settings
         {error && <p className="help bad">{error}</p>}
       </div>
     </>
+  );
+}
+
+const day = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+
+/** The plan line: which plan, and what is next for it. */
+function planStatus(ent: Entitlement): string {
+  const b = ent.billing;
+  if (!b?.active) return b && (b.status === 'incomplete' || b.status === 'unpaid') ? "Your last payment didn't go through." : '';
+  if (b.kind === 'pass') return b.periodEnd ? `Until ${day(b.periodEnd)}.` : '';
+  if (b.status === 'past_due') return "Your last payment didn't go through. Update your card to keep it.";
+  if (!b.periodEnd) return '';
+  return b.cancelAtPeriodEnd ? `Ends on ${day(b.periodEnd)}.` : `Renews on ${day(b.periodEnd)}.`;
+}
+
+/** The plan, hosted answers used this month, and buying or managing it. */
+function PlanField({ ent }: { ent: Entitlement }) {
+  const [list, setList] = useState<Offer[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    void offers().then(setList);
+  }, []);
+
+  const go = async (what: string, fn: () => Promise<void>) => {
+    setBusy(what);
+    setError('');
+    try {
+      await fn();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Upgrades are offered to accounts that pay for nothing yet.
+  const upgrades = !ent.billing?.active ? (list ?? []).filter((o) => o.plan.id !== ent.plan) : [];
+  const plan = upgrades[0]?.plan;
+  const status = planStatus(ent);
+  const left = Math.max(0, ent.quota - ent.used);
+
+  return (
+    <div className="field" data-testid="plan">
+      <span className="field-label">Plan</span>
+      <p className="help" data-testid="plan-line">
+        <b>{ent.planName || 'Free'}</b>
+        {status && <> · {status}</>}
+      </p>
+      {ent.quota > 0 && (
+        <div className="usage">
+          <span className="help" data-testid="hosted-left">
+            {left} of {ent.quota} hosted answers left this month.
+          </span>
+          <meter min={0} max={ent.quota} value={ent.used} aria-label="Hosted answers used this month" />
+        </div>
+      )}
+      {plan && (
+        <div className="upgrade" data-testid="upgrade">
+          <p className="help">
+            <b>{plan.name}</b>: {plan.monthly_questions.toLocaleString()} hosted answers a month, no key needed
+            {plan.cloud ? ', and your chats in the cloud' : ''}.
+          </p>
+          <div className="key-row">
+            {upgrades.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                className="secondary"
+                disabled={!!busy}
+                data-testid={`buy-${o.key}`}
+                onClick={() => void go(o.key, () => startCheckout(o.key))}
+              >
+                {busy === o.key ? 'Opening…' : priceLabel(o)}
+              </button>
+            ))}
+          </div>
+          <small className="help">Payment opens in your browser, with Stripe. Cancel any time.</small>
+        </div>
+      )}
+      {ent.customer && (
+        <button type="button" className="secondary" disabled={!!busy} data-testid="manage-billing" onClick={() => void go('portal', openPortal)}>
+          {busy === 'portal' ? 'Opening…' : 'Manage billing'}
+        </button>
+      )}
+      {error && (
+        <p className="help bad" data-testid="billing-error">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

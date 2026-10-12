@@ -11,6 +11,7 @@
  * connection, one that fails to connect disproves it.
  */
 import { testKey } from './providers/byok';
+import { ASSISTANT, COMPANY } from './router';
 import { GATEWAY_URL, answerChoiceOf, type Keys, type Settings } from './storage';
 
 export type AiState = 'ok' | 'placeholder' | 'no-key' | 'bad-key' | 'disconnected' | 'error' | 'unavailable';
@@ -31,13 +32,11 @@ export const STATUS_KEY = 'aiStatus';
 export const STATUS_TTL_MS = 60_000;
 const TIMEOUT_MS = 8_000;
 
-const WHO = { anthropic: 'Claude', openai: 'ChatGPT' } as const;
-const VENDOR = { anthropic: 'Anthropic', openai: 'OpenAI' } as const;
 
 export function whoAnswers(settings: Pick<Settings, 'provider' | 'vendor'>): string {
   switch (settings.provider) {
     case 'byok':
-      return WHO[settings.vendor];
+      return ASSISTANT[settings.vendor];
     case 'local':
       return 'the local model';
     case 'gateway':
@@ -88,7 +87,7 @@ export async function checkStatus(fetchImpl: typeof fetch, settings: Settings, k
     case 'byok': {
       const vendor = settings.vendor;
       const key = keys[vendor].trim();
-      if (!key) return { ...base, state: 'no-key', message: `No ${WHO[vendor]} API key yet.` };
+      if (!key) return { ...base, state: 'no-key', message: `No ${ASSISTANT[vendor]} API key yet.` };
       const result = await testKey(f, vendor, key);
       if (result.ok) return { ...base, state: 'ok' };
       return { ...base, ...fromErrorCode(vendor, result.code, result.error) };
@@ -104,14 +103,14 @@ export function fromErrorCode(
 ): Pick<AiStatus, 'state' | 'message'> {
   switch (code) {
     case 'bad-key':
-      return { state: 'bad-key', message: `${VENDOR[vendor]} rejected your API key.` };
+      return { state: 'bad-key', message: `${COMPANY[vendor]} rejected your API key.` };
     case 'no-key':
-      return { state: 'no-key', message: `No ${WHO[vendor]} API key yet.` };
+      return { state: 'no-key', message: `No ${ASSISTANT[vendor]} API key yet.` };
     case 'network':
-      return { state: 'disconnected', message: `Can't reach ${VENDOR[vendor]}. Check your internet connection.` };
+      return { state: 'disconnected', message: `Can't reach ${COMPANY[vendor]}. Check your internet connection.` };
     case 'overloaded':
     case 'http':
-      return { state: 'disconnected', message: `${VENDOR[vendor]} isn't responding right now.` };
+      return { state: 'disconnected', message: `${COMPANY[vendor]} isn't responding right now.` };
     default:
       return { state: 'error', message };
   }

@@ -2,7 +2,7 @@
   "name": "selection-ai",
   "private": true,
   "version": "0.1.0",
-  "description": "Cross-browser extension: select text, a box or an element and ask Claude or ChatGPT about exactly that.",
+  "description": "Selection AI: draw a box or any shape around something on screen and ask Claude or ChatGPT about exactly that.",
   "packageManager": "pnpm@10.28.0",
   "engines": {
     "node": ">=22"

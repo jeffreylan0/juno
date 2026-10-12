@@ -6,20 +6,16 @@
  * key", and the last entry opens settings, so the picker never lets a
  * student pick something that can only fail.
  */
-import { MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE, SHORT_NAMES } from '@/lib/router';
+import { ASSISTANT, MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE, SHORT_NAMES } from '@/lib/router';
 import { answerChoiceOf, settingsItem, withAnswerChoice, type AnswerChoice, type Keys, type Settings } from '@/lib/storage';
 import { hasHosted, useAccount } from './useAccount';
 
 const SETTINGS = '__settings';
 
-const VENDOR: Record<'anthropic' | 'openai', { name: string; key: keyof Keys }> = {
-  anthropic: { name: 'Claude', key: 'anthropic' },
-  openai: { name: 'ChatGPT', key: 'openai' },
-};
 
 export function ModelPicker({ settings, keys }: { settings: Settings; keys: Keys | null }) {
   const value = answerChoiceOf(settings);
-  const has = (vendor: 'anthropic' | 'openai') => !!keys?.[VENDOR[vendor].key];
+  const has = (vendor: 'anthropic' | 'openai') => !!keys?.[vendor];
   const hosted = hasHosted(useAccount());
 
   const choose = async (next: string) => {
@@ -48,9 +44,9 @@ export function ModelPicker({ settings, keys }: { settings: Settings; keys: Keys
           const tag = locked ? ' — add key' : '';
           const table = MODEL_TABLE[vendor];
           return (
-            <optgroup key={vendor} label={VENDOR[vendor].name}>
+            <optgroup key={vendor} label={ASSISTANT[vendor]}>
               <option value={`${vendor}:auto`} disabled={locked} title={`${MODEL_NAMES[table.small]} for text, ${MODEL_NAMES[table.large]} for screenshots`}>
-                {VENDOR[vendor].name} Auto{tag}
+                {ASSISTANT[vendor]} Auto{tag}
               </option>
               {MAJOR_MODELS[vendor].map((id) => (
                 <option key={id} value={`${vendor}:${id}`} disabled={locked} title={MODEL_NAMES[id]}>
@@ -101,6 +97,6 @@ function short(value: AnswerChoice): string {
   if (value === 'local') return 'Local model';
   if (value === 'hosted') return 'Hosted';
   const [vendor, model] = value.split(':') as ['anthropic' | 'openai', string];
-  if (model === 'auto') return `${VENDOR[vendor].name} Auto`;
+  if (model === 'auto') return `${ASSISTANT[vendor]} Auto`;
   return SHORT_NAMES[model] ?? model;
 }

@@ -1,9 +1,11 @@
 /**
- * One payload schema shared by the extension, the Worker and the eval scripts.
+ * One payload schema shared by the extension, the app, the Worker and the
+ * eval scripts.
  *
- * A Plan is what the local planner produces from a selection: an ordered list of
- * Parts, each in its cheapest exact form (text, LaTeX, table, code) with an image
- * only where the content is visual or layout-sensitive.
+ * A Plan is what a selection becomes (lib/planner.ts): its screenshot, with
+ * the page it came from. The other kinds of Part (text, LaTeX, table, code)
+ * are made only by the eval's experiments, and are in chats saved by earlier
+ * versions; the panel and the prompts still read them.
  */
 
 /**
@@ -25,14 +27,14 @@ export interface ModelRef {
   model: string;
 }
 
-/** Why an image part was included instead of an exact form. */
-export type ImageReason = 'visual' | 'layout' | 'fallback' | 'user';
+/** Why an image part was included: the student's own selection, or (the eval) content that needs a picture. */
+export type ImageReason = 'visual' | 'layout' | 'user';
 
 export interface TextPart {
   kind: 'text';
   text: string;
-  /** Where the text came from: DOM selection, alt text, OCR, ... */
-  source?: 'selection' | 'element' | 'alt' | 'ocr';
+  /** Where the text came from (the eval: the page's own characters, or alt text). */
+  source?: 'selection' | 'alt';
 }
 
 export interface LatexPart {
@@ -77,11 +79,12 @@ export interface Rect {
 }
 
 /**
- * box: a dragged rectangle. text: a text selection. element: one page element,
- * picked by hovering. freeform: any closed shape drawn around something; the
- * crop is its bounding box with everything outside the outline blanked.
+ * box: a dragged rectangle. freeform: any closed shape drawn around
+ * something; the crop is its bounding box with everything outside the
+ * outline blanked. (Chats saved by earlier versions may hold 'text' and
+ * 'element' selections; lib/kinds.ts shows them as plain selections.)
  */
-export type SelectionKind = 'text' | 'box' | 'element' | 'freeform';
+export type SelectionKind = 'box' | 'freeform';
 
 /** A point in viewport CSS pixels. */
 export interface Point {
@@ -94,12 +97,6 @@ export interface SelectionMeta {
   /** Viewport rect of the selection in CSS pixels. */
   rect: Rect;
   devicePixelRatio: number;
-  /** For element selections: what was picked, in words ("Table", "Equation"). */
-  label?: string;
-  /** The element ran past the edge of the screen, so only the visible part was captured. */
-  clipped?: boolean;
-  /** Text read off the screen by the app (on device), not a page's own characters. */
-  read?: boolean;
   /**
    * Freeform selections: the outline, normalised to the selection's rect
    * (0..1 on each axis), so the panel can show exactly what was inside it.
@@ -113,7 +110,7 @@ export interface PageMeta {
 }
 
 export interface Plan {
-  /** Stable id (uuid) used for cache keys and eval bookkeeping. */
+  /** Stable id (uuid), for eval bookkeeping. */
   id: string;
   createdAt: number;
   mode: Mode;
@@ -124,7 +121,7 @@ export interface Plan {
   page: PageMeta;
   /** Planner's route decision. Providers may override with an explicit ModelRef. */
   route: Route;
-  /** Approximate prompt tokens, for cost estimates in the tray. */
+  /** Approximate prompt tokens. */
   estimatedTokens: number;
 }
 
@@ -133,8 +130,6 @@ export interface Attachment {
   kind: SelectionKind;
   page: PageMeta;
   parts: Part[];
-  /** Element selections: what was picked ("Table"). */
-  label?: string;
 }
 
 export interface ChatTurn {

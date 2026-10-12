@@ -6,7 +6,7 @@
  * closes when its window goes.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { WINDOW_ID, createBrowser } from '../../desktop/src/platform/browser';
+import { AUTH_REDIRECT, WINDOW_ID, createBrowser } from '../../desktop/src/platform/browser';
 import type { Transport } from '../../desktop/src/platform/transport';
 import { pageTitle } from '../../desktop/src/core/tips';
 import { readPointerState, trackPointer } from '../../desktop/src/overlay/pointer';
@@ -52,7 +52,7 @@ function fakeCore(opts: { delay?: (event: string) => number } = {}) {
       for (const k of keys as string[]) if (a.has(k)) (changes[k] = { oldValue: a.get(k) }), a.delete(k);
       if (Object.keys(changes).length) emitAll('storage:changed', { area, changes });
     },
-    app_info: () => ({ os: 'macos', version: '0.1.0', shortcut: { shortcut: '⌥⇧S', error: null } }),
+    app_info: () => ({ version: '0.1.0', shortcut: { shortcut: '⌥⇧S', error: null } }),
   };
   const transport = (label: string): Transport => ({
     label,
@@ -254,6 +254,24 @@ describe('the rest of the browser', () => {
     const b = createBrowser(core.transport('panel'), { openUrl, origin: 'tauri://localhost' });
     await b.tabs.create({ url: 'https://console.anthropic.com/settings/keys' });
     expect(openUrl).toHaveBeenCalledWith('https://console.anthropic.com/settings/keys');
+  });
+});
+
+describe('Google sign-in in the app', () => {
+  it('opens Google in the browser and resolves with the link the app hears back, ignoring any other', async () => {
+    const hub = fakeCore();
+    const opened: string[] = [];
+    const settings = createBrowser(hub.transport('settings'), { origin: 'tauri://localhost', openUrl: (u) => opened.push(u) });
+    await settings.ready;
+    expect(settings.identity.getRedirectURL()).toBe(AUTH_REDIRECT);
+    const flow = settings.identity.launchWebAuthFlow({ url: 'https://proj.supabase.co/auth/v1/authorize?provider=google', interactive: true });
+    await settle();
+    expect(opened).toEqual(['https://proj.supabase.co/auth/v1/authorize?provider=google']);
+    // What lib.rs emits when the system opens the app's link.
+    const send = (url: string) => hub.transport('core').emitTo('settings', 'app:deep-link', url);
+    await send('selectionai://something-else');
+    await send(`${AUTH_REDIRECT}?code=abc`);
+    expect(await flow).toBe(`${AUTH_REDIRECT}?code=abc`);
   });
 });
 

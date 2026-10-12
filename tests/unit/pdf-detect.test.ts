@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { availableModes, detectPdf, readerUrlFor } from '@/lib/pdf-detect';
+import { detectPdf, readerUrlFor } from '@/lib/pdf-detect';
 
 /** A stand-in for the minimal document Chrome wraps its PDF plugin in. */
 function pdfDoc(_url: string): Document {
@@ -17,29 +17,14 @@ function htmlDoc(_url: string): Document {
 }
 
 describe('detectPdf', () => {
-  it('recognises a browser PDF viewer and notes local files', () => {
-    const local = detectPdf(pdfDoc(''), 'file:///Users/x/Downloads/organic.pdf');
-    expect(local.isPdf).toBe(true);
-    expect(local.isFile).toBe(true);
-
-    const remote = detectPdf(pdfDoc(''), 'https://example.edu/ch1.pdf');
-    expect(remote.isPdf).toBe(true);
-    expect(remote.isFile).toBe(false);
+  it('recognises a browser PDF viewer, local or not', () => {
+    expect(detectPdf(pdfDoc(''), 'file:///Users/x/Downloads/organic.pdf')).toEqual({ isPdf: true, url: 'file:///Users/x/Downloads/organic.pdf' });
+    expect(detectPdf(pdfDoc(''), 'https://example.edu/ch1.pdf').isPdf).toBe(true);
   });
 
   it('leaves ordinary pages alone, including ones with .pdf in the URL', () => {
     expect(detectPdf(htmlDoc(''), 'https://example.com/page').isPdf).toBe(false);
     expect(detectPdf(htmlDoc(''), 'https://example.com/about-pdf.html?q=x.pdf').isPdf).toBe(false);
-  });
-});
-
-describe('availableModes', () => {
-  it('offers only the screenshot modes on a browser PDF viewer', () => {
-    expect(availableModes({ isPdf: true, url: 'file:///a.pdf', isFile: true })).toEqual(['box', 'freeform']);
-  });
-
-  it('offers every mode everywhere else', () => {
-    expect(availableModes({ isPdf: false, url: 'https://x', isFile: false })).toEqual(['box', 'text', 'element', 'freeform']);
   });
 });
 

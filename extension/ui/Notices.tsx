@@ -9,6 +9,7 @@
  * background's check (lib/status.ts), shown only when it was made for the
  * choice currently picked.
  */
+import { ASSISTANT } from '@/lib/router';
 import type { AiStatus } from '@/lib/status';
 import { answerChoiceOf, type Keys, type Settings } from '@/lib/storage';
 import { Icon, type IconName } from './icons';
@@ -29,7 +30,6 @@ interface Notice {
   onDismiss?: () => void;
 }
 
-const WHO = { anthropic: 'Claude', openai: 'ChatGPT' } as const;
 const openSettings = () => void browser.runtime.openOptionsPage();
 /** Settings, at the Account section. */
 const openAccount = () => void browser.tabs.create({ url: browser.runtime.getURL('/options.html#account') });
@@ -118,7 +118,7 @@ function connectionNotice(
     return {
       kind: 'no-key',
       icon: 'warning',
-      text: `Add a ${WHO[settings.vendor]} API key to get answers.`,
+      text: `Add a ${ASSISTANT[settings.vendor]} API key to get answers.`,
       actions: [{ label: 'Add a key', onClick: openSettings, testid: 'notice-settings' }],
     };
   }

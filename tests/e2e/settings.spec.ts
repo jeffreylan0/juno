@@ -28,13 +28,13 @@ test('the sections, in order, and every change saves as it is made', async ({ co
   await options.getByTestId('default-prompt').fill('Solve it.');
   await options.getByTestId('blocked-sites').fill('Exam.Example.edu\nportal.school.org');
   await options.getByLabel('Let me adjust it first').check();
-  await options.getByLabel('Ask right away, screenshots only').check();
+  await options.getByLabel('Ask right away').check();
   await expect
     .poll(async () => {
       const s = await stored(serviceWorker);
       return { prompt: s?.defaultPrompt, blocked: s?.blockedSites, adjust: s?.adjustBox, send: s?.sendBehavior };
     })
-    .toEqual({ prompt: 'Solve it.', blocked: ['exam.example.edu', 'portal.school.org'], adjust: true, send: 'auto-box' });
+    .toEqual({ prompt: 'Solve it.', blocked: ['exam.example.edu', 'portal.school.org'], adjust: true, send: 'auto' });
 
   // Reloading shows what was saved; the blank macro draft is gone.
   await options.reload();

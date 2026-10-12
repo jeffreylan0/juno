@@ -10,7 +10,6 @@
 mod capture;
 mod crop;
 mod geometry;
-mod read;
 mod store;
 #[cfg(feature = "test-hook")]
 mod testhook;
@@ -127,17 +126,9 @@ fn image_chat_ids(state: State<Shared>) -> Vec<String> {
 
 // ── Windows ──────────────────────────────────────────────────────────────
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OverlayPlace {
-    display: String,
-    scale: f64,
-}
-
 #[tauri::command(async)]
-fn overlay_show(app: AppHandle, state: State<Shared>, focus: bool) -> Res<Option<OverlayPlace>> {
-    let shown = wm::show_overlay(&app, &state.overlay, focus).map_err(err)?;
-    Ok(shown.map(|d| OverlayPlace { display: d.name, scale: d.scale }))
+fn overlay_show(app: AppHandle, state: State<Shared>, focus: bool) -> Res<()> {
+    wm::show_overlay(&app, &state.overlay, focus).map_err(err)
 }
 
 #[tauri::command(async)]
@@ -285,31 +276,6 @@ async fn capture_selection(app: AppHandle, state: State<'_, Shared>, request: Cr
     .map_err(CaptureFailure::from)
 }
 
-#[derive(Serialize)]
-struct ScreenRead {
-    lines: Vec<read::Line>,
-    windows: Vec<read::WindowFrame>,
-}
-
-/// What is on the overlay's display, read on this computer, in the
-/// overlay's CSS pixels (`viewport` is its size): the text, line by line and
-/// word by word, and the other apps' windows. For Text and Element.
-#[tauri::command]
-async fn read_screen(app: AppHandle, state: State<'_, Shared>, viewport: crop::CssSize) -> Result<ScreenRead, CaptureFailure> {
-    let display = overlay_display(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let shot = shoot(&app, &display)?;
-        let lines = read::recognize(&shot).map_err(CaptureError::Failed)?;
-        let (sx, sy) = (viewport.width / shot.width().max(1) as f64, viewport.height / shot.height().max(1) as f64);
-        let space = Space::native();
-        let windows = read::windows_on(read::windows(), display.global_frame(space), space, display.scale);
-        Ok::<_, CaptureError>(ScreenRead { lines: read::to_css(lines, sx, sy), windows })
-    })
-    .await
-    .map_err(|e| CaptureFailure { code: "failed", message: e.to_string() })?
-    .map_err(CaptureFailure::from)
-}
-
 #[tauri::command(async)]
 fn screen_access() -> Access {
     #[cfg(feature = "test-hook")]
@@ -348,7 +314,6 @@ fn relaunch(app: AppHandle) {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppInfo {
-    os: &'static str,
     version: String,
     shortcut: ShortcutStatus,
     /// Started with `--hidden` (at login, say): no bar until it is asked for.
@@ -358,7 +323,6 @@ struct AppInfo {
 #[tauri::command(async)]
 fn app_info(app: AppHandle, state: State<Shared>) -> AppInfo {
     AppInfo {
-        os: std::env::consts::OS,
         version: app.package_info().version.to_string(),
         shortcut: state.shortcut.lock().unwrap().clone(),
         hidden: std::env::args().any(|a| a == "--hidden"),
@@ -387,6 +351,22 @@ fn login_item_set(app: AppHandle, on: bool) -> Res<bool> {
 }
 
 // ── The shortcut and the menu bar icon ───────────────────────────────────
+
+/// The app's own link: `selectionai://…`.
+const LINK_SCHEME: &str = "selectionai://";
+
+/// The app's link was opened. Today that is only Google sign-in coming back
+/// (`selectionai://auth/callback`, platform/browser.ts `identity`): settings,
+/// where it started, hear it and come forward.
+pub(crate) fn deep_link(app: &AppHandle, url: &str) {
+    if !url.starts_with("selectionai://auth/") {
+        return;
+    }
+    let _ = app.emit_to(wm::SETTINGS, "app:deep-link", url);
+    if let Some(w) = app.get_webview_window(wm::SETTINGS) {
+        let _ = wm::show_window(&w);
+    }
+}
 
 /// The shortcut (or the menu): the core decides what comes up, as the
 /// extension's background does on a toolbar click.
@@ -435,11 +415,18 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
 pub fn run() {
     let builder = tauri::Builder::default();
     // A second copy was started: this one stays, and brings the bar up, as
-    // opening the app does. Not in test builds, where each test runs its own
-    // copy side by side.
+    // opening the app does; or, on Windows and Linux, the app's link was
+    // opened (the system starts a copy with it). Not in test builds, where
+    // each test runs its own copy side by side.
     #[cfg(not(feature = "test-hook"))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| summon(app)));
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        match args.iter().find(|a| a.starts_with(LINK_SCHEME)) {
+            Some(url) => deep_link(app, url),
+            None => summon(app),
+        }
+    }));
     let app = builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::Builder::new().args(["--hidden"]).build())
@@ -475,6 +462,19 @@ pub fn run() {
             wm::overlay(&handle)?;
             wm::make_panel(&handle)?;
             tray(&handle)?;
+            {
+                // macOS hands the link to the running app (its Info.plist names
+                // the scheme, from tauri.conf.json); Windows and Linux learn it here.
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let links = handle.clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        deep_link(&links, url.as_str());
+                    }
+                });
+                #[cfg(all(any(windows, target_os = "linux"), not(feature = "test-hook")))]
+                let _ = app.deep_link().register_all();
+            }
             wm::start_passthrough(handle.clone(), overlay);
             Ok(())
         })
@@ -515,7 +515,6 @@ pub fn run() {
             settings_open,
             window_close,
             capture_selection,
-            read_screen,
             screen_access,
             screen_access_request,
             open_privacy_settings,

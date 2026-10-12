@@ -1,68 +1,91 @@
--- Selection AI: accounts, cloud chats and hosted-answer quotas.
+-- Selection AI: accounts, plans and subscriptions, cloud chats, hosted-answer
+-- counts.
 --
 -- Run once, as is, in the Supabase dashboard's SQL editor (or with
--- `supabase db push`). Safe to run again: every statement replaces what an
--- earlier run made.
+-- `supabase db push`). Safe to run again, and it brings a project made with
+-- an earlier version of this file up to date.
 --
 -- What it sets up:
---   entitlements  what each account may use. Nobody gets cloud storage or
---                 hosted answers until you say so (set_entitlement below).
---   chats         cloud copies of saved chats, for accounts with cloud storage.
---                 Written only through push_chats (last write wins) and
---                 never really deleted by the extension: a deleted chat
---                 becomes a tombstone so other computers delete it too.
---   screenshots   a private storage bucket, one folder per account.
---   usage         hosted answers used per month, counted by the Worker.
+--   plans          what each plan gives: hosted answers a month, cloud
+--                  storage. 'free' is every account with nothing else.
+--   entitlements   what you give an account by hand (set_entitlement): a
+--                  plan, cloud storage, a monthly count of its own.
+--   customers      which Stripe customer is which account.
+--   subscriptions  Stripe subscriptions and passes as the Worker last saw
+--                  them (its webhook). Never written by the apps.
+--   account_of()   what an account gets, all of the above together (the
+--                  most generous wins): the one place it is worked out, for
+--                  row level security, the Worker's count and the apps'
+--                  Account section (my_account()).
+--   chats          cloud copies of saved chats, for accounts with cloud storage.
+--                  Written only through push_chats (last write wins) and
+--                  never really deleted by the apps: a deleted chat becomes
+--                  a tombstone so other computers delete it too.
+--   screenshots    a private storage bucket, one folder per account.
+--   usage          hosted answers used per month, counted by the Worker.
 --
--- Signed-in students reach these tables with their own session token and the
--- publishable key; row level security keeps each account to its own rows.
--- The secret key (the Worker's) bypasses it.
+-- Signed-in students reach their own rows with their session token and the
+-- publishable key; row level security keeps each account to its own. The
+-- secret key (the Worker's) bypasses it.
 
--- ── Entitlements ─────────────────────────────────────────────────────────
+-- ── Plans ────────────────────────────────────────────────────────────────
+
+create table if not exists public.plans (
+  id text primary key check (id ~ '^[a-z][a-z0-9_-]{0,31}$'),
+  name text not null,
+  -- Hosted answers a month (0: none).
+  monthly_questions integer not null check (monthly_questions >= 0),
+  -- Cloud storage for chats and their screenshots.
+  cloud boolean not null default false,
+  -- When an account has more than one plan, the highest rank is the one shown.
+  rank integer not null default 0
+);
+-- Your edits stay: a rerun only adds plans that are missing. Change a plan
+-- in the Table Editor (or with update); Stripe prices name their plan in
+-- their metadata (supabase/README.md).
+insert into public.plans (id, name, monthly_questions, cloud, rank) values
+  ('free', 'Free', 0, false, 0),
+  ('plus', 'Plus', 600, true, 10),
+  ('unlimited', 'Unlimited', 100000, true, 100)
+on conflict (id) do nothing;
+
+alter table public.plans enable row level security;
+revoke all on public.plans from anon, authenticated;
+grant select on public.plans to anon, authenticated;
+drop policy if exists "plans are public" on public.plans;
+create policy "plans are public" on public.plans for select to anon, authenticated using (true);
+
+-- ── Entitlements: what you give by hand ──────────────────────────────────
 
 create table if not exists public.entitlements (
   user_id uuid primary key references auth.users (id) on delete cascade,
-  -- Cloud storage for chats and their screenshots.
   cloud boolean not null default false,
-  -- Hosted answers: a plan, and optionally a monthly question count that
-  -- overrides the plan's (monthly_quota below). No plan, no hosted answers.
-  plan text check (plan in ('student', 'unlimited')),
+  plan text references public.plans (id),
+  -- Overrides the plan's monthly count when set.
   monthly_questions integer check (monthly_questions >= 0),
-  -- For billing later; never shown to the student.
-  stripe_customer text unique,
-  plan_renews_at timestamptz,
   note text,
   updated_at timestamptz not null default now()
 );
+-- From the earlier version: plans were 'student' and 'unlimited', and
+-- billing lived here.
+alter table public.entitlements drop constraint if exists entitlements_plan_check;
+update public.entitlements set plan = 'plus' where plan = 'student';
+do $$ begin
+  alter table public.entitlements add constraint entitlements_plan_fkey foreign key (plan) references public.plans (id);
+exception when duplicate_object then null; end $$;
+alter table public.entitlements drop column if exists stripe_customer, drop column if exists plan_renews_at;
 
 alter table public.entitlements enable row level security;
 revoke all on public.entitlements from anon, authenticated;
-grant select (cloud, plan, monthly_questions, plan_renews_at) on public.entitlements to authenticated;
 drop policy if exists "own entitlements" on public.entitlements;
-create policy "own entitlements" on public.entitlements
-  for select to authenticated using (user_id = (select auth.uid()));
-
--- Questions a month on hosted answers.
-create or replace function public.monthly_quota(p_plan text, p_override integer)
-returns integer language sql immutable set search_path = '' as $$
-  select coalesce(p_override, case p_plan when 'student' then 600 when 'unlimited' then 100000 else 0 end)
-$$;
-
--- Whether the signed-in account has cloud storage. Security definer so the
--- policies below can ask without depending on the entitlements policy.
-create or replace function public.has_cloud()
-returns boolean language sql stable security definer set search_path = '' as $$
-  select coalesce((select e.cloud from public.entitlements e where e.user_id = (select auth.uid())), false)
-$$;
-revoke execute on function public.has_cloud() from public, anon;
-grant execute on function public.has_cloud() to authenticated;
 
 -- For you, in the SQL editor: give an account cloud storage and/or a plan.
---   select public.set_entitlement('friend@example.com');                       -- cloud storage
---   select public.set_entitlement('friend@example.com', true, 'student');      -- and 600 hosted answers a month
---   select public.set_entitlement('friend@example.com', true, 'student', 50);  -- and 50 a month instead
---   select public.set_entitlement('friend@example.com', false);                -- take it all away
--- The account must exist: they sign in once first.
+--   select public.set_entitlement('friend@example.com');                    -- cloud storage
+--   select public.set_entitlement('friend@example.com', true, 'plus');      -- and Plus's hosted answers
+--   select public.set_entitlement('friend@example.com', true, 'plus', 50);  -- and 50 a month instead
+--   select public.set_entitlement('friend@example.com', false);             -- take it all away
+-- The account must exist: they sign in once first. What they pay for
+-- (subscriptions) is separate and never changed by this.
 create or replace function public.set_entitlement(
   p_email text,
   p_cloud boolean default true,
@@ -82,6 +105,125 @@ begin
     set cloud = excluded.cloud, plan = excluded.plan, monthly_questions = excluded.monthly_questions, updated_at = now();
 end $$;
 revoke execute on function public.set_entitlement(text, boolean, text, integer) from public, anon, authenticated;
+
+-- ── Billing: Stripe customers, subscriptions and passes ──────────────────
+
+create table if not exists public.customers (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  stripe_customer text not null unique,
+  created_at timestamptz not null default now()
+);
+alter table public.customers enable row level security;
+revoke all on public.customers from anon, authenticated;
+
+create table if not exists public.subscriptions (
+  -- Stripe's subscription id (sub_…), or for a pass its Checkout Session (cs_…).
+  id text primary key,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  plan text not null references public.plans (id),
+  kind text not null check (kind in ('subscription', 'pass')),
+  -- Stripe's subscription status (active, trialing, past_due, canceled,
+  -- unpaid, incomplete, …); for a pass, paid or refunded.
+  status text not null,
+  -- The price's lookup key (or id), for showing which one.
+  price text,
+  -- When the current period ends (renews, or stops): for a pass, when it runs out.
+  period_end timestamptz,
+  cancel_at_period_end boolean not null default false,
+  -- A pass's payment, to find it again when it is refunded.
+  payment text,
+  updated_at timestamptz not null default now()
+);
+create index if not exists subscriptions_by_user on public.subscriptions (user_id);
+alter table public.subscriptions enable row level security;
+revoke all on public.subscriptions from anon, authenticated;
+
+-- ── What an account gets ─────────────────────────────────────────────────
+
+-- Everything the account has, together: the free plan, what you gave it, and
+-- what it pays for. The most generous of each wins. A subscription counts
+-- while Stripe has it on (past_due too: Stripe retries a failed payment for
+-- a while) and for three days past its period, so a late webhook never cuts
+-- anyone off; a pass counts until it runs out.
+create or replace function public.account_of(p_user uuid)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare
+  this_month date := (date_trunc('month', now() at time zone 'utc'))::date;
+  grant_row public.entitlements;
+  paid public.subscriptions;
+  latest public.subscriptions;
+  best public.plans;
+  quota integer;
+  cloud boolean;
+  used integer;
+begin
+  select * into grant_row from public.entitlements e where e.user_id = p_user;
+  select s.* into paid
+    from public.subscriptions s join public.plans pl on pl.id = s.plan
+   where s.user_id = p_user
+     and ((s.kind = 'subscription' and s.status in ('active', 'trialing', 'past_due')
+           and (s.period_end is null or s.period_end > now() - interval '3 days'))
+       or (s.kind = 'pass' and s.status = 'paid' and s.period_end > now()))
+   order by pl.rank desc, s.period_end desc nulls first
+   limit 1;
+  select s.* into latest from public.subscriptions s where s.user_id = p_user order by s.updated_at desc limit 1;
+
+  select pl.* into best from public.plans pl
+   where pl.id in ('free', coalesce(grant_row.plan, 'free'), coalesce(paid.plan, 'free'))
+   order by pl.rank desc limit 1;
+
+  select max(x.q), bool_or(x.c) into quota, cloud from (
+    select pl.monthly_questions as q, pl.cloud as c from public.plans pl where pl.id in ('free', coalesce(paid.plan, 'free'))
+    union all
+    select coalesce(grant_row.monthly_questions, pl.monthly_questions), grant_row.cloud or pl.cloud
+      from public.plans pl where grant_row.user_id is not null and pl.id = coalesce(grant_row.plan, 'free')
+  ) x;
+
+  select u.used into used from public.usage u where u.user_id = p_user and u.period = this_month;
+
+  return jsonb_build_object(
+    'plan', coalesce(best.id, 'free'),
+    'plan_name', coalesce(best.name, 'Free'),
+    'cloud', coalesce(cloud, false),
+    'quota', coalesce(quota, 0),
+    'used', coalesce(used, 0),
+    'period', this_month,
+    -- The paid plan running, else the latest one (to say a payment failed or it ended).
+    'billing', (select case when b.id is null then null else jsonb_build_object(
+        'kind', b.kind, 'status', b.status, 'plan', b.plan, 'active', paid.id is not null,
+        'period_end', b.period_end, 'cancel_at_period_end', b.cancel_at_period_end) end
+      from (select coalesce(paid.id, latest.id) as id, coalesce(paid.kind, latest.kind) as kind,
+                   coalesce(paid.status, latest.status) as status, coalesce(paid.plan, latest.plan) as plan,
+                   coalesce(paid.period_end, latest.period_end) as period_end,
+                   coalesce(paid.cancel_at_period_end, latest.cancel_at_period_end) as cancel_at_period_end) b),
+    'customer', exists (select 1 from public.customers c where c.user_id = p_user)
+  );
+end $$;
+revoke execute on function public.account_of(uuid) from public, anon, authenticated;
+grant execute on function public.account_of(uuid) to service_role;
+
+-- The signed-in account's own (the apps' Account section).
+create or replace function public.my_account()
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+begin
+  if (select auth.uid()) is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+  return public.account_of((select auth.uid()));
+end $$;
+revoke execute on function public.my_account() from public, anon;
+grant execute on function public.my_account() to authenticated;
+
+-- Whether the signed-in account has cloud storage, for the policies below.
+create or replace function public.has_cloud()
+returns boolean language sql stable security definer set search_path = '' as $$
+  select coalesce((public.account_of((select auth.uid())) ->> 'cloud')::boolean, false)
+$$;
+revoke execute on function public.has_cloud() from public, anon;
+grant execute on function public.has_cloud() to authenticated;
+
+-- From the earlier version: worked out in account_of now.
+drop function if exists public.monthly_quota(text, integer);
 
 -- ── Chats ────────────────────────────────────────────────────────────────
 
@@ -173,10 +315,7 @@ create table if not exists public.usage (
 );
 alter table public.usage enable row level security;
 revoke all on public.usage from anon, authenticated;
-grant select (period, used) on public.usage to authenticated;
 drop policy if exists "own usage" on public.usage;
-create policy "own usage" on public.usage
-  for select to authenticated using (user_id = (select auth.uid()));
 
 -- Called by the Worker (secret key) before each hosted answer: counts one if
 -- the account has any left this month, in one statement so two answers at
@@ -184,12 +323,10 @@ create policy "own usage" on public.usage
 create or replace function public.use_answer(p_user uuid)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
-  q integer;
+  q integer := coalesce((public.account_of(p_user) ->> 'quota')::integer, 0);
   u integer;
   p date := (date_trunc('month', now() at time zone 'utc'))::date;
 begin
-  select public.monthly_quota(e.plan, e.monthly_questions) into q from public.entitlements e where e.user_id = p_user;
-  q := coalesce(q, 0);
   if q > 0 then
     insert into public.usage as x (user_id, period, used) values (p_user, p, 1)
     on conflict (user_id, period) do update set used = x.used + 1 where x.used < q
@@ -214,9 +351,10 @@ grant execute on function public.refund_answer(uuid, date) to service_role;
 
 -- ── Deleting an account ──────────────────────────────────────────────────
 
--- The extension empties the account's screenshot folder first (storage
--- objects cannot be deleted from SQL), then calls this. Chats, usage and
--- entitlements go with the user.
+-- The apps have the Worker close the account's Stripe customer first (which
+-- ends its subscriptions), empty its screenshot folder (storage objects
+-- cannot be deleted from SQL), then call this. Everything else goes with
+-- the user.
 create or replace function public.delete_me()
 returns void language plpgsql security definer set search_path = '' as $$
 begin

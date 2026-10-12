@@ -68,9 +68,9 @@ export function loadPage(problem: Problem): JSDOM {
 }
 
 /**
- * Week-2 planner stand-in for Node: the selected element's text content.
- * Weeks 5–6 swap this for the real extractors (extract/visible.ts, math.ts,
- * table.ts, code.ts) run against the same jsdom document.
+ * The `planner` route's stand-in for the "cheapest exact form" idea (Gate A):
+ * the problem's text, LaTeX, table or code read from its page, instead of the
+ * screenshot the apps send.
  */
 export function plannerParts(problem: Problem): Part[] {
   const dom = loadPage(problem);
@@ -93,7 +93,7 @@ export function plannerParts(problem: Problem): Part[] {
     const lang = /language-(\w+)/.exec(code.className)?.[1];
     parts.push({ kind: 'code', code: code.textContent ?? '', language: lang });
   } else if (text) {
-    parts.push({ kind: 'text', text, source: 'element' });
+    parts.push({ kind: 'text', text, source: 'selection' });
   }
   for (const l of latex) parts.push({ kind: 'latex', latex: l, display: false, origin: 'katex' });
   return parts;
@@ -145,7 +145,7 @@ export function buildRequest(problem: Problem, route: EvalRoute, mode: Mode = 'e
     mode,
     question: problem.question,
     parts,
-    selection: { kind: 'element', rect: { x: 0, y: 0, width: 0, height: 0 }, devicePixelRatio: 1 },
+    selection: { kind: 'box', rect: { x: 0, y: 0, width: 0, height: 0 }, devicePixelRatio: 1 },
     page: { url: problem.page, title: '' },
     route: chooseRoute({ parts, mode, question: problem.question }),
     estimatedTokens: estimateTokens(parts, problem.question),

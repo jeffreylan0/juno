@@ -33,10 +33,6 @@ pub fn window_at(_point: (f64, f64)) -> Option<Source> {
     None
 }
 
-pub fn window_list() -> Vec<(Source, Rect)> {
-    Vec::new()
-}
-
 pub fn screen_access() -> Access {
     Access::NotNeeded
 }

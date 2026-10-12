@@ -4,7 +4,7 @@ The browser shortcut without the browser: the same key, bar, modes, panel, chats
 
 ## What works today
 
-This is the plan's spike, its *Box, Freeform and the panel on Mac* phase and Text and Element, built and tested on Linux (a development target only) and type-checked against the real macOS and Windows system APIs. The product owner has started it on a Mac; the checklist below is what to try there.
+This is the plan's spike and its *Box, Freeform and the panel on Mac* phase, with accounts and plans, built and tested on Linux (a development target only) and built for the real macOS and Windows system APIs. The product owner has started it on a Mac; the checklist below is what to try there.
 
 | Area | State |
 | --- | --- |
@@ -13,18 +13,17 @@ This is the plan's spike, its *Box, Freeform and the panel on Mac* phase and Tex
 | Sending | as the setting says (*After drawing a selection*): at once, or once ↑ on the bar (or Enter) is pressed, after adjusting a box or redrawing an outline |
 | Screen Recording (macOS) | until it is allowed, the bar comes up with nothing armed and a note under its row: *Turn on Screen Recording* (the system's prompt, then System Settings) or *Not now* (select anyway); once asked, the note offers *Restart* |
 | Box, Freeform | the extension's drawing code; the selection is captured natively and cropped (and masked) natively: ScreenCaptureKit on macOS 14+ with the app's own windows filtered out, GDI on Windows with the app's windows excluded by display affinity |
-| Text, Element | **off for now** (not on the bar), until it is decided how the app should reach what other apps show: see *Text and Element: the options* below. Built and tested on reading the screen on this computer (Vision on macOS, Windows.Media.Ocr on Windows): drag across words as in Live Text, or hover a paragraph or window. `VITE_SCREEN_MODES=1 pnpm desktop:dev` turns them on to try |
 | While the bar waits | clicks go through to the app beneath everywhere but on the bar and its tooltips |
-| Scrolling while armed | Box and Freeform: the wheel (or trackpad) scrolls the app beneath, under the dim, which stays put; the overlay lets the pointer through until it moves, then takes it back to select. Not while drawing or adjusting (the selection is pinned to the screen), nor in Text and Element (they work on a reading of the screen that scrolling would leave behind). The overlay page itself never scrolls or bounces, which is what made the dim flash |
+| Scrolling while armed | the wheel (or trackpad) scrolls the app beneath, under the dim, which stays put; the overlay lets the pointer through until it moves, then takes it back to select. Not while drawing or adjusting (the selection is pinned to the screen). The overlay page itself never scrolls or bounces, which is what made the dim flash |
 | Panel | the extension's side panel as a card like the bar, at the top right of the selection's display, floating above other apps. On macOS a real window with its title bar hidden, so the system rounds it and draws its shadow; its top bar drags it; its content rises in and fades out. **Made when the app starts and kept**, hidden between chats, so it shows the moment a selection is made, with a placeholder for the selection until the screenshot is in. It opens 72% of the display tall and grows down with its chat to the bottom of the screen; resized by hand, it stays so until it next opens. Its ✕ finishes the chat, as ✕ on Chrome's side panel does |
 | Chats, temporary chats, macros, model picker, answers | the extension's code; one chat at a time (one panel); a selection is named after the window it was made over ("Chapter 3.pdf · Preview") |
 | Who answers | placeholder, your own Anthropic or OpenAI key, a local model, hosted answers — every request goes out through the native core, so no browser CORS rule applies |
-| Settings | the extension's settings page in the same palette, as a card (a real window, as the panel) in the middle of the screen; opening them takes the bar and the dim away (the chat carries on; the shortcut brings the bar back). With the app's shortcut, a Permissions section on macOS (Screen Recording: status, *Open System Settings*, *Restart*, and what the app does and does not ask for), no blocked sites (blocked apps come later) and no PDF reader (not needed) |
+| Settings | the extension's settings page in the same palette, as a card (a real window, as the panel) in the middle of the screen; once it is on screen the bar and the dim go (the chat carries on; the shortcut brings the bar back). With the app's shortcut, a Permissions section on macOS (Screen Recording: status, *Open System Settings*, *Restart*, and what the app does and does not ask for), no blocked sites (blocked apps come later) and no PDF reader (not needed) |
 | Permissions | **Screen Recording only**, on macOS (Windows asks for nothing). No keychain, no accessibility access, no microphone, no input monitoring. macOS names the switch "Screen & System Audio Recording"; the app records no audio |
 | Quit | Settings → Selection AI → *Quit Selection AI*, ⌘Q in the panel or settings, or the menu bar icon's right-click menu |
 | Open at login | Settings → Selection AI, off until turned on: the app starts in the menu bar only (`--hidden`). No permission: a launch agent in `~/Library/LaunchAgents` on macOS (the system may say a background item was added), the user's Run key on Windows |
-| Storage | chats in JSON files, screenshots as image files, under the app's data folder; temporary chats in memory only; API keys and the account session in one file only your account can read (`secrets.json`, mode 0600), as the browser keeps the extension's. Not the keychain: macOS ties a keychain item to the exact build that made it, so each new build asked for the keychain password, and once refused, asked at every read |
-| Accounts | email sign-in, cloud storage and hosted answers as in the extension (same build variables). Google sign-in needs the `selectionai://` link, the next phase; until then its button is not shown |
+| Storage | chats in JSON files, screenshots as image files, under the app's data folder (`~/Library/Application Support/org.humanbn.selectionai` on macOS); temporary chats in memory only; API keys and the account session in one file only your account can read (`secrets.json`, mode 0600), as the browser keeps the extension's. Not the keychain: macOS ties a keychain item to the exact build that made it, so each new build asked for the keychain password, and once refused, asked at every read |
+| Accounts and plans | as in the extension (same build variables): email codes, and Google, which opens in the student's browser and comes back through the app's `selectionai://auth/callback` link (registered from the bundle on macOS, at first run on Windows); plans, Stripe checkout and the billing portal open in the browser too. Setup: `supabase/README.md` |
 | Escape | before anything is selected: never mind, everything goes; while selecting: stops that selection. *While the bar waits* it works only when the bar has the keyboard (after clicking it), since the app does not take Escape from the app you are working in |
 
 ## Running it
@@ -48,7 +47,7 @@ The app lives in the menu bar (no Dock icon). Opening it brings the bar straight
 
 **Try the app's permissions with `pnpm desktop:app`, not `pnpm desktop:dev`.** `desktop:dev` runs a bare binary from your terminal, so macOS asks on behalf of whatever started it ("Visual Studio Code is requesting to bypass the system private window picker…") and would give *that* app Screen Recording. Don't allow it; if you did, switch the editor off again in System Settings. `desktop:app` builds a real (debug) `Selection AI.app` and opens it, so the prompt names Selection AI and the permission is the app's alone. Signed ad hoc, each rebuild is a new app to macOS and it asks again; set `APPLE_SIGNING_IDENTITY` to your Apple Development certificate and the permission survives rebuilds.
 
-Earlier builds kept API keys in the keychain, under "Selection AI"; the app no longer reads them (reading would ask again), so enter your keys once more in Settings. The old items can be deleted in Keychain Access.
+The app's bundle id is `org.humanbn.selectionai` (round 23). Builds before that used another id, so to macOS this is a new app: Screen Recording is asked for again, and keys and chats saved by those builds stay in their old folder under `~/Library/Application Support/` (delete it once you no longer need it). Earlier still, keys were kept in the keychain under "Selection AI"; the old items can be deleted in Keychain Access.
 
 Accounts and hosted answers read the same `extension/.env.local` as the extension (`WXT_SUPABASE_URL`, `WXT_SUPABASE_KEY`, `WXT_GATEWAY_URL`).
 
@@ -68,20 +67,10 @@ Accounts and hosted answers read the same `extension/.env.local` as the extensio
 10. Click the menu bar icon: the bar comes up at once. Right-click it: Select, Settings…, Quit. No keychain prompt, ever; keys entered in Settings work for asking.
 11. Box armed, scroll with the trackpad over Preview: the page scrolls under the dim, which never flickers; moving the pointer and dragging selects as usual.
 12. A selection: the panel is there at once with a shimmering placeholder, then the screenshot. Its corners and shadow look like any Mac window's, with no halo. The gear opens settings and the bar and dim go; the macro rows show name, prompt and ✕ side by side.
+13. With the bar up, the gear → *All settings*: settings come up (in round 22 they did not: the app hid itself), then the bar and dim go.
+14. In a build with accounts (`supabase/README.md`): Settings → Account → *Continue with Google* opens the browser; after signing in it asks to open Selection AI, and settings come back signed in.
 
 Anything that fails in 1, 3, 5 or 6 is the spike's question: whether the transparent overlay holds up, or becomes a small native window.
-
-## Text and Element: the options
-
-On a page, the extension reads the DOM: the exact characters a student highlights, and real elements (a paragraph, an equation, a table). Other apps have no DOM the app can see, so the app needs another way in. What exists:
-
-| Option | What the student does | Exact? | Permission | Covers |
-| --- | --- | --- | --- | --- |
-| **A. Browser bridge** — the app and the extension talk (native messaging) | selects as today; over a browser window, the extension does Text and Element in the page's real DOM and hands the result to the app's chat | yes, as the extension (KaTeX/MathJax as LaTeX, real elements) | none (the extension must be installed) | Chrome, Edge, Firefox, Safari later: websites, web PDFs via the reader, LMS pages |
-| **B. macOS Services** — "Ask Selection AI" in the right-click menu (and a key the student can assign) | highlights text the usual way in any app, then right-click → Ask Selection AI | yes, the app's own characters | none | Text in nearly every Mac app (Preview, Pages, Word, Notes, Safari, Chrome); not Element. Windows: UI Automation reads the selection without a permission |
-| **C. Accessibility** (macOS AX, Windows UI Automation) | highlights in the app, or hovers an element, as on a page | yes, and real elements with their positions | macOS: *Accessibility* (lets the app read and control other apps); Windows: none | native apps that expose it (Preview, Pages, Word, Mail); weak in Electron and canvas apps (Figma, Google Docs' canvas) |
-| **D. Copy, then the shortcut** | ⌘C, then ⌥⇧S: the bar offers "Ask about the copied text" | yes | none today (newer macOS versions add a prompt for reading the clipboard) | every app; one more keystroke |
-| **E. Read the screen** (built, off) | drags across words on the dimmed screen, or hovers a paragraph | close, not exact (maths loses superscripts) | none beyond Screen Recording | anything visible, scans and videos included |
 
 ## How it is built
 
@@ -90,16 +79,15 @@ A small native core does only what the system must; the extension's own code run
 ```
 desktop/
 ├── src-tauri/            the native core (Rust)
-│   ├── src/lib.rs        commands, the shortcut, the menu bar icon, app setup
+│   ├── src/lib.rs        commands, the shortcut, the menu bar icon, the app's link (sign-in), app setup
 │   ├── src/wm.rs         the four windows; click-through polling for the waiting bar
 │   ├── src/geometry.rs   displays, the pointer, where the overlay and panel go (mixed scales, negative coordinates)
-│   ├── src/capture/      a display's screenshot without our windows: macos.rs (ScreenCaptureKit), windows.rs (GDI), linux.rs (X11, tests); the windows on screen
-│   ├── src/read/         the screen's text, word by word, read on this computer: macos.rs (Vision), windows.rs (Windows.Media.Ocr), linux.rs (tesseract, tests)
+│   ├── src/capture/      a display's screenshot without our windows: macos.rs (ScreenCaptureKit), windows.rs (GDI), linux.rs (X11, tests); the window a selection was made over
 │   ├── src/crop.rs       crop, freeform mask, downscale to 1568 px, PNG
 │   ├── src/store.rs      storage.local/session, screenshot files, the private secrets file
 │   └── src/testhook.rs   the end-to-end tests' hook (debug builds with --features test-hook only)
 ├── src/
-│   ├── platform/         the WebExtension API the shared code uses, over the native core (browser.ts), files for screenshots, network, links
+│   ├── platform/         the WebExtension API the shared code uses, over the native core (browser.ts, with sign-in through the app's link), files for screenshots, network, links
 │   ├── core/             the hidden core window: the extension's background, desktop half (the chat half is extension/lib/engine.ts)
 │   ├── overlay/          the overlay window: the extension's SelectionController; which parts take the pointer; the bar's notes
 │   ├── panel/, settings/ the extension's panel and settings page; the app's shortcut field and Permissions section; the panel fitting its chat
@@ -123,7 +111,7 @@ How the extension's browser APIs map:
 | the panel's port | an event-based port; the panel is only ever hidden, so it disconnects only if its page goes away |
 | `captureVisibleTab` + canvas crop | `capture_selection`: native capture, crop and mask |
 | `sidePanel.open/close` | `panel_open` / `panel_close` (and `panel_fit`, `window_show`) |
-| the page's DOM, for Text and Element | `read_screen`: the screen's text and windows, read on this computer (`extension/lib/screen-text.ts` lays them out) |
+| `identity.launchWebAuthFlow` (Google sign-in) | the browser, then the app's link `selectionai://auth/callback` back (`app:deep-link`) |
 | `fetch` from the background | `tauri-plugin-http` (the native core), for any other origin |
 
 ## Tests
@@ -131,9 +119,9 @@ How the extension's browser APIs map:
 ```bash
 pnpm test                               # includes tests/unit/desktop-browser.test.ts (the WebExtension shim, several windows in memory)
 pnpm --filter desktop test:native       # Rust: display geometry, crop and mask, storage and the secrets file
-pnpm --filter desktop test:e2e          # the real app on a virtual X display (Linux: Xvfb, xdotool, ImageMagick, tesseract-ocr)
+pnpm --filter desktop test:e2e          # the real app on a virtual X display (Linux: Xvfb, xdotool, ImageMagick)
 ```
 
-The end-to-end tests drive the app the way a student does — the real shortcut, the real pointer and keys through the X server, a real screen capture over a window with known pixels — and read the results back: the crop's pixels, the request body a (fake) local model receives, which windows show. They cover: opening the app, the shortcut and the bar, the Screen Recording note both ways, a box (exact pixels, the panel card at the top right, the bar waiting), freeform (outside painted white), Text (the fixture's sentence read off the screen and selected exactly) and Element (a paragraph, ↑ ↓, its crop) — built with `VITE_SCREEN_MODES=1`, since they are off otherwise — an answer streamed from a model, click-through while waiting, ✕, Escape both ways, closing the panel, the panel kept between chats (made at start, the placeholder, the same page next time), scrolling through while armed, two selections in one chat (the panel growing to fit them), the ghost, settings from the gear (the bar going, every field showing), Quit, and Open at login (the autostart entry written with `--hidden`, and removed).
+The end-to-end tests drive the app the way a student does — the real shortcut, the real pointer and keys through the X server, a real screen capture over a window with known pixels — and read the results back: the crop's pixels, the request body a (fake) local model receives, which windows show. They cover: opening the app, the shortcut and the bar, the Screen Recording note both ways, a box (exact pixels, the panel card at the top right, the bar waiting), freeform (outside painted white), an answer streamed from a model, click-through while waiting, ✕, Escape both ways, closing the panel, the panel kept between chats (made at start, the placeholder, the same page next time), scrolling through while armed, two selections in one chat (the panel growing to fit them), the ghost, settings from the gear (the bar going, every field showing), Quit, and Open at login (the autostart entry written with `--hidden`, and removed).
 
 On Linux the overlay draws black (a virtual display has no compositor) and the capture steps it aside; on macOS and Windows the system leaves the app's windows out instead.

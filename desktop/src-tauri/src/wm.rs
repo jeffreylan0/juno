@@ -175,8 +175,8 @@ pub fn overlay(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 
 /// Puts the overlay on the display under the pointer and shows it; `focus`
 /// also gives it the keyboard (Escape and Enter while selecting).
-pub fn show_overlay(app: &AppHandle, state: &SharedOverlay, focus: bool) -> tauri::Result<Option<Display>> {
-    let Some((display, scale)) = display_under_pointer(app) else { return Ok(None) };
+pub fn show_overlay(app: &AppHandle, state: &SharedOverlay, focus: bool) -> tauri::Result<()> {
+    let Some((display, scale)) = display_under_pointer(app) else { return Ok(()) };
     unhide(app);
     let window = overlay(app)?;
     let moved = state.lock().unwrap().display.as_ref() != Some(&display);
@@ -186,14 +186,14 @@ pub fn show_overlay(app: &AppHandle, state: &SharedOverlay, focus: bool) -> taur
     {
         let mut s = state.lock().unwrap();
         s.visible = true;
-        s.display = Some(display.clone());
+        s.display = Some(display);
         s.main_scale = scale;
     }
     window.show()?;
     if focus {
         window.set_focus()?;
     }
-    Ok(Some(display))
+    Ok(())
 }
 
 pub fn hide_overlay(app: &AppHandle, state: &SharedOverlay) -> tauri::Result<()> {
@@ -247,16 +247,24 @@ fn show_soon(window: &WebviewWindow) {
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(1500));
         if !w.is_visible().unwrap_or(true) {
-            let _ = w.show();
+            let _ = show_window(&w);
         }
     });
 }
 
-/// A card's page has drawn: its window shows, with the keyboard.
+/// A card's page has drawn: its window shows, with the keyboard. Settings
+/// on screen take the bar (and the dim) away, and only once they are on
+/// screen: with nothing of ours showing, macOS would hide the whole app
+/// (yield_focus), settings included.
 pub fn show_window(window: &WebviewWindow) -> tauri::Result<()> {
-    unhide(window.app_handle());
+    let app = window.app_handle();
+    unhide(app);
     window.show()?;
-    window.set_focus()
+    window.set_focus()?;
+    if window.label() == SETTINGS {
+        let _ = app.emit_to(CORE, "app:settings", ());
+    }
+    Ok(())
 }
 
 /// The panel, made hidden at start and kept (see the top of this file).
@@ -332,18 +340,14 @@ pub fn close_panel(app: &AppHandle) -> tauri::Result<()> {
 
 /// Opens settings (at `#section` if given), or brings them forward.
 pub fn open_settings(app: &AppHandle, hash: Option<&str>) -> tauri::Result<()> {
-    // The bar goes, and the dim with it: settings are not a selection (core/main.ts).
-    let _ = app.emit_to(CORE, "app:settings", ());
     let hash = hash.map(|h| h.trim_start_matches('#')).filter(|h| h.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
     unhide(app);
     if let Some(w) = app.get_webview_window(SETTINGS) {
         if let Some(h) = hash {
             w.eval(format!("location.hash = '#{h}'"))?;
         }
-        w.show()?;
         w.unminimize()?;
-        w.set_focus()?;
-        return Ok(());
+        return show_window(&w);
     }
     let url = match hash {
         Some(h) => format!("web/settings.html#{h}"),

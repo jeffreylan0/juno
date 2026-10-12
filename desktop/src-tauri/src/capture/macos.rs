@@ -2,8 +2,8 @@
 //! window of this app filtered out, and the window list for the source.
 //!
 //! Both ScreenCaptureKit calls answer through completion handlers on a queue
-//! of the system's; the calling thread (never the main thread: see
-//! commands.rs) waits for them with a timeout.
+//! of the system's; the calling thread (never the main thread: the commands
+//! in lib.rs run on a worker thread) waits for them with a timeout.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
@@ -148,7 +148,7 @@ pub fn window_at(point: (f64, f64)) -> Option<Source> {
 /// Other apps' normal windows on screen, front to back, with their frames
 /// (points), from the window list. Titles need Screen Recording permission,
 /// which a capture already has.
-pub fn window_list() -> Vec<(Source, Rect)> {
+fn window_list() -> Vec<(Source, Rect)> {
     let Some(list) = CGWindowListCopyWindowInfo(CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements, kCGNullWindowID) else {
         return Vec::new();
     };

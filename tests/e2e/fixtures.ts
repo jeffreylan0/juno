@@ -78,7 +78,7 @@ async function findWorker(context: BrowserContext, timeout: number): Promise<Wor
  * script and keeps track of the tab the bar is on. The tab is matched by URL
  * because the panel tab, not the fixture, may be the active one.
  */
-export async function startSelection(serviceWorker: Worker, kind: 'box' | 'text' | 'element' | 'freeform', url: string): Promise<void> {
+export async function startSelection(serviceWorker: Worker, kind: 'box' | 'freeform', url: string): Promise<void> {
   await serviceWorker.evaluate(
     async ({ kind, url }: { kind: string; url: string }) => {
       const [tab] = await chrome.tabs.query({ url });

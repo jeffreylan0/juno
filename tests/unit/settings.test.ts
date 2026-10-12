@@ -113,23 +113,13 @@ describe('sanitizeMacros', () => {
 });
 
 describe('shouldAutoSend', () => {
-  it('never sends on its own by default', () => {
-    expect(shouldAutoSend(settings(), 'box')).toBe(false);
-    expect(shouldAutoSend(settings(), 'text')).toBe(false);
+  it('never sends on its own by default; on auto, every selection goes at once', () => {
+    expect(shouldAutoSend(settings())).toBe(false);
+    expect(shouldAutoSend(settings({ sendBehavior: 'auto' }))).toBe(true);
   });
 
-  it('sends every selection on auto', () => {
-    const s = settings({ sendBehavior: 'auto' });
-    expect(shouldAutoSend(s, 'box')).toBe(true);
-    expect(shouldAutoSend(s, 'text')).toBe(true);
-  });
-
-  it('sends only screenshots on auto-box: box, freeform and element, not text', () => {
-    const s = settings({ sendBehavior: 'auto-box' });
-    expect(shouldAutoSend(s, 'box')).toBe(true);
-    expect(shouldAutoSend(s, 'freeform')).toBe(true);
-    expect(shouldAutoSend(s, 'element')).toBe(true);
-    expect(shouldAutoSend(s, 'text')).toBe(false);
+  it('turns the old "screenshots only" choice into plain auto: every selection is a screenshot now', () => {
+    expect(migrateSettings({ version: 3, sendBehavior: 'auto-box' }).sendBehavior).toBe('auto');
   });
 });
 

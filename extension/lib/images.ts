@@ -14,8 +14,8 @@
  * chat. Only if that fills up (Chrome allows 10 MB) do they fall back to
  * IndexedDB, which the chat's deletion clears just the same.
  *
- * Everything stays on this computer. When accounts arrive, this is the
- * layer that moves to cloud storage.
+ * Everything stays on this computer; with cloud storage on, account/sync.ts
+ * copies the screenshots to the account as well.
  *
  * jsdom has no IndexedDB, so unit tests get an in-memory store with the same
  * interface.

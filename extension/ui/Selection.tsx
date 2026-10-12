@@ -1,9 +1,8 @@
 /**
- * A selection in the chat: Box, Freeform and Element show their screenshot,
- * Text shows the text itself. It is exactly what the model receives — nothing
- * extra is read off the page. A selection from a page other than the one the
- * chat is named after says which page, since one chat can gather selections
- * from many.
+ * A selection in the chat: its screenshot. It is exactly what the model
+ * receives — nothing extra is read off the page. A selection from a page
+ * other than the one the chat is named after says which page, since one chat
+ * can gather selections from many.
  *
  * Screenshots sit straight on the panel's own background: no card, no frame,
  * no fill, so nothing around a selection looks like part of it. A thin
@@ -14,31 +13,27 @@
  *
  * No token counts or routing details here.
  */
-import { useState } from 'react';
 import type { ImagePart, Part, Point, SelectionKind } from '@shared/payload';
 import type { SelectionItem } from '@/lib/chats';
-import { KIND_ICON, KIND_LABEL } from '@/lib/kinds';
-import { ShapesIcon } from './icons';
+import { kindIcon, kindLabel } from '@/lib/kinds';
+import { Icon, ShapesIcon } from './icons';
 import { useImage } from './useChat';
 
 /**
  * A selection just made, before it lands: its kind, and a soft shimmer where
- * the screenshot (or text) will be.
+ * the screenshot will be.
  */
 export function IncomingSelection({ kind }: { kind: SelectionKind }) {
   return (
     <section className="selection incoming" data-testid="selection-incoming" data-kind={kind} aria-busy="true">
       <div className="selection-head">
-        <ShapesIcon shapes={KIND_ICON[kind]} />
-        <span className="selection-kind">{KIND_LABEL[kind]}</span>
+        <ShapesIcon shapes={kindIcon(kind)} />
+        <span className="selection-kind">{kindLabel(kind)}</span>
       </div>
       <div className="selection-placeholder" aria-label="Adding the selection…" />
     </section>
   );
 }
-
-/** Lines of captured text shown before "Show all". */
-const COLLAPSED_LINES = 14;
 
 export function SelectionCard({ item, onRemove, showPage = true }: { item: SelectionItem; onRemove?: () => void; showPage?: boolean }) {
   const { plan, notice } = item;
@@ -46,22 +41,14 @@ export function SelectionCard({ item, onRemove, showPage = true }: { item: Selec
   return (
     <section className="selection" data-testid="selection" data-kind={kind}>
       <div className="selection-head">
-        <ShapesIcon shapes={KIND_ICON[kind]} />
+        <ShapesIcon shapes={kindIcon(kind)} />
         <span className="selection-kind" data-testid="selection-kind">
-          {KIND_LABEL[kind]}
+          {kindLabel(kind)}
         </span>
-        {kind === 'element' && plan.selection.label && <span className="selection-sub">· {plan.selection.label}</span>}
-        {plan.selection.read && (
-          <span className="selection-sub" data-testid="selection-read" title="Read on this computer from what was on screen">
-            · read from the screen
-          </span>
-        )}
         {showPage && <PageLink url={plan.page.url} title={plan.page.title} />}
         {onRemove && (
           <button type="button" className="icon selection-remove" title="Remove this selection" aria-label="Remove this selection" data-testid="selection-remove" onClick={onRemove}>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 6l12 12M18 6 6 18" />
-            </svg>
+            <Icon name="close" />
           </button>
         )}
       </div>
@@ -70,11 +57,6 @@ export function SelectionCard({ item, onRemove, showPage = true }: { item: Selec
           {plan.parts.map((part, i) => (
             <PartPreview key={i} part={part} outline={plan.selection.outline} />
           ))}
-        </div>
-      )}
-      {plan.selection.clipped && (
-        <div className="selection-note" data-testid="selection-clipped">
-          Only the part on screen was captured. For all of it, zoom out or select it in pieces.
         </div>
       )}
       {notice && (
@@ -111,18 +93,10 @@ function PageLink({ url, title }: { url: string; title: string }) {
 }
 
 function PartPreview({ part, outline }: { part: Part; outline?: Point[] }) {
-  switch (part.kind) {
-    case 'image':
-      return <Shot part={part} outline={outline} />;
-    case 'text':
-      return <TextPreview text={part.text} />;
-    case 'latex':
-      return <pre className="selection-mono">{part.latex}</pre>;
-    case 'table':
-      return <pre className="selection-mono">{part.markdown}</pre>;
-    case 'code':
-      return <pre className="selection-mono">{part.code}</pre>;
-  }
+  // Text, LaTeX, tables and code: only in chats saved by earlier versions (and the eval).
+  if (part.kind === 'image') return <Shot part={part} outline={outline} />;
+  const text = part.kind === 'text' ? part.text : part.kind === 'latex' ? part.latex : part.kind === 'table' ? part.markdown : part.code;
+  return <pre className="selection-mono">{text}</pre>;
 }
 
 function Shot({ part, outline }: { part: ImagePart; outline?: Point[] }) {
@@ -154,28 +128,6 @@ function Shot({ part, outline }: { part: ImagePart; outline?: Point[] }) {
           </svg>
         )}
       </div>
-    </div>
-  );
-}
-
-function TextPreview({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  // Only offer "Show all" when there is actually more than fits.
-  const long = text.split('\n').length > COLLAPSED_LINES || text.length > COLLAPSED_LINES * 60;
-  return (
-    <div className="selection-text-wrap">
-      <blockquote
-        className={`selection-text${open || !long ? ' open' : ''}`}
-        style={{ WebkitLineClamp: COLLAPSED_LINES }}
-        data-testid="selection-text"
-      >
-        {text}
-      </blockquote>
-      {long && (
-        <button type="button" className="link" onClick={() => setOpen((o) => !o)}>
-          {open ? 'Show less' : 'Show all'}
-        </button>
-      )}
     </div>
   );
 }

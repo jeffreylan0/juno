@@ -2,6 +2,3 @@ html, body { margin: 0; height: 100%; background: #fff; overflow: hidden; }
 .red, .blue { position: fixed; top: 100px; width: 200px; height: 200px; }
 .red { left: 100px; background: #dc1414; }
 .blue { left: 400px; background: #1414dc; }
-.q { position: fixed; left: 100px; margin: 0; font: 34px/1.2 sans-serif; color: #111; white-space: nowrap; }
-#q1 { top: 380px; }
-#q2 { top: 500px; }

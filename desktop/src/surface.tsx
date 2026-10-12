@@ -11,10 +11,7 @@ import { AppSection } from './settings/AppSection';
 import { Permissions } from './settings/Permissions';
 import { ShortcutField } from './settings/ShortcutField';
 
-export type { Surface };
-
 export const SURFACE: Surface = {
-  kind: 'desktop',
   anywhere: 'any app',
   source: 'window',
   // A private file in the app's folder, as the browser keeps the extension's (store.rs).
@@ -27,12 +24,4 @@ export const SURFACE: Surface = {
   blockedSites: false,
   pdfViewer: false,
   ownWindow: true,
-  hideUnavailable: true,
-  // Every mode works everywhere; Text and Element on what the app reads off
-  // the screen (lib/screen-text.ts).
-  unavailable: (label) => `${label} doesn't work here`,
-  modeHints: {
-    text: 'Drag across the text',
-    element: 'Click a paragraph · ↑ ↓ to resize',
-  },
 };

@@ -189,7 +189,7 @@ test('settings show only what the chosen AI needs, check a key for free, and sav
   await keys.getByTestId('test-key').click();
   await expect(keys.getByTestId('key-status')).toContainText('✓ Works. 2 models.');
   await expect(keys.getByTestId('model-select').locator('option')).toHaveText([
-    'Automatic — Claude Haiku 4.5 for text, Claude Sonnet 5.5 for screenshots',
+    'Automatic — Claude Sonnet 5.5',
     'Claude Haiku 4.5',
     'Claude Sonnet 5.5',
   ]);

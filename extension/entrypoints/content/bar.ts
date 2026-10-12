@@ -25,7 +25,6 @@ import type { SelectionKind } from '@shared/payload';
 import { ICON_PATHS, svgIcon } from '@/lib/icons';
 import { KIND_ICON as ICONS, KIND_LABEL, KIND_ORDER } from '@/lib/kinds';
 import { send } from '@/lib/messages';
-import { SURFACE } from '@/lib/surface';
 import { getSettings, settingsItem, type Settings } from '@/lib/storage';
 import { UI_ATTR } from './scroll';
 
@@ -64,14 +63,13 @@ export const BAR_STYLE = `
   display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; cursor: pointer;
   font-size: 13px; font-weight: 500; color: var(--sai-bar-muted, #a6a39b); background: transparent; border: 0; border-radius: 9px;
 }
-.chip:hover:not(:disabled) { color: var(--sai-bar-fg, #f5f4ef); background: rgba(255, 255, 255, 0.06); }
+.chip:hover { color: var(--sai-bar-fg, #f5f4ef); background: rgba(255, 255, 255, 0.06); }
 .chip .label { display: none; }
 /* After the hover rule, so hovering the chosen mode keeps it as it is. */
 .chip[aria-pressed='true'], .chip[aria-pressed='true']:hover { color: var(--sai-bar-fg, #f5f4ef); background: rgba(255, 255, 255, 0.14); padding: 0 11px 0 9px; }
 .chip[aria-pressed='true'] .label { display: inline; }
 .chip-slot { display: flex; }
 /* Lets the pointer through to its wrapper, which carries the tooltip. */
-.chip:disabled { opacity: 0.35; pointer-events: none; }
 .chip svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 /* Send: shown when selections wait to be sent (the setting), ready once one is drawn. */
 .ask {
@@ -147,18 +145,12 @@ export const ADJUST_HINT = 'Adjust the edges, then send';
 /** Shown while a drawn outline waits to be sent. */
 export const REDRAW_HINT = 'Draw again to redo, or send';
 
-/** Shown while text selected on the screen (the app) waits to be sent. */
-export const RESELECT_HINT = 'Drag again to change it, or send';
-
 /** Between selections: nothing armed, the page is the student's. */
 export const READY_HINT = 'Pick a mode to select';
 
 const MODE_HINT: Record<SelectionKind, string> = {
   box: 'Drag over an area',
-  text: 'Highlight some text',
-  element: 'Click part of the page · ↑ ↓ to resize',
   freeform: 'Draw around it',
-  ...SURFACE.modeHints,
 };
 
 const GHOST_OFF = 'Temporary chat';
@@ -216,10 +208,7 @@ export class Bar {
   private hintFor: HTMLElement | null = null;
   private hintGoneAt = 0;
 
-  constructor(
-    private modes: SelectionKind[],
-    private handlers: BarHandlers,
-  ) {
+  constructor(private handlers: BarHandlers) {
     this.el = document.createElement('div');
     this.el.className = 'bar';
     this.el.setAttribute(UI_ATTR, 'bar');
@@ -340,7 +329,7 @@ export class Bar {
   }
 
   private hint(): string {
-    if (this.adjusting) return this.kind === 'freeform' ? REDRAW_HINT : this.kind === 'text' ? RESELECT_HINT : ADJUST_HINT;
+    if (this.adjusting) return this.kind === 'freeform' ? REDRAW_HINT : ADJUST_HINT;
     return this.kind ? MODE_HINT[this.kind] : READY_HINT;
   }
 
@@ -415,26 +404,21 @@ export class Bar {
     wrap.setAttribute('role', 'group');
     wrap.setAttribute('aria-label', 'Selection mode');
     for (const kind of KIND_ORDER) {
-      const available = this.modes.includes(kind);
-      if (!available && SURFACE.hideUnavailable) continue;
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'chip';
       chip.dataset.kind = kind;
       chip.setAttribute('aria-pressed', 'false');
-      chip.disabled = !available;
       const name = document.createElement('span');
       name.className = 'label';
       name.textContent = label(kind);
       chip.append(svgIcon(ICONS[kind]), name);
-      chip.setAttribute('aria-label', available ? label(kind) : unavailableTitle(kind));
+      chip.setAttribute('aria-label', label(kind));
       chip.addEventListener('click', () => kind !== this.kind && this.handlers.onModeChange(kind));
-      // The tooltip hangs on a wrapper: a disabled button hears no pointer,
-      // and an unavailable mode is exactly where a word on why is wanted.
       const slot = document.createElement('span');
       slot.className = 'chip-slot';
       slot.append(chip);
-      this.withHint(slot, available ? label(kind) : unavailableTitle(kind));
+      this.withHint(slot, label(kind));
       this.chips.set(kind, chip);
       wrap.append(slot);
     }
@@ -510,10 +494,6 @@ function field(name: string, options: [string, string][], value: string, onChang
   select.addEventListener('change', () => onChange(select.value));
   wrap.append(title, select);
   return wrap;
-}
-
-function unavailableTitle(kind: SelectionKind): string {
-  return SURFACE.unavailable(label(kind), kind);
 }
 
 function label(kind: SelectionKind): string {

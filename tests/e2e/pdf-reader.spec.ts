@@ -1,8 +1,9 @@
 /**
- * The PDF reader exists because the browser's own viewer keeps its text inside
- * a plugin: a content script sees an empty document there, so text selection
- * cannot work and every selection degrades to a screenshot. Rendering the same
- * file with PDF.js gives a real text layer, which is what these tests check.
+ * The PDF reader exists because the browser's own viewer is a plugin a
+ * content script cannot scroll: the page freezes while a selection is armed.
+ * Rendering the same file with PDF.js gives a page that scrolls while
+ * selecting, and a text layer, as any viewer has; these tests check both,
+ * and that a box there is a box like anywhere else.
  */
 import type { Page, Worker } from '@playwright/test';
 import { FIXTURE_ORIGIN, expect, openPanel, test } from './fixtures';
@@ -19,7 +20,7 @@ const getPlan = async (panel: Page) =>
  * action handler, which has to recognise the reader tab and broadcast to it
  * rather than trying to inject a content script.
  */
-async function armInReader(sw: Worker, reader: Page, kind: 'box' | 'text'): Promise<void> {
+async function armInReader(sw: Worker, reader: Page, kind: 'box' | 'freeform'): Promise<void> {
   const tabId = await reader.evaluate(async () => {
     const reply = (await chrome.runtime.sendMessage({ type: 'reader:hello' })) as { tabId?: number };
     return reply?.tabId;
@@ -51,32 +52,6 @@ test('the reader renders the PDF with a selectable text layer', async ({ context
   await expect(layer).toContainText('coefficient of O2');
 });
 
-test('text selection in the reader sends the real characters, not a picture', async ({ context, extensionId, serviceWorker }) => {
-  const reader = await openReader(context, extensionId);
-  const panel = await openPanel(context, extensionId);
-  await reader.bringToFront();
-
-  await armInReader(serviceWorker, reader, 'text');
-  await expect(reader.locator(OVERLAY)).toHaveCount(1, { timeout: 10_000 });
-  // All three chips are on the table here, unlike the browser's PDF viewer.
-  await expect(reader.locator(`${OVERLAY} .chip[data-kind="text"]`)).toBeEnabled();
-
-  const line = reader.locator('.textLayer span', { hasText: 'Balance the equation' }).first();
-  const box = (await line.boundingBox())!;
-  await reader.mouse.move(box.x + 2, box.y + box.height / 2);
-  await reader.mouse.down();
-  await reader.mouse.move(box.x + box.width - 2, box.y + box.height / 2, { steps: 20 });
-  await reader.mouse.up();
-
-  await expect.poll(async () => (await getPlan(panel))?.parts.length ?? 0, { timeout: 15_000 }).toBeGreaterThan(0);
-  const plan = (await getPlan(panel))!;
-  expect(plan.parts.map((p) => p.kind)).toEqual(['text']);
-  const part = plan.parts[0]!;
-  expect(part.kind === 'text' && part.text).toContain('Balance the equation');
-  // Text-only and short, so the cheap model can take it.
-  expect(plan.route).toBe('small');
-});
-
 test('a box selection in the reader sends its crop, like anywhere else', async ({ context, extensionId, serviceWorker }) => {
   const reader = await openReader(context, extensionId);
   const panel = await openPanel(context, extensionId);
@@ -94,7 +69,6 @@ test('a box selection in the reader sends its crop, like anywhere else', async (
 
   await expect.poll(async () => (await getPlan(panel))?.parts.length ?? 0, { timeout: 15_000 }).toBeGreaterThan(0);
   const plan = (await getPlan(panel))!;
-  // A box is its screenshot; the reader's win is text selection (above).
   expect(plan.parts.map((p) => p.kind)).toEqual(['image']);
 });
 

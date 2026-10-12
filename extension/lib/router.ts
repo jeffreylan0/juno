@@ -1,7 +1,8 @@
 /**
- * Route decision and the model table.
- * Text-only, single-step asks go to a small model; anything with an image, or
- * multi-step reasoning (Check mode, long derivations), goes to a large one.
+ * Route decision and the model table. Anything with an image (every
+ * selection: they are screenshots), or multi-step reasoning, goes to a large
+ * model; text-only asks go to a small one, which only the eval's experiments
+ * and chats saved by earlier versions (text selections) still make.
  */
 import type { ModelRef, Part, Plan, Route, Vendor } from '@shared/payload';
 
@@ -38,15 +39,13 @@ export const SHORT_NAMES: Record<string, string> = {
 };
 
 /** Friendly names for the model table, used where the student sees a choice. */
-export const MODEL_NAMES: Record<string, string> = {
-  'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
-  'claude-sonnet-5-5': 'Claude Sonnet 5.5',
-  'claude-opus-5-5': 'Claude Opus 5.5',
-  'claude-fable-5-1': 'Claude Fable 5.1',
-  'gpt-6-luna': 'GPT-6 Luna',
-  'gpt-6-sol': 'GPT-6 Sol',
-  'gpt-6-astra': 'GPT-6 Astra',
-};
+export const MODEL_NAMES: Record<string, string> = Object.fromEntries(
+  Object.entries(SHORT_NAMES).map(([id, name]) => [id, id.startsWith('claude-') ? `Claude ${name}` : name]),
+);
+
+/** How students know each vendor: by its assistant ("No Claude API key yet"), and by its company (keys, errors). */
+export const ASSISTANT = { anthropic: 'Claude', openai: 'ChatGPT' } as const;
+export const COMPANY = { anthropic: 'Anthropic', openai: 'OpenAI' } as const;
 
 /**
  * USD per million tokens; public list prices, September 2026. `cacheRead` is

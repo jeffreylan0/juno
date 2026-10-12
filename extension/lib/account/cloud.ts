@@ -4,8 +4,9 @@
  * security on the server keeps each account to its own; see
  * supabase/migrations for what is allowed.
  */
+import { closeBilling } from './billing';
 import { SCREENSHOT_BUCKET } from './config';
-import { AccountError, api, apiJson, signOut } from './session';
+import { AccountError, api, apiJson, refreshEntitlement, signOut } from './session';
 
 export interface CloudChatRow {
   id: string;
@@ -114,11 +115,13 @@ export async function removeAllImages(userId: string): Promise<void> {
 }
 
 /**
- * Deletes the account: its screenshots first (the database cannot), then the
- * account itself, which takes its chats, usage and entitlements with it.
- * Chats on this computer stay.
+ * Deletes the account: its billing first (nothing more is ever charged,
+ * whatever happens next), its screenshots (the database cannot), then the
+ * account itself, which takes its chats, usage and plan with it. Chats on
+ * this computer stay.
  */
 export async function deleteAccount(userId: string): Promise<void> {
+  if ((await refreshEntitlement())?.customer) await closeBilling();
   await removeAllImages(userId);
   await apiJson('/rest/v1/rpc/delete_me', { method: 'POST', body: '{}' });
   await signOut();

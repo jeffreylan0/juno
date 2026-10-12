@@ -34,6 +34,6 @@ Notes:
 ## Where the code is
 
 - `extension/entrypoints/` — background script, content script, side panel/sidebar, options page, PDF reader.
-- `extension/lib/`, `extension/ui/`, `extension/extract/` — the extension's own modules.
+- `extension/lib/`, `extension/ui/` — the extension's own modules.
 - `shared/` — the request schema and prompts shared with the (not shipped) server and eval code.
-- `worker/`, `supabase/`, `eval/`, `tests/` — the hosted-answer server, the account database schema, an evaluation harness and tests; none of it is part of the add-on.
+- `worker/`, `supabase/`, `eval/`, `tests/` — the hosted-answer and billing server, the account database schema, an evaluation harness and tests; none of it is part of the add-on.

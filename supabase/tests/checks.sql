@@ -5,15 +5,18 @@ begin if not coalesce(ok, false) then raise exception 'FAILED: %', what; end if;
 
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-00000000000a', 'a@example.com'),
-  ('00000000-0000-0000-0000-00000000000b', 'b@example.com');
-select public.set_entitlement('A@example.com');                       -- cloud only
-select public.set_entitlement('b@example.com', false, 'student', 2);  -- 2 hosted answers, no cloud
+  ('00000000-0000-0000-0000-00000000000b', 'b@example.com'),
+  ('00000000-0000-0000-0000-00000000000c', 'c@example.com'),
+  ('00000000-0000-0000-0000-00000000000d', 'd@example.com');
+select public.set_entitlement('A@example.com');                   -- cloud only
+select public.set_entitlement('b@example.com', false, null, 2);   -- 2 hosted answers, no cloud
 
 -- ── A: cloud storage ──
 set role authenticated;
 set request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000a"}';
-select pg_temp.check((select cloud from public.entitlements) = true, 'A reads own entitlement');
-select pg_temp.check((select count(*) from public.entitlements) = 1, 'A sees only own entitlement');
+select pg_temp.check((public.my_account() ->> 'cloud')::boolean, 'A has cloud storage');
+select pg_temp.check(public.my_account() ->> 'plan' = 'free' and (public.my_account() ->> 'quota')::int = 0, 'A is on the free plan');
+select pg_temp.check((select count(*) from public.plans) >= 3, 'plans are public');
 select pg_temp.check(public.push_chats('[{"id":"c1","updated_ms":100,"data":{"title":"one"}},{"id":"c2","updated_ms":100,"data":{"title":"two"}}]') = 2, 'A pushes two');
 select pg_temp.check(public.push_chats('[{"id":"c1","updated_ms":50,"data":{"title":"older"}}]') = 0, 'older write loses');
 select pg_temp.check(public.push_chats('[{"id":"c1","updated_ms":100,"data":{"title":"same"}}]') = 0, 'same-time write loses');
@@ -51,8 +54,28 @@ do $$ begin
   raise exception 'FAILED: student can change its entitlement';
 exception when insufficient_privilege then null; end $$;
 do $$ begin
-  perform stripe_customer from public.entitlements;
-  raise exception 'FAILED: stripe_customer readable';
+  perform 1 from public.entitlements;
+  raise exception 'FAILED: entitlements readable';
+exception when insufficient_privilege then null; end $$;
+do $$ begin
+  perform 1 from public.subscriptions;
+  raise exception 'FAILED: subscriptions readable';
+exception when insufficient_privilege then null; end $$;
+do $$ begin
+  perform 1 from public.customers;
+  raise exception 'FAILED: customers readable';
+exception when insufficient_privilege then null; end $$;
+do $$ begin
+  insert into public.subscriptions (id, user_id, plan, kind, status) values ('sub_x', '00000000-0000-0000-0000-00000000000a', 'plus', 'subscription', 'active');
+  raise exception 'FAILED: student can give itself a subscription';
+exception when insufficient_privilege then null; end $$;
+do $$ begin
+  perform public.account_of('00000000-0000-0000-0000-00000000000b');
+  raise exception 'FAILED: student can read another account';
+exception when insufficient_privilege then null; end $$;
+do $$ begin
+  update public.plans set monthly_questions = 999999;
+  raise exception 'FAILED: student can change a plan';
 exception when insufficient_privilege then null; end $$;
 -- Screenshots: own folder only.
 insert into storage.objects (bucket_id, name) values ('screenshots', '00000000-0000-0000-0000-00000000000a/c1/img1');
@@ -86,11 +109,46 @@ select pg_temp.check((public.use_answer('00000000-0000-0000-0000-00000000000b')-
 select pg_temp.check(not (public.use_answer('00000000-0000-0000-0000-00000000000a')->>'ok')::boolean, 'A has no plan');
 select pg_temp.check(not (public.use_answer('00000000-0000-0000-0000-0000000000ff')->>'ok')::boolean, 'unknown user has none');
 
+-- ── Subscriptions and passes (the Worker's webhook writes them) ──
+reset role;
+set role service_role;
+insert into public.customers (user_id, stripe_customer) values ('00000000-0000-0000-0000-00000000000c', 'cus_c');
+create or replace function pg_temp.acct(id text) returns jsonb language sql as $$
+  select public.account_of(('00000000-0000-0000-0000-00000000000' || id)::uuid) $$;
+select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'free' and (pg_temp.acct('c') ->> 'customer')::boolean, 'C a customer, still free');
+insert into public.subscriptions (id, user_id, plan, kind, status, price, period_end)
+values ('sub_c', '00000000-0000-0000-0000-00000000000c', 'plus', 'subscription', 'active', 'plus_monthly', now() + interval '20 days');
+select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'plus' and (pg_temp.acct('c') ->> 'quota')::int = 600 and (pg_temp.acct('c') ->> 'cloud')::boolean, 'C subscribed: Plus');
+select pg_temp.check((pg_temp.acct('c') -> 'billing' ->> 'active')::boolean and pg_temp.acct('c') -> 'billing' ->> 'kind' = 'subscription', 'C billing active');
+update public.subscriptions set status = 'past_due' where id = 'sub_c';
+select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'plus', 'a failed payment keeps Plus while Stripe retries');
+update public.subscriptions set status = 'active', period_end = now() - interval '1 day' where id = 'sub_c';
+select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'plus', 'a late renewal webhook cuts no one off');
+update public.subscriptions set period_end = now() - interval '5 days' where id = 'sub_c';
+select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'free', 'long past its period: over');
+update public.subscriptions set status = 'canceled', period_end = now() + interval '1 day' where id = 'sub_c';
+select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'free', 'canceled: free');
+select pg_temp.check(not (pg_temp.acct('c') -> 'billing' ->> 'active')::boolean and pg_temp.acct('c') -> 'billing' ->> 'status' = 'canceled', 'canceled shows as ended');
+insert into public.subscriptions (id, user_id, plan, kind, status, period_end)
+values ('cs_d', '00000000-0000-0000-0000-00000000000d', 'plus', 'pass', 'paid', now() + interval '120 days');
+select pg_temp.check(pg_temp.acct('d') ->> 'plan' = 'plus' and pg_temp.acct('d') -> 'billing' ->> 'kind' = 'pass', 'D on a pass');
+select pg_temp.check((public.use_answer('00000000-0000-0000-0000-00000000000d') ->> 'quota')::int = 600, 'a pass counts answers');
+update public.subscriptions set status = 'refunded' where id = 'cs_d';
+select pg_temp.check(pg_temp.acct('d') ->> 'plan' = 'free', 'refunded pass: free');
+update public.subscriptions set status = 'paid', period_end = now() - interval '1 minute' where id = 'cs_d';
+select pg_temp.check(pg_temp.acct('d') ->> 'plan' = 'free', 'a pass that ran out: free');
+reset role;
+select public.set_entitlement('d@example.com', false, 'unlimited');
+update public.subscriptions set period_end = now() + interval '1 day' where id = 'cs_d';
+set role service_role;
+select pg_temp.check(pg_temp.acct('d') ->> 'plan' = 'unlimited' and (pg_temp.acct('d') ->> 'quota')::int = 100000, 'the most generous plan wins');
+
 -- ── B reads its usage; deletes all chats; A deletes the account ──
 reset role;
 set role authenticated;
 set request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000b"}';
-select pg_temp.check((select used from public.usage) = 2, 'B reads own usage');
+select pg_temp.check((public.my_account() ->> 'used')::int = 2, 'B reads own usage');
+select pg_temp.check((public.my_account() ->> 'quota')::int = 2 and not (public.my_account() ->> 'cloud')::boolean, 'B: two answers, no cloud');
 set request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000a"}';
 select pg_temp.check(public.delete_all_chats() = 1, 'A deletes all (one live chat)');
 select pg_temp.check((select bool_and(deleted) from public.chats), 'all tombstones');
@@ -108,6 +166,10 @@ exception when insufficient_privilege then null; end $$;
 do $$ begin
   perform public.delete_me();
   raise exception 'FAILED: anon may call delete_me';
+exception when insufficient_privilege then null; end $$;
+do $$ begin
+  perform public.my_account();
+  raise exception 'FAILED: anon may call my_account';
 exception when insufficient_privilege then null; end $$;
 reset role;
 select 'all checks passed' as result;

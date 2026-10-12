@@ -1,8 +1,8 @@
 /**
- * PDF reader. The browser's own PDF viewer keeps its text inside a plugin, so
- * a content script sees an empty document and only a screenshot can be sent.
- * Rendering the same file with PDF.js gives a real DOM text layer, which puts
- * text and element selection — and the visible-text extractor — back in play.
+ * PDF reader. The browser's own PDF viewer is a plugin a content script
+ * cannot scroll, so the page freezes while a selection is armed. Rendering
+ * the same file with PDF.js gives a page that scrolls while selecting, and
+ * a text layer, so its text can be found and copied as in any viewer.
  *
  * Pages are placeholders sized from page 1 and rendered as they scroll into
  * view, so a 2,600-page textbook opens as fast as a one-page worksheet.
