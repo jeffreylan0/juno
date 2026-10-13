@@ -51,6 +51,26 @@ The app's bundle id is `org.humanbn.selectionai` (round 23). Builds before that 
 
 Accounts and hosted answers read the same `extension/.env.local` as the extension (`WXT_SUPABASE_URL`, `WXT_SUPABASE_KEY`, `WXT_GATEWAY_URL`).
 
+### Test builds for other people
+
+The *Test build* workflow (`.github/workflows/desktop-release.yml`) builds the installers on GitHub's Macs and Windows machines:
+
+- a universal `.dmg`, signed ad hoc;
+- a Windows setup `.exe`;
+- the Chrome extension as a `.zip`.
+
+To publish them as a prerelease on the repository's Releases page, go to *Actions → Test build → Run workflow*, or push a tag (`git tag desktop-v0.1.0-test.1 && git push origin desktop-v0.1.0-test.1`). [`TESTERS.md`](../TESTERS.md) is the release notes: installing, choosing who answers, what to look for, and how to report.
+
+These builds have no accounts, so testers bring their own key, a local model, or use placeholders. To share a key with testers:
+
+1. Make it in its own Anthropic workspace with a monthly spend limit.
+2. Send it privately.
+3. Revoke it when testing ends.
+
+Never put a key in a build.
+
+Because the builds aren't signed with a Developer ID, macOS asks testers to *Open Anyway* once per build and to allow Screen Recording again after each update. Windows SmartScreen shows *More info → Run anyway*. An Apple Developer ID ($99 a year) with notarization removes the macOS steps: set `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` as the build's environment, and Tauri signs and notarizes.
+
 ## Spike checklist (the plan's first gate)
 
 *Gate: overlay and capture work across displays and over full-screen apps, or the overlay goes native.*
