@@ -22,7 +22,7 @@ create table if not exists storage.buckets (
   id text primary key, name text, public boolean, file_size_limit bigint, allowed_mime_types text[]
 );
 create table if not exists storage.objects (
-  id uuid primary key default gen_random_uuid(), bucket_id text references storage.buckets(id), name text, owner uuid
+  id uuid primary key default gen_random_uuid(), bucket_id text references storage.buckets(id), name text, owner uuid, metadata jsonb
 );
 alter table storage.objects enable row level security;
 create or replace function storage.foldername(name text) returns text[] language sql immutable as $$
@@ -32,8 +32,27 @@ grant usage on schema storage to anon, authenticated, service_role;
 grant all on storage.objects to authenticated, service_role;
 grant execute on function storage.foldername(text) to anon, authenticated, service_role;
 
--- Supabase's default privileges: everything in public is granted to the API
--- roles unless revoked, which the migration relies on revoking.
+-- The project's Data API settings; run.sh checks both (-v recommended=on|off).
+--   off: Supabase's defaults. "Automatically expose new tables" grants
+--        everything new in public to the API roles.
+--   on:  what Supabase recommends. Nothing is granted by default, and
+--        "Enable automatic RLS" turns row level security on for every new
+--        table in public (an event trigger).
+-- The migration states every privilege and policy itself, so both pass.
 grant usage on schema public to anon, authenticated, service_role;
+\if :recommended
+create schema if not exists stub;
+create or replace function stub.rls_auto_enable() returns event_trigger language plpgsql as $$
+declare cmd record;
+begin
+  for cmd in select * from pg_event_trigger_ddl_commands() where schema_name = 'public' and object_type = 'table' loop
+    execute format('alter table %s enable row level security', cmd.object_identity);
+  end loop;
+end $$;
+drop event trigger if exists rls_auto_enable;
+create event trigger rls_auto_enable on ddl_command_end when tag in ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
+  execute function stub.rls_auto_enable();
+\else
 alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
 alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
+\endif

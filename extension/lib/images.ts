@@ -168,6 +168,10 @@ export async function storePlanImages(plan: Plan, chatId: string, temporary = fa
   return { ...plan, parts };
 }
 
+/** Pixels inline. Anything else in a chat (a chat row from the cloud is data, not code) is never fetched or sent on. */
+const INLINE_IMAGE = /^data:image\/(png|jpeg|webp|gif);base64,/;
+export const isInlineImage = (dataUrl: string) => INLINE_IMAGE.test(dataUrl);
+
 /** The pixels behind a reference, wherever they are kept; undefined if gone. */
 export async function getImage(ref: string): Promise<string | undefined> {
   if (ref.startsWith(MEMORY_REF)) {
@@ -175,7 +179,7 @@ export async function getImage(ref: string): Promise<string | undefined> {
     return ((await session().get(key))[key] as { dataUrl: string } | undefined)?.dataUrl;
   }
   if (ref.startsWith(IMAGE_REF)) return (await images().get(ref.slice(IMAGE_REF.length)))?.dataUrl;
-  return ref;
+  return isInlineImage(ref) ? ref : undefined;
 }
 
 /** Deletes the screenshots behind these parts (a selection taken back). */

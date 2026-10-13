@@ -3,10 +3,13 @@
  * sent anywhere else) and streams the answer back in the OpenAI chat-chunk
  * shape the extension already reads (openai-compat.ts), so it has one parser.
  *
- * Optionally through Cloudflare's AI Gateway (AI_GATEWAY_ID) for per-user rate
- * limits and spend analytics. Its request logging is switched off on every
- * call: hosted answers keep no copy of what was asked.
+ * What may be asked is checked before anything is spent: only the models the
+ * apps choose themselves, only text and screenshots, and no more of either
+ * than a long chat has. Optionally through Cloudflare's AI Gateway
+ * (AI_GATEWAY_ID) for spend analytics. Its request logging is switched off on
+ * every call: hosted answers keep no copy of what was asked.
  */
+import { MODEL_TABLE } from '@selection-ai/shared/models';
 import type { Env } from './index';
 
 export interface AskBody {
@@ -23,31 +26,81 @@ interface ChatMessage {
   content: string | ContentPart[];
 }
 
-/** Models hosted answers may use; anything else is refused before it costs anything. */
-export const HOSTED_MODELS: Record<'anthropic' | 'openai', RegExp> = {
-  anthropic: /^claude-(haiku|sonnet)-[a-z0-9.-]+$/,
-  openai: /^gpt-[a-z0-9.-]+$/,
+/** Models hosted answers may use: the apps' own automatic choice, nothing else. */
+export const HOSTED_MODELS: Record<'anthropic' | 'openai', string[]> = {
+  anthropic: Object.values(MODEL_TABLE.anthropic),
+  openai: Object.values(MODEL_TABLE.openai),
 };
 
+/**
+ * The most one hosted answer may carry. A long chat with its screenshots
+ * fits easily (answers are at most MAX_OUTPUT_TOKENS each); anything bigger
+ * would cost far more than a plan's answer is worth.
+ */
+export const LIMITS = { messages: 100, images: 20, imageChars: 7_000_000, textChars: 200_000 };
+
 const MAX_OUTPUT_TOKENS = 4096;
+const ROLES = ['system', 'user', 'assistant'] as const;
+/** A screenshot, inline: never a URL the vendor would fetch. */
+const IMAGE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
 
-export class BadRequest extends Error {}
+export class BadRequest extends Error {
+  constructor(
+    message: string,
+    readonly status = 400,
+    readonly code = 'bad-request',
+  ) {
+    super(message);
+  }
+}
 
+const malformed = () => new BadRequest('A message is malformed.');
+
+/**
+ * The request, rebuilt from the parts it may have: anything else (other
+ * content types, remote image URLs, extra fields) is refused, never passed on.
+ */
 export function parseAsk(raw: unknown): { vendor: 'anthropic' | 'openai'; model: string; body: AskBody } {
-  const body = raw as Partial<AskBody> | null;
-  if (!body || typeof body.model !== 'string' || !Array.isArray(body.messages) || body.messages.length === 0 || body.messages.length > 200) {
+  const body = raw as { model?: unknown; messages?: unknown; ephemeral?: unknown } | null;
+  if (!body || typeof body.model !== 'string' || !Array.isArray(body.messages) || body.messages.length === 0) {
     throw new BadRequest('A model and messages are needed.');
   }
   const [vendor, model] = body.model.split('/') as [string, string | undefined];
-  if ((vendor !== 'anthropic' && vendor !== 'openai') || !model || !HOSTED_MODELS[vendor].test(model)) {
+  if ((vendor !== 'anthropic' && vendor !== 'openai') || !model || !HOSTED_MODELS[vendor].includes(model)) {
     throw new BadRequest(`Hosted answers can't use ${body.model}.`);
   }
-  for (const m of body.messages) {
-    if (!m || !['system', 'user', 'assistant'].includes(m.role) || (typeof m.content !== 'string' && !Array.isArray(m.content))) {
-      throw new BadRequest('A message is malformed.');
+  let images = 0;
+  let text = 0;
+  const messages = (body.messages as unknown[]).map((m): ChatMessage => {
+    const { role, content } = (m ?? {}) as { role?: unknown; content?: unknown };
+    if (!ROLES.includes(role as ChatMessage['role'])) throw malformed();
+    if (typeof content === 'string') {
+      text += content.length;
+      return { role: role as ChatMessage['role'], content };
     }
+    if (!Array.isArray(content)) throw malformed();
+    return {
+      role: role as ChatMessage['role'],
+      content: content.map((p): ContentPart => {
+        const part = (p ?? {}) as { type?: unknown; text?: unknown; image_url?: { url?: unknown; detail?: unknown } };
+        if (part.type === 'text' && typeof part.text === 'string') {
+          text += part.text.length;
+          return { type: 'text', text: part.text };
+        }
+        const url = part.image_url?.url;
+        if (part.type === 'image_url' && typeof url === 'string' && url.length <= LIMITS.imageChars && IMAGE.test(url)) {
+          images += 1;
+          const detail = part.image_url?.detail;
+          return { type: 'image_url', image_url: { url, ...(detail === 'auto' || detail === 'low' || detail === 'high' ? { detail } : {}) } };
+        }
+        throw malformed();
+      }),
+    };
+  });
+  if (messages.length > LIMITS.messages || images > LIMITS.images || text > LIMITS.textChars) {
+    throw new BadRequest('This chat is too long for hosted answers. Start a new chat.', 413, 'too-large');
   }
-  return { vendor, model, body: body as AskBody };
+  return { vendor, model, body: { model: body.model, messages, ...(body.ephemeral === true ? { ephemeral: true } : {}) } };
 }
 
 function base(env: Env, vendor: 'anthropic' | 'openai'): string {

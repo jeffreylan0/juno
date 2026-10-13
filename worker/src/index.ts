@@ -22,8 +22,9 @@
  *   STRIPE_SECRET_KEY     a restricted key (supabase/README.md)
  *   STRIPE_WEBHOOK_SECRET the webhook endpoint's signing secret (whsec_…)
  */
-import { verifySession, type Session } from './auth';
+import { stillSignedIn, verifySession, type Session } from './auth';
 import { BillingError, checkout, close, donePage, portal, prices, webhook } from './billing';
+import { readBody } from './body';
 import { BadRequest, callVendor, parseAsk } from './models';
 import { refundAnswer, useAnswer } from './quota';
 import { accountOf } from './supabase';
@@ -41,9 +42,11 @@ export interface Env {
   STRIPE_PRICES: string;
   /** "on": Stripe Tax works out and adds sales tax / VAT at checkout. */
   STRIPE_TAX: string;
+  /** Hosted answers a minute per account (wrangler.toml [[ratelimits]]); absent in tests. */
+  ASK_LIMIT?: RateLimit;
 }
 
-/** A request body bigger than this is refused (a few screenshots fit easily). */
+/** A request body bigger than this is refused (a long chat's screenshots fit easily). */
 const MAX_BODY_BYTES = 20 * 1024 * 1024;
 
 const CORS = {
@@ -71,13 +74,14 @@ export default {
       if (request.method === 'GET' && url.pathname === '/me') return json(await accountOf(env, session.userId));
       if (request.method === 'POST') {
         if (url.pathname === '/ask') return await ask(request, session, env);
+        if (url.pathname.startsWith('/billing/') && !(await stillSignedIn(request, session, env))) return error(401, 'Sign in again.', 'signed-out');
         if (url.pathname === '/billing/checkout') return json(await checkout(request, session, env));
         if (url.pathname === '/billing/portal') return json(await portal(request, session, env));
         if (url.pathname === '/billing/close') return json(await close(session, env));
       }
       return error(404, 'Not found.', 'not-found');
     } catch (err) {
-      if (err instanceof BadRequest) return error(400, err.message, 'bad-request');
+      if (err instanceof BadRequest) return error(err.status, err.message, err.code);
       if (err instanceof BillingError) return error(err.status, err.message, err.code);
       console.error(err);
       return error(500, 'The hosted service had a problem. Try again.', 'server');
@@ -86,10 +90,17 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 async function ask(request: Request, session: Session, env: Env): Promise<Response> {
-  if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) {
-    return error(413, 'That selection is too large to send. Try a smaller box.', 'too-large');
+  if (env.ASK_LIMIT && !(await env.ASK_LIMIT.limit({ key: session.userId })).success) {
+    return error(429, "You're asking very quickly. Wait a minute, then try again.", 'rate-limited');
   }
-  const { vendor, model, body } = parseAsk(await request.json().catch(() => null));
+  const raw = await readBody(request, MAX_BODY_BYTES, 'That selection is too large to send. Try a smaller box.');
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // parseAsk says what is wrong.
+  }
+  const { vendor, model, body } = parseAsk(parsed);
 
   const use = await useAnswer(session, env);
   if (!use.ok) {
@@ -98,11 +109,18 @@ async function ask(request: Request, session: Session, env: Env): Promise<Respon
       : error(403, "Your account doesn't include hosted answers.", 'no-plan');
   }
 
-  const upstream = await callVendor(vendor, model, body, env);
+  let upstream: Response;
+  try {
+    upstream = await callVendor(vendor, model, body, env);
+  } catch (err) {
+    await refundAnswer(session, use.period, env);
+    throw err;
+  }
   if (!upstream.ok || !upstream.body) {
     await refundAnswer(session, use.period, env);
-    const text = await upstream.text().catch(() => '');
-    console.error(`vendor ${vendor} ${upstream.status}: ${text.slice(0, 300)}`);
+    // The vendor's error type only: its message can quote what was asked.
+    const said = (await upstream.json().catch(() => null)) as { error?: { type?: string } } | null;
+    console.error(`vendor ${vendor} ${upstream.status} ${said?.error?.type ?? ''}`);
     if (upstream.status === 429 || upstream.status === 529 || upstream.status === 503) {
       return error(503, 'The hosted service is busy right now. Try again in a minute.', 'overloaded');
     }
@@ -116,7 +134,10 @@ async function ask(request: Request, session: Session, env: Env): Promise<Respon
 }
 
 function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS } });
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...CORS },
+  });
 }
 
 /** Errors in OpenAI's shape, which the extension already reads. */

@@ -298,6 +298,39 @@ describe('cloud copies', () => {
     const b = await ready('b@example.com');
     await s.now();
     expect(fake.chats.filter((r) => r.user_id === b)).toEqual([]);
+
+    // Not even once B opens the first account's chat and changes it, or deletes it.
+    await renameChat('a-chat', 'Changed by B');
+    await settle();
+    await s.now();
+    await deleteChat('a-chat');
+    await settle();
+    await s.now();
+    expect(fake.chats.filter((r) => r.user_id === b)).toEqual([]);
+
+    // B's own new chat does go to B.
+    await chatWith('b-chat');
+    await settle();
+    await s.now();
+    expect(fake.chats.filter((r) => r.user_id === b).map((r) => r.id)).toEqual(['b-chat']);
+  });
+
+  it('an account signing back in after another gets its own chats sent again', async () => {
+    await chatWith('a-chat');
+    const a = await ready('a@example.com');
+    const s = startSync();
+    await s.now();
+    await signOut();
+    await ready('b@example.com');
+    await s.now();
+    await signOut();
+
+    await ready('a@example.com');
+    await s.now(); // pulls a-chat: A's own again
+    await renameChat('a-chat', 'A again');
+    await settle();
+    await s.now();
+    expect((fake.row(a, 'a-chat')?.data as Chat).title).toBe('A again');
   });
 
   it('a failed upload keeps the chat marked, so it goes next time', async () => {

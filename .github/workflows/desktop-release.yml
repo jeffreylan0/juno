@@ -8,7 +8,10 @@ name: Test build
 #
 # Built without WXT_SUPABASE_* or WXT_GATEWAY_URL: no accounts and no hosted
 # answers, so testers answer with their own key, a local model or
-# placeholders. No key of any kind goes into a build.
+# placeholders. No key of any kind goes into a build. No caches either: a
+# build others install never restores anything an ordinary run saved. The
+# release carries SHA256SUMS and a signed build provenance attestation
+# (`gh attestation verify <file> --repo jeffreylan0/selectionai`).
 on:
   workflow_dispatch:
   push:
@@ -44,19 +47,17 @@ jobs:
             signing: ''
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.targets }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: desktop/src-tauri -> target
-          key: release
       - run: pnpm install --frozen-lockfile
       - name: Build
         env:
@@ -69,7 +70,7 @@ jobs:
           mkdir -p out
           cp ${{ matrix.bundle }} "out/SelectionAI-$version-${{ matrix.asset }}"
           ls -l out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.asset }}
           path: out/*
@@ -79,12 +80,13 @@ jobs:
     name: Chrome extension (.zip)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter extension zip
       - name: Name the zip
@@ -92,7 +94,7 @@ jobs:
           version=$(node -p "require('./extension/package.json').version")
           mkdir -p out
           cp extension/.output/*-chrome.zip "out/SelectionAI-$version-chrome-extension.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: chrome-extension.zip
           path: out/*
@@ -101,19 +103,32 @@ jobs:
   publish:
     name: Publish the prerelease
     needs: [app, extension]
-    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    # A desktop-v* tag, or Run workflow on main: never a release from another branch.
+    if: startsWith(github.ref, 'refs/tags/desktop-v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: TESTERS.md
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: out
           merge-multiple: true
+      - name: Checksums
+        run: cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: 'out/SelectionAI-*'
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('desktop-test-{0}', github.run_number) }}
         run: |
           ls -l out

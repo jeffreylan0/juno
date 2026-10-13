@@ -64,12 +64,18 @@ pub struct PixelRect {
 pub enum CropError {
     /// Nothing left after clamping to the display.
     Empty,
+    /// A freeform outline with more points than anyone draws.
+    TooDetailed,
 }
+
+/// Points in a freeform outline: a long, slow drag makes a few thousand.
+pub const MAX_PATH_POINTS: usize = 20_000;
 
 impl std::fmt::Display for CropError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CropError::Empty => write!(f, "Selection is empty after clamping to the screen"),
+            CropError::TooDetailed => write!(f, "That outline has too many points"),
         }
     }
 }
@@ -103,6 +109,9 @@ pub fn path_to_crop(path: &[CssPoint], sx: f64, sy: f64, src: PixelRect, out: (u
 
 /// Crops `image` (a whole display, device pixels) to the request.
 pub fn crop(image: &RgbaImage, req: &CropRequest) -> Result<RgbImage, CropError> {
+    if req.path.as_ref().is_some_and(|p| p.len() > MAX_PATH_POINTS) {
+        return Err(CropError::TooDetailed);
+    }
     let (w, h) = image.dimensions();
     let sx = if req.viewport.width > 0.0 { w as f64 / req.viewport.width } else { 1.0 };
     let sy = if req.viewport.height > 0.0 { h as f64 / req.viewport.height } else { 1.0 };
@@ -220,6 +229,14 @@ mod tests {
         let out = crop(&shot, &req).unwrap();
         assert_eq!(out.dimensions(), (1568, 392));
         assert_eq!(out.get_pixel(784, 196).0, [220, 20, 20]);
+    }
+
+    #[test]
+    fn an_outline_with_more_points_than_anyone_draws_is_refused() {
+        let shot = RgbaImage::from_pixel(100, 100, RED);
+        let path = vec![CssPoint { x: 1.0, y: 1.0 }; MAX_PATH_POINTS + 1];
+        let req = CropRequest { rect: rect(0.0, 0.0, 50.0, 50.0), path: Some(path), viewport: CssSize { width: 100.0, height: 100.0 } };
+        assert_eq!(crop(&shot, &req), Err(CropError::TooDetailed));
     }
 
     #[test]

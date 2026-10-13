@@ -12,6 +12,7 @@
  *
  * Built from DOM nodes only: text is set as text, never parsed as markup.
  */
+import { privateShadow } from './page-trust';
 
 export interface TooltipAction {
   label: string;
@@ -150,7 +151,7 @@ let current: { host: HTMLElement; tip: Tooltip } | null = null;
 export function showPageTooltip(opts: TooltipOptions): Tooltip {
   dismissPageTooltip(true);
   const host = document.createElement('selection-ai-tooltip');
-  const shadow = host.attachShadow({ mode: 'open' });
+  const shadow = privateShadow(host);
   const style = document.createElement('style');
   style.textContent = `:host { all: initial; }
 .wrap { position: fixed; top: 12px; left: 0; right: 0; z-index: 2147483647; display: flex; justify-content: center; pointer-events: none; }

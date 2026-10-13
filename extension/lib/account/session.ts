@@ -8,7 +8,8 @@
  *  - Email: a one-time code (6–10 digits) sent by Supabase, typed back here.
  *
  * The session (access and refresh tokens) is kept in storage.local, like the
- * API keys: readable by the extension's own pages and background only. It is
+ * API keys, sealed (lib/sealed.ts): content scripts can read storage.local,
+ * but only the extension's own pages and background can unseal it. It is
  * never put on a web page or in the selection bar.
  *
  * Any extension context can call currentSession(); refreshes are one at a
@@ -18,6 +19,7 @@
  */
 import { storage } from '#imports';
 import { ACCOUNTS, SUPABASE_KEY, SUPABASE_URL } from './config';
+import { sealedItem } from '../sealed';
 
 export interface AccountUser {
   id: string;
@@ -64,7 +66,8 @@ export interface Billing {
   cancelAtPeriodEnd: boolean;
 }
 
-export const sessionItem = storage.defineItem<AccountSession | null>('local:account', { fallback: null });
+/** Sealed at rest in the extension (lib/sealed.ts), like the API keys. */
+export const sessionItem = sealedItem<AccountSession | null>('local:account', null);
 export const entitlementItem = storage.defineItem<Entitlement | null>('local:entitlement', { fallback: null });
 
 /** How the cloud copy of the chats is doing (account/sync.ts writes it). */
@@ -188,8 +191,11 @@ export async function signInWithGoogle(): Promise<AccountSession> {
   for (const [k, v] of new URLSearchParams(returned.hash.slice(1))) if (!params.has(k)) params.set(k, v);
   const code = params.get('code');
   if (!code) {
-    const why = params.get('error_description') ?? params.get('error');
-    throw new AccountError(why ? `Google sign-in failed: ${why}` : "Google sign-in didn't finish.", 'server');
+    // The redirect's own words are not shown: in the app, any web page can
+    // open selectionai://auth/callback?error_description=… while a sign-in
+    // waits, and would get its text into Settings.
+    if (params.get('error')) console.warn('[selection-ai] Google sign-in failed:', params.get('error'));
+    throw new AccountError("Google sign-in didn't finish. Try again.", 'server');
   }
   return await keep(toSession(await auth('token?grant_type=pkce', { auth_code: code, code_verifier: verifier })));
 }
@@ -251,7 +257,9 @@ async function signedOutLocally(): Promise<null> {
 
 /** Signs out here (chats on this computer stay) and ends the session on the server. */
 export async function signOut(): Promise<void> {
-  const s = await sessionItem.getValue();
+  // A fresh token first: the server ends the session (and its refresh token)
+  // only for a token it still accepts, and the stored one has usually run out.
+  const s = await currentSession().catch(() => null);
   await signedOutLocally();
   if (s) await auth('logout?scope=local', {}, s.accessToken).catch(() => {});
 }

@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { INDEX_KEY, chatKey, getChat, listChats, type Chat, type ChatSummary } from '@/lib/chats';
 import { currentKey, getCurrent, type Current } from '@/lib/current';
-import { getImage, isImageRef } from '@/lib/images';
+import { getImage, isImageRef, isInlineImage } from '@/lib/images';
 import { PANEL_PORT, type PanelPortMsg } from '@/lib/messages';
 import { STATUS_KEY, type AiStatus } from '@/lib/status';
 
@@ -188,10 +188,11 @@ const pixels = new Map<string, string>();
  */
 export function useImage(dataUrl: string): string | null | undefined {
   const ref = isImageRef(dataUrl) ? dataUrl : null;
-  const [src, setSrc] = useState<string | null | undefined>(ref ? pixels.get(ref) : dataUrl);
+  const inline = isInlineImage(dataUrl) ? dataUrl : null;
+  const [src, setSrc] = useState<string | null | undefined>(ref ? pixels.get(ref) : inline);
   useEffect(() => {
     if (!ref) {
-      setSrc(dataUrl);
+      setSrc(inline);
       return;
     }
     if (pixels.has(ref)) {

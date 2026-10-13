@@ -54,9 +54,15 @@ test('a key can be removed, and an edit made just before switching is kept', asy
   await expect(input).toHaveValue('sk-ant-old');
   await input.fill('');
   await input.blur();
+  // Keys are sealed at rest (lib/sealed.ts): what is stored never shows a key...
   await expect
-    .poll(async () => serviceWorker.evaluate(async () => (await chrome.storage.local.get('keys')).keys?.anthropic))
-    .toBe('');
+    .poll(async () => serviceWorker.evaluate(async () => JSON.stringify((await chrome.storage.local.get('keys')).keys)))
+    .toMatch(/"sealed":1/);
+  expect(await serviceWorker.evaluate(async () => JSON.stringify(await chrome.storage.local.get(null)))).not.toContain('sk-ant');
+  // ...and the settings page, which can open it, shows it gone.
+  await options.reload();
+  await options.getByTestId('answer-claude').click();
+  await expect(options.getByTestId('key-input')).toHaveValue('');
 
   // A server address typed and then left at once for another choice is still saved.
   await options.getByTestId('answer-local').click();

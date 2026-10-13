@@ -26,7 +26,11 @@
 --
 -- Signed-in students reach their own rows with their session token and the
 -- publishable key; row level security keeps each account to its own. The
--- secret key (the Worker's) bypasses it.
+-- secret key (the Worker's) bypasses it, so it is granted only what the
+-- Worker uses. Every privilege is stated here, so the result is the same
+-- whether the Data API's "Automatically expose new tables" is on or off.
+
+grant usage on schema public to anon, authenticated, service_role;
 
 -- ── Plans ────────────────────────────────────────────────────────────────
 
@@ -50,8 +54,8 @@ insert into public.plans (id, name, monthly_questions, cloud, rank) values
 on conflict (id) do nothing;
 
 alter table public.plans enable row level security;
-revoke all on public.plans from anon, authenticated;
-grant select on public.plans to anon, authenticated;
+revoke all on public.plans from anon, authenticated, service_role;
+grant select on public.plans to anon, authenticated, service_role;
 drop policy if exists "plans are public" on public.plans;
 create policy "plans are public" on public.plans for select to anon, authenticated using (true);
 
@@ -76,7 +80,7 @@ exception when duplicate_object then null; end $$;
 alter table public.entitlements drop column if exists stripe_customer, drop column if exists plan_renews_at;
 
 alter table public.entitlements enable row level security;
-revoke all on public.entitlements from anon, authenticated;
+revoke all on public.entitlements from anon, authenticated, service_role;
 drop policy if exists "own entitlements" on public.entitlements;
 
 -- For you, in the SQL editor: give an account cloud storage and/or a plan.
@@ -104,7 +108,7 @@ begin
   on conflict (user_id) do update
     set cloud = excluded.cloud, plan = excluded.plan, monthly_questions = excluded.monthly_questions, updated_at = now();
 end $$;
-revoke execute on function public.set_entitlement(text, boolean, text, integer) from public, anon, authenticated;
+revoke execute on function public.set_entitlement(text, boolean, text, integer) from public, anon, authenticated, service_role;
 
 -- ── Billing: Stripe customers, subscriptions and passes ──────────────────
 
@@ -114,7 +118,8 @@ create table if not exists public.customers (
   created_at timestamptz not null default now()
 );
 alter table public.customers enable row level security;
-revoke all on public.customers from anon, authenticated;
+revoke all on public.customers from anon, authenticated, service_role;
+grant select, insert, update, delete on public.customers to service_role;
 
 create table if not exists public.subscriptions (
   -- Stripe's subscription id (sub_…), or for a pass its Checkout Session (cs_…).
@@ -136,7 +141,8 @@ create table if not exists public.subscriptions (
 );
 create index if not exists subscriptions_by_user on public.subscriptions (user_id);
 alter table public.subscriptions enable row level security;
-revoke all on public.subscriptions from anon, authenticated;
+revoke all on public.subscriptions from anon, authenticated, service_role;
+grant select, insert, update on public.subscriptions to service_role;
 
 -- ── What an account gets ─────────────────────────────────────────────────
 
@@ -162,7 +168,7 @@ begin
     from public.subscriptions s join public.plans pl on pl.id = s.plan
    where s.user_id = p_user
      and ((s.kind = 'subscription' and s.status in ('active', 'trialing', 'past_due')
-           and (s.period_end is null or s.period_end > now() - interval '3 days'))
+           and s.period_end > now() - interval '3 days')
        or (s.kind = 'pass' and s.status = 'paid' and s.period_end > now()))
    order by pl.rank desc, s.period_end desc nulls first
    limit 1;
@@ -211,7 +217,7 @@ begin
   end if;
   return public.account_of((select auth.uid()));
 end $$;
-revoke execute on function public.my_account() from public, anon;
+revoke execute on function public.my_account() from public, anon, service_role;
 grant execute on function public.my_account() to authenticated;
 
 -- Whether the signed-in account has cloud storage, for the policies below.
@@ -219,7 +225,7 @@ create or replace function public.has_cloud()
 returns boolean language sql stable security definer set search_path = '' as $$
   select coalesce((public.account_of((select auth.uid())) ->> 'cloud')::boolean, false)
 $$;
-revoke execute on function public.has_cloud() from public, anon;
+revoke execute on function public.has_cloud() from public, anon, service_role;
 grant execute on function public.has_cloud() to authenticated;
 
 -- From the earlier version: worked out in account_of now.
@@ -247,49 +253,71 @@ create table if not exists public.chats (
 create index if not exists chats_by_sync on public.chats (user_id, synced_at);
 
 alter table public.chats enable row level security;
-revoke all on public.chats from anon, authenticated;
-grant select, insert, update on public.chats to authenticated;
+-- Read directly; written only through push_chats and delete_all_chats, which
+-- enforce what a policy can't (how much an account may keep).
+revoke all on public.chats from anon, authenticated, service_role;
+grant select on public.chats to authenticated;
 drop policy if exists "read own chats" on public.chats;
 create policy "read own chats" on public.chats
   for select to authenticated using (user_id = (select auth.uid()));
--- Saving needs cloud storage; deleting (a tombstone) never does, so chats can
--- always be removed.
 drop policy if exists "add own chats" on public.chats;
-create policy "add own chats" on public.chats
-  for insert to authenticated
-  with check (user_id = (select auth.uid()) and (deleted or (select public.has_cloud())));
 drop policy if exists "change own chats" on public.chats;
-create policy "change own chats" on public.chats
-  for update to authenticated
-  using (user_id = (select auth.uid()))
-  with check (user_id = (select auth.uid()) and (deleted or (select public.has_cloud())));
 
--- Saves up to 50 chats (or tombstones) at once. A row older than what is
--- already here changes nothing. Returns how many rows changed.
+-- What one account may keep in the cloud: far more than the apps ever make
+-- (they keep at most 100 chats a computer), far less than would fill the project.
+create or replace function public.cloud_limits()
+returns jsonb language sql immutable set search_path = '' as $$
+  select jsonb_build_object('chats', 5000, 'chat_bytes', 300000000, 'screenshots', 20000, 'screenshot_bytes', 2000000000)
+$$;
+revoke execute on function public.cloud_limits() from public, anon, authenticated, service_role;
+
+-- Saves up to 50 chats (or tombstones) at once. Saving needs cloud storage;
+-- a deletion never does, so chats can always be removed. A chat older than
+-- what is already here changes nothing; a deletion always takes effect (and
+-- counts as newer, whatever the deleting computer's clock said). Returns how
+-- many rows changed.
 create or replace function public.push_chats(p_rows jsonb)
-returns integer language plpgsql security invoker set search_path = '' as $$
+returns integer language plpgsql security definer set search_path = '' as $$
 declare
+  uid uuid := (select auth.uid());
+  lim jsonb := public.cloud_limits();
   n integer;
 begin
+  if uid is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
   if jsonb_typeof(p_rows) is distinct from 'array' or jsonb_array_length(p_rows) > 50 then
     raise exception 'push_chats takes an array of at most 50 chats' using errcode = '22023';
   end if;
+  if exists (select 1 from jsonb_to_recordset(p_rows) as r (deleted boolean) where not coalesce(r.deleted, false))
+     and not public.has_cloud() then
+    raise exception 'This account has no cloud storage' using errcode = '42501';
+  end if;
+  if (select count(*) from public.chats c where c.user_id = uid)
+       + (select count(*) from jsonb_to_recordset(p_rows) as r (id text)
+           where not exists (select 1 from public.chats c where c.user_id = uid and c.id = r.id)) > (lim ->> 'chats')::bigint
+     or (select coalesce(sum(pg_column_size(c.data)), 0) from public.chats c where c.user_id = uid) > (lim ->> 'chat_bytes')::bigint then
+    raise exception 'Cloud storage is full' using errcode = '54000';
+  end if;
   insert into public.chats as c (user_id, id, updated_ms, deleted, data, synced_at)
-  select (select auth.uid()), r.id, r.updated_ms, coalesce(r.deleted, false),
+  select uid, r.id, r.updated_ms, coalesce(r.deleted, false),
          case when coalesce(r.deleted, false) then null else r.data end, clock_timestamp()
   from jsonb_to_recordset(p_rows) as r (id text, updated_ms bigint, deleted boolean, data jsonb)
+  -- A deletion of a chat the cloud never had: nothing to tell anyone.
+  where not coalesce(r.deleted, false) or exists (select 1 from public.chats x where x.user_id = uid and x.id = r.id)
   on conflict (user_id, id) do update
-    set updated_ms = excluded.updated_ms, deleted = excluded.deleted, data = excluded.data, synced_at = clock_timestamp()
-    where excluded.updated_ms > c.updated_ms;
+    set updated_ms = case when excluded.deleted then greatest(c.updated_ms + 1, excluded.updated_ms) else excluded.updated_ms end,
+        deleted = excluded.deleted, data = excluded.data, synced_at = clock_timestamp()
+    where excluded.updated_ms > c.updated_ms or (excluded.deleted and not c.deleted);
   get diagnostics n = row_count;
   return n;
 end $$;
-revoke execute on function public.push_chats(jsonb) from public, anon;
+revoke execute on function public.push_chats(jsonb) from public, anon, service_role;
 grant execute on function public.push_chats(jsonb) to authenticated;
 
 -- "Delete all chats": every chat of this account becomes a tombstone.
 create or replace function public.delete_all_chats()
-returns integer language plpgsql security invoker set search_path = '' as $$
+returns integer language plpgsql security definer set search_path = '' as $$
 declare
   n integer;
 begin
@@ -301,7 +329,7 @@ begin
   get diagnostics n = row_count;
   return n;
 end $$;
-revoke execute on function public.delete_all_chats() from public, anon;
+revoke execute on function public.delete_all_chats() from public, anon, service_role;
 grant execute on function public.delete_all_chats() to authenticated;
 
 -- ── Hosted-answer usage ──────────────────────────────────────────────────
@@ -314,7 +342,7 @@ create table if not exists public.usage (
   primary key (user_id, period)
 );
 alter table public.usage enable row level security;
-revoke all on public.usage from anon, authenticated;
+revoke all on public.usage from anon, authenticated, service_role;
 drop policy if exists "own usage" on public.usage;
 
 -- Called by the Worker (secret key) before each hosted answer: counts one if
@@ -354,16 +382,26 @@ grant execute on function public.refund_answer(uuid, date) to service_role;
 -- The apps have the Worker close the account's Stripe customer first (which
 -- ends its subscriptions), empty its screenshot folder (storage objects
 -- cannot be deleted from SQL), then call this. Everything else goes with
--- the user.
+-- the user. Refused until both are done: an account deleted with billing
+-- open would keep being charged with no way to cancel, and screenshots left
+-- behind would belong to nobody.
 create or replace function public.delete_me()
 returns void language plpgsql security definer set search_path = '' as $$
+declare
+  uid uuid := (select auth.uid());
 begin
-  if (select auth.uid()) is null then
+  if uid is null then
     raise exception 'Not signed in' using errcode = '28000';
   end if;
-  delete from auth.users where id = (select auth.uid());
+  if exists (select 1 from public.customers c where c.user_id = uid) then
+    raise exception 'Billing is still open: close it first' using errcode = '55000';
+  end if;
+  if exists (select 1 from storage.objects o where o.bucket_id = 'screenshots' and (storage.foldername(o.name))[1] = uid::text) then
+    raise exception 'Screenshots are still stored: delete them first' using errcode = '55000';
+  end if;
+  delete from auth.users where id = uid;
 end $$;
-revoke execute on function public.delete_me() from public, anon;
+revoke execute on function public.delete_me() from public, anon, service_role;
 grant execute on function public.delete_me() to authenticated;
 
 -- ── Screenshots ──────────────────────────────────────────────────────────
@@ -378,10 +416,22 @@ drop policy if exists "read own screenshots" on storage.objects;
 create policy "read own screenshots" on storage.objects
   for select to authenticated
   using (bucket_id = 'screenshots' and (storage.foldername(name))[1] = (select auth.uid())::text);
+-- Whether the signed-in account may store another screenshot: cloud storage,
+-- and room left (cloud_limits()).
+create or replace function public.screenshot_room()
+returns boolean language sql stable security definer set search_path = '' as $$
+  select public.has_cloud() and count(*) < (public.cloud_limits() ->> 'screenshots')::bigint
+     and coalesce(sum((o.metadata ->> 'size')::bigint), 0) < (public.cloud_limits() ->> 'screenshot_bytes')::bigint
+  from storage.objects o
+  where o.bucket_id = 'screenshots' and (storage.foldername(o.name))[1] = (select auth.uid())::text
+$$;
+revoke execute on function public.screenshot_room() from public, anon, service_role;
+grant execute on function public.screenshot_room() to authenticated;
+
 drop policy if exists "add own screenshots" on storage.objects;
 create policy "add own screenshots" on storage.objects
   for insert to authenticated
-  with check (bucket_id = 'screenshots' and (storage.foldername(name))[1] = (select auth.uid())::text and (select public.has_cloud()));
+  with check (bucket_id = 'screenshots' and (storage.foldername(name))[1] = (select auth.uid())::text and (select public.screenshot_room()));
 drop policy if exists "replace own screenshots" on storage.objects;
 create policy "replace own screenshots" on storage.objects
   for update to authenticated

@@ -7,8 +7,9 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { verifySession } from '../../worker/src/auth';
+import { readBody } from '../../worker/src/body';
 import { checkout, form, prices, webhook } from '../../worker/src/billing';
-import { anthropicToOpenAI, parseAsk, toAnthropic } from '../../worker/src/models';
+import { LIMITS, anthropicToOpenAI, parseAsk, toAnthropic } from '../../worker/src/models';
 import type { Env } from '../../worker/src/index';
 
 const SUPABASE_URL = 'https://proj.supabase.co';
@@ -33,8 +34,9 @@ async function signer() {
   return { jwk, sign };
 }
 
+const USER = '00000000-0000-4000-8000-000000000001';
 const good = (over: Record<string, unknown> = {}) => ({
-  sub: 'user-1',
+  sub: USER,
   email: 'a@example.com',
   exp: Math.floor(Date.now() / 1000) + 600,
   iss: `${SUPABASE_URL}/auth/v1`,
@@ -55,36 +57,111 @@ describe('who is asking', () => {
     });
     const ask = (token: string) => verifySession(new Request('https://w/ask', { headers: { authorization: `Bearer ${token}` } }), env);
 
-    expect(await ask(await sign(good()))).toEqual({ userId: 'user-1', email: 'a@example.com' });
+    expect(await ask(await sign(good()))).toEqual({ userId: USER, email: 'a@example.com' });
     expect(await ask(await other.sign(good()))).toBeNull(); // someone else's key
     expect(await ask(await sign(good({ exp: 1 })))).toBeNull(); // expired
     expect(await ask(await sign(good({ iss: 'https://evil.supabase.co/auth/v1' })))).toBeNull();
     expect(await ask(await sign(good({ role: 'anon', aud: 'authenticated' })))).toBeNull(); // the publishable key's own token
+    expect(await ask(await sign(good({ sub: 'user-1' })))).toBeNull(); // not an account id
+    expect(await ask(await sign(good({ nbf: Math.floor(Date.now() / 1000) + 3600 })))).toBeNull(); // not yet valid
     expect(await ask('not.a.token')).toBeNull();
   });
 
-  it('asks Supabase about a token signed with the legacy shared secret', async () => {
+  const unsigned = (alg: string) => `${b64url(JSON.stringify({ alg, typ: 'JWT' }))}.${b64url(JSON.stringify(good()))}.sig`;
+
+  it('asks Supabase about a token signed with the legacy shared secret, only on a project that publishes no keys', async () => {
+    const legacy = { ...env, SUPABASE_URL: 'https://legacy.supabase.co' } as Env;
     const calls: string[] = [];
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
       calls.push(url);
+      if (url.endsWith('/jwks.json')) return new Response(JSON.stringify({ keys: [] }));
       expect((init?.headers as Record<string, string>).authorization).toMatch(/^Bearer /);
-      return new Response(JSON.stringify({ id: 'user-2', email: 'b@example.com' }));
+      return new Response(JSON.stringify({ id: USER, email: 'b@example.com' }));
     });
-    const token = `${b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))}.${b64url(JSON.stringify(good()))}.sig`;
-    const s = await verifySession(new Request('https://w/me', { headers: { authorization: `Bearer ${token}` } }), env);
-    expect(s).toEqual({ userId: 'user-2', email: 'b@example.com' });
-    expect(calls).toEqual([`${SUPABASE_URL}/auth/v1/user`]);
+    const s = await verifySession(new Request('https://w/me', { headers: { authorization: `Bearer ${unsigned('HS256')}` } }), legacy);
+    expect(s).toEqual({ userId: USER, email: 'b@example.com' });
+    expect(calls).toEqual(['https://legacy.supabase.co/auth/v1/.well-known/jwks.json', 'https://legacy.supabase.co/auth/v1/user']);
+  });
+
+  it('refuses junk without asking Supabase, and refetches keys for an unknown id at most once a minute', async () => {
+    const keyed = { ...env, SUPABASE_URL: 'https://keyed.supabase.co' } as Env;
+    const { jwk, sign } = await signer();
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      calls.push(url);
+      return new Response(JSON.stringify({ keys: [jwk] }));
+    });
+    const ask = (token: string) => verifySession(new Request('https://w/ask', { headers: { authorization: `Bearer ${token}` } }), keyed);
+    expect(await ask(unsigned('HS256'))).toBeNull(); // this project signs with its keys
+    expect(await ask(unsigned('none'))).toBeNull();
+    for (let i = 0; i < 5; i++) expect(await ask(await sign(good(), `unknown-${i}`))).toBeNull();
+    expect(calls.every((u) => u.endsWith('/jwks.json'))).toBe(true);
+    expect(calls.length).toBe(1);
   });
 });
 
 describe('what may be asked', () => {
   const messages = [{ role: 'user', content: 'hi' }];
-  it('allows the everyday models and refuses the rest before anything is spent', () => {
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  it('allows exactly the apps’ own models and refuses the rest before anything is spent', () => {
     expect(parseAsk({ model: 'anthropic/claude-sonnet-5-5', messages }).model).toBe('claude-sonnet-5-5');
     expect(parseAsk({ model: 'openai/gpt-6-luna', messages }).vendor).toBe('openai');
     expect(() => parseAsk({ model: 'anthropic/claude-opus-5-5', messages })).toThrow("can't use");
+    expect(() => parseAsk({ model: 'anthropic/claude-sonnet-5-5-preview', messages })).toThrow("can't use");
+    expect(() => parseAsk({ model: 'openai/gpt-6-astra', messages })).toThrow("can't use");
     expect(() => parseAsk({ model: 'mistral/large', messages })).toThrow("can't use");
-    expect(() => parseAsk({ model: 'anthropic/claude-haiku-4-5', messages: [] })).toThrow();
+    expect(() => parseAsk({ model: 'anthropic/claude-haiku-4-5-20251001', messages: [] })).toThrow();
+  });
+
+  it('passes on only text and inline screenshots, rebuilt without anything else', () => {
+    const ok = parseAsk({
+      model: 'openai/gpt-6-sol',
+      ephemeral: 'yes',
+      extra: 1,
+      messages: [{ role: 'user', name: 'x', content: [{ type: 'text', text: 'What is this?', x: 1 }, { type: 'image_url', image_url: { url: png, detail: 'high', y: 2 } }] }],
+    });
+    expect(ok.body).toEqual({
+      model: 'openai/gpt-6-sol',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'What is this?' }, { type: 'image_url', image_url: { url: png, detail: 'high' } }] }],
+    });
+    const ask = (content: unknown) => () => parseAsk({ model: 'openai/gpt-6-sol', messages: [{ role: 'user', content }] });
+    expect(ask([{ type: 'image_url', image_url: { url: 'https://evil.example/x.png' } }])).toThrow('malformed'); // the vendor would fetch it
+    expect(ask([{ type: 'image_url', image_url: { url: 'data:text/html;base64,PGI+' } }])).toThrow('malformed');
+    expect(ask([{ type: 'file', file: { file_id: 'f' } }])).toThrow('malformed');
+    expect(ask([{ type: 'input_audio', input_audio: {} }])).toThrow('malformed');
+    expect(() => parseAsk({ model: 'openai/gpt-6-sol', messages: [{ role: 'tool', content: 'x' }] })).toThrow('malformed');
+  });
+
+  it('refuses a request bigger than a long chat, as too large', () => {
+    const tooLong = (messages: unknown[]) => {
+      try {
+        parseAsk({ model: 'anthropic/claude-sonnet-5-5', messages });
+      } catch (err) {
+        return (err as { status?: number }).status;
+      }
+      return 200;
+    };
+    expect(tooLong([{ role: 'user', content: 'x'.repeat(LIMITS.textChars) }])).toBe(200);
+    expect(tooLong([{ role: 'user', content: 'x'.repeat(LIMITS.textChars + 1) }])).toBe(413);
+    expect(tooLong(Array.from({ length: LIMITS.messages + 1 }, () => ({ role: 'user', content: 'hi' })))).toBe(413);
+    expect(tooLong([{ role: 'user', content: Array.from({ length: LIMITS.images + 1 }, () => ({ type: 'image_url', image_url: { url: png } })) }])).toBe(413);
+  });
+
+  it('reads a body only up to its limit, whatever Content-Length says', async () => {
+    const chunked = (bytes: number) =>
+      new Request('https://w/ask', {
+        method: 'POST',
+        body: new ReadableStream({
+          start(c) {
+            for (let sent = 0; sent < bytes; sent += 1000) c.enqueue(new Uint8Array(Math.min(1000, bytes - sent)));
+            c.close();
+          },
+        }),
+        // @ts-expect-error Node's fetch needs this for a stream body
+        duplex: 'half',
+      });
+    expect((await readBody(chunked(5000), 5000)).length).toBe(5000);
+    await expect(readBody(chunked(5001), 5000)).rejects.toMatchObject({ status: 413 });
   });
 });
 
@@ -192,7 +269,7 @@ describe('billing', () => {
     });
     const req = await signed({
       type: 'checkout.session.completed',
-      data: { object: { id: 'cs_1', mode: 'subscription', customer: 'cus_1', client_reference_id: 'user-1', subscription: 'sub_1', metadata: {} } },
+      data: { object: { id: 'cs_1', mode: 'subscription', customer: 'cus_1', client_reference_id: 'user-1', subscription: 'sub_1', metadata: { user_id: 'user-1' } } },
     });
     expect((await webhook(req, billingEnv())).status).toBe(200);
     expect(saved(calls, 'customers')).toEqual([{ user_id: 'user-1', stripe_customer: 'cus_1' }]);
@@ -229,25 +306,53 @@ describe('billing', () => {
     expect(saved(calls, 'subscriptions')).toEqual([expect.objectContaining({ user_id: 'user-9', status: 'canceled', price: 'price_1', period_end: new Date(1_800_000_000_000).toISOString() })]);
   });
 
-  it('a paid pass runs pass_days from the purchase, and a full refund ends it', async () => {
-    const calls = fakeServices({});
-    const created = 1_700_000_000;
-    await webhook(
-      await signed({
-        type: 'checkout.session.completed',
-        data: {
-          object: { id: 'cs_2', mode: 'payment', created, customer: 'cus_2', client_reference_id: 'user-2', payment_intent: 'pi_2', payment_status: 'paid', metadata: { plan: 'plus', pass_days: '120', price: 'plus_semester' } },
-        },
-      }),
-      billingEnv(),
-    );
+  const passCheckout = (metadata: Record<string, string>, client_reference_id = 'user-2') =>
+    signed({
+      type: 'checkout.session.completed',
+      data: { object: { id: 'cs_2', mode: 'payment', created: 1_700_000_000, customer: 'cus_2', client_reference_id, payment_intent: 'pi_2', payment_status: 'paid', metadata } },
+    });
+  const passMeta = { user_id: 'user-2', plan: 'plus', pass_days: '120', price: 'plus_semester' };
+
+  it('a paid pass runs pass_days from the purchase, and a full refund or a chargeback ends it', async () => {
+    const calls = fakeServices({ 'GET stripe/v1/payment_intents/pi_2': () => ({ status: 'succeeded', latest_charge: { refunded: false, disputed: false } }) });
+    await webhook(await passCheckout(passMeta), billingEnv());
     expect(saved(calls, 'subscriptions')).toEqual([
-      expect.objectContaining({ id: 'cs_2', kind: 'pass', status: 'paid', price: 'plus_semester', payment: 'pi_2', period_end: new Date((created + 120 * 86_400) * 1000).toISOString() }),
+      expect.objectContaining({ id: 'cs_2', kind: 'pass', status: 'paid', price: 'plus_semester', payment: 'pi_2', period_end: new Date((1_700_000_000 + 120 * 86_400) * 1000).toISOString() }),
     ]);
     await webhook(await signed({ type: 'charge.refunded', data: { object: { refunded: true, payment_intent: 'pi_2' } } }), billingEnv());
-    const patch = calls.find((c) => c.method === 'PATCH')!;
-    expect(patch.url.search).toBe('?kind=eq.pass&payment=eq.pi_2');
-    expect(JSON.parse(patch.body)).toMatchObject({ status: 'refunded' });
+    await webhook(await signed({ type: 'charge.dispute.created', data: { object: { payment_intent: 'pi_2', status: 'needs_response' } } }), billingEnv());
+    await webhook(await signed({ type: 'charge.dispute.closed', data: { object: { payment_intent: 'pi_2', status: 'won' } } }), billingEnv());
+    const patches = calls.filter((c) => c.method === 'PATCH').map((c) => [c.url.search, JSON.parse(c.body).status]);
+    expect(patches).toEqual([
+      ['?kind=eq.pass&payment=eq.pi_2', 'refunded'],
+      ['?kind=eq.pass&payment=eq.pi_2', 'disputed'],
+      ['?kind=eq.pass&payment=eq.pi_2&status=eq.disputed', 'paid'], // won: back on, unless refunded meanwhile
+    ]);
+  });
+
+  it('a checkout event that arrives again after a refund leaves the pass ended', async () => {
+    const calls = fakeServices({ 'GET stripe/v1/payment_intents/pi_2': () => ({ status: 'succeeded', latest_charge: { refunded: true, disputed: false } }) });
+    await webhook(await passCheckout(passMeta), billingEnv());
+    expect(saved(calls, 'subscriptions')).toEqual([expect.objectContaining({ id: 'cs_2', status: 'refunded' })]);
+  });
+
+  it('gives nothing for a checkout this Worker did not make (a Payment Link, a reference the buyer chose)', async () => {
+    const calls = fakeServices({});
+    expect((await webhook(await passCheckout({ plan: 'plus' }, 'user-2'), billingEnv())).status).toBe(200);
+    expect((await webhook(await passCheckout(passMeta, 'someone-else'), billingEnv())).status).toBe(200);
+    expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
+  });
+
+  it('an event for an account already deleted is acknowledged, not retried for days', async () => {
+    vi.stubGlobal('fetch', async (input: string) => {
+      const url = new URL(input);
+      if (url.host === 'api.stripe.com') {
+        return new Response(JSON.stringify({ id: 'sub_9', customer: 'cus_9', status: 'canceled', cancel_at_period_end: false, cancel_at: null, metadata: { user_id: 'gone' }, items: { data: [] } }));
+      }
+      if (url.pathname === '/rest/v1/subscriptions') return new Response('{"code":"23503","message":"violates foreign key constraint"}', { status: 409 });
+      return new Response('[]');
+    });
+    expect((await webhook(await signed({ type: 'customer.subscription.deleted', data: { object: { id: 'sub_9' } } }), billingEnv())).status).toBe(200);
   });
 
   it('offers the lookup keys in order, with what each plan gives', async () => {

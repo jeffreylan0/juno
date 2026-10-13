@@ -20,6 +20,7 @@
  * the browser half: tabs, the toolbar icon, the side panel, captureVisibleTab.
  */
 import type { SelectionKind } from '@shared/payload';
+import { sessionItem } from '@/lib/account/session';
 import { captureVisible, cropDataUrl } from '@/lib/capture';
 import { getChat } from '@/lib/chats';
 import {
@@ -42,9 +43,32 @@ import {
   type RuntimeMessage,
   type SelectionDoneMsg,
 } from '@/lib/messages';
-import { getSettings, lastKindItem, type Settings } from '@/lib/storage';
+import { readerUrlFor } from '@/lib/pdf-detect';
+import { getSettings, isBlockedHost, keysItem, lastKindItem, type Settings } from '@/lib/storage';
 
 const CONTENT_SCRIPT = 'content-scripts/content.js';
+
+/**
+ * What the bar on a web page may ask. Its content script shares a process
+ * with the page, so it is trusted with the selection it makes and nothing
+ * else: chats, keys, settings and the account only answer the extension's
+ * own pages (the panel, settings, the reader).
+ */
+const FROM_A_PAGE: ReadonlySet<RuntimeMessage['type']> = new Set([
+  'selection:committed',
+  'selection:done',
+  'selection:cancel',
+  'chat:finish',
+  'chat:temporary',
+  'panel:open',
+  'options:open',
+  'reader:open',
+]);
+
+/** Sent by one of the extension's own pages, not by a content script on someone else's. */
+function fromOurPages(sender: { id?: string; url?: string } | undefined): boolean {
+  return sender?.id === browser.runtime.id && !!sender.url?.startsWith(browser.runtime.getURL('/'));
+}
 
 const COMMAND_KINDS: Record<string, SelectionKind> = {
   'select-box': 'box',
@@ -84,6 +108,9 @@ export default defineBackground(() => {
   engine.start();
   void checkFileAccess();
   void restoreReaderTabs();
+  // Keys and a session stored before they were sealed (lib/sealed.ts).
+  void keysItem.reseal();
+  void sessionItem.reseal();
   // Answers used to be kept by request hash so a rerun was free; they are no
   // longer, so none outlives its chat. Clear what earlier versions stored.
   browser.runtime.onInstalled.addListener(({ reason }) => {
@@ -92,7 +119,7 @@ export default defineBackground(() => {
   });
 
   browser.runtime.onConnect.addListener((port) => {
-    if (port.name !== PANEL_PORT) return;
+    if (port.name !== PANEL_PORT || !fromOurPages(port.sender)) return;
     let windowId: number | undefined;
     port.onMessage.addListener((raw: unknown) => {
       const msg = raw as PanelPortMsg;
@@ -146,6 +173,8 @@ export default defineBackground(() => {
   browser.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
     if (!isRuntimeMessage(raw)) return;
     const msg: RuntimeMessage = raw;
+    const ours = fromOurPages(sender);
+    if (!ours && !FROM_A_PAGE.has(msg.type)) return;
     if (engine.handles(msg)) return engine.handle(msg, sendResponse);
     switch (msg.type) {
       case 'selection:committed':
@@ -174,8 +203,9 @@ export default defineBackground(() => {
         if (sender.tab?.windowId !== undefined) return reply(finishChat(sender.tab.windowId), sendResponse);
         return;
       case 'chat:temporary': {
-        // From the panel (which names its window) or the bar (whose tab does).
-        const w = msg.windowId ?? sender.tab?.windowId;
+        // From the panel (which names its window) or the bar (whose tab does:
+        // a page names no other window).
+        const w = ours ? (msg.windowId ?? sender.tab?.windowId) : sender.tab?.windowId;
         if (w === undefined) return;
         return reply(
           serial(() => setTemporary(w, msg.on)).then((current) => {
@@ -202,6 +232,12 @@ export default defineBackground(() => {
         return;
       case 'pin:watch':
         void watchForPin();
+        return;
+      case 'reader:open':
+        // Only a document the tab could load itself, into that same tab.
+        if (sender.tab?.id !== undefined && /^(https?|file):/i.test(msg.url)) {
+          void browser.tabs.update(sender.tab.id, { url: readerUrlFor(msg.url, (p) => browser.runtime.getURL(p as `/${string}`)) });
+        }
         return;
       case 'reader:hello':
         // The reader cannot know its own tab id without the tabs permission,
@@ -402,13 +438,17 @@ async function watchForPin(): Promise<void> {
  * student's choice; local files need Chrome's "Allow access to file URLs".
  */
 function unreachable(url: string, s: Pick<Settings, 'blockedSites'>): Unreachable | null {
-  if (url.startsWith(browser.runtime.getURL('/reader.html'))) return null;
+  if (url.startsWith(browser.runtime.getURL('/reader.html'))) {
+    // The reader is ours, but the PDF in it may come from a blocked site.
+    const file = safeHost(new URL(url).searchParams.get('file') ?? undefined);
+    return file && isBlockedHost(file, s.blockedSites) ? 'blocked-site' : null;
+  }
   // Not known yet (a worker just woken): let the injection try, and say so only if it fails.
   if (url.startsWith('file:')) return fileAccess !== false ? null : import.meta.env.FIREFOX ? 'restricted' : 'file-access';
   if (!/^https?:/.test(url)) return 'restricted';
   const host = safeHost(url);
   if (host && STORE_HOSTS.some((h) => host === h || url.startsWith(`https://${h}/`))) return 'restricted';
-  return host && s.blockedSites.includes(host) ? 'blocked-site' : null;
+  return host && isBlockedHost(host, s.blockedSites) ? 'blocked-site' : null;
 }
 
 /** Extension galleries, where browsers let no extension run. */

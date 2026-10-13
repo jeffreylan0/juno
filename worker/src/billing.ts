@@ -3,9 +3,10 @@
  *
  * Stripe is the source of truth for who pays; the webhook mirrors it into
  * public.subscriptions, which public.account_of() reads with everything
- * else an account has. Each subscription event is answered by reading the
- * subscription back from Stripe, so events that arrive late or out of order
- * never leave an old state behind.
+ * else an account has. Each subscription event, and each pass bought, is
+ * answered by reading its state back from Stripe, so events that arrive
+ * late, twice or out of order never leave an old state behind. Only
+ * checkouts this Worker made give a plan.
  *
  * Prices are made in the Stripe dashboard and found by their lookup keys
  * (STRIPE_PRICES, in the order shown), so a new price never needs a new
@@ -22,6 +23,7 @@
  *   POST /stripe/webhook    Stripe's events
  */
 import type { Session } from './auth';
+import { readBody } from './body';
 import type { Env } from './index';
 import { accountOf, rest, upsert } from './supabase';
 
@@ -31,6 +33,8 @@ const TOLERANCE_S = 300;
 const DEFAULT_PLAN = 'plus';
 const DEFAULT_PASS_DAYS = 120;
 const PRICES_TTL_MS = 5 * 60_000;
+/** Stripe's events are a few KB; nothing near this is real. */
+const MAX_EVENT_BYTES = 1024 * 1024;
 
 export class BillingError extends Error {
   constructor(
@@ -182,7 +186,12 @@ async function customerFor(env: Env, session: Session, create: boolean): Promise
 
 /** A Checkout page for one price on offer. */
 export async function checkout(request: Request, session: Session, env: Env): Promise<{ url: string }> {
-  const { price } = ((await request.json().catch(() => null)) ?? {}) as { price?: unknown };
+  let price: unknown;
+  try {
+    ({ price } = JSON.parse(await readBody(request, 8 * 1024)) as { price?: unknown });
+  } catch {
+    // Not a plan on offer: refused below.
+  }
   const offer = (await prices(env)).find((o) => o.key === price);
   if (!offer) throw new BillingError("That plan isn't on offer.", 404, 'no-price');
   const account = await accountOf(env, session.userId);
@@ -249,7 +258,16 @@ export function donePage(request: Request): Response {
 main{max-width:28rem;padding:2rem;text-align:center}h1{font-size:1.4rem;margin:0 0 .5rem}p{margin:0;color:#5e5d59}
 @media (prefers-color-scheme:dark){body{background:#262624;color:#faf9f5}p{color:#b7b5a9}}</style>
 <main><h1>${title}</h1><p>${line} You can close this tab.</p></main></html>`;
-  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  return new Response(html, {
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      // Fixed text only, but the page still allows nothing it doesn't use.
+      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+    },
+  });
 }
 
 // ── Stripe's events ──────────────────────────────────────────────────────
@@ -296,7 +314,7 @@ async function syncSubscription(env: Env, id: string, userHint?: string): Promis
     return;
   }
   const item = sub.items.data[0];
-  await upsert(env, 'subscriptions', 'id', {
+  await saveFor(env, userId, 'subscriptions', {
     id: sub.id,
     user_id: userId,
     plan: await knownPlan(env, item?.price.metadata.plan || sub.metadata.plan),
@@ -322,15 +340,43 @@ interface CheckoutSession {
   metadata: Record<string, string>;
 }
 
+/**
+ * Saves a row for an account, unless the account is gone: the events its
+ * deletion sets off (the closed subscription) arrive after it, and must not
+ * be retried for days.
+ */
+async function saveFor(env: Env, userId: string, table: string, row: Record<string, unknown>): Promise<void> {
+  try {
+    await upsert(env, table, 'id', row);
+  } catch (err) {
+    if (/\b23503\b/.test(String(err))) return console.warn(`${table} ${String(row.id)}: account ${userId} no longer exists`);
+    throw err;
+  }
+}
+
+interface PaymentIntent {
+  status: string;
+  latest_charge: { refunded: boolean; disputed: boolean } | null;
+}
+
+/** What a pass's payment is now, from Stripe (never the event's copy): paid, refunded or disputed. */
+async function passStatus(env: Env, paymentIntent: string | null): Promise<string> {
+  if (!paymentIntent) return 'paid';
+  const pi = await stripe<PaymentIntent>(env, 'GET', `/payment_intents/${encodeURIComponent(paymentIntent)}`, { expand: ['latest_charge'] });
+  if (pi.latest_charge?.disputed) return 'disputed';
+  if (pi.latest_charge?.refunded) return 'refunded';
+  return pi.status === 'succeeded' ? 'paid' : pi.status;
+}
+
 /** A pass bought (paid): it runs pass_days from when it was bought. */
 async function savePass(env: Env, s: CheckoutSession, userId: string): Promise<void> {
   const days = Number(s.metadata.pass_days) || DEFAULT_PASS_DAYS;
-  await upsert(env, 'subscriptions', 'id', {
+  await saveFor(env, userId, 'subscriptions', {
     id: s.id,
     user_id: userId,
     plan: await knownPlan(env, s.metadata.plan),
     kind: 'pass',
-    status: 'paid',
+    status: await passStatus(env, s.payment_intent),
     price: s.metadata.price ?? null,
     period_end: new Date((s.created + days * 86_400) * 1000).toISOString(),
     cancel_at_period_end: true,
@@ -339,10 +385,20 @@ async function savePass(env: Env, s: CheckoutSession, userId: string): Promise<v
   });
 }
 
+async function setPassStatus(env: Env, paymentIntent: unknown, status: string, from?: string): Promise<void> {
+  if (typeof paymentIntent !== 'string') return;
+  await rest(env, `subscriptions?kind=eq.pass&payment=eq.${encodeURIComponent(paymentIntent)}${from ? `&status=eq.${from}` : ''}`, {
+    method: 'PATCH',
+    headers: { prefer: 'return=minimal' },
+    body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
+  });
+}
+
 export async function webhook(request: Request, env: Env): Promise<Response> {
   const signature = request.headers.get('stripe-signature');
-  const payload = await request.text();
-  if (!signature || !(await verify(payload, signature, env.STRIPE_WEBHOOK_SECRET))) {
+  if (!signature) return new Response('Bad signature', { status: 400 });
+  const payload = await readBody(request, MAX_EVENT_BYTES);
+  if (!(await verify(payload, signature, env.STRIPE_WEBHOOK_SECRET))) {
     return new Response('Bad signature', { status: 400 });
   }
   const event = JSON.parse(payload) as { type: string; data: { object: Record<string, unknown> } };
@@ -352,8 +408,14 @@ export async function webhook(request: Request, env: Env): Promise<Response> {
     case 'checkout.session.completed':
     case 'checkout.session.async_payment_succeeded': {
       const s = obj as unknown as CheckoutSession;
-      const userId = s.client_reference_id || s.metadata?.user_id;
-      if (!userId) break;
+      // Only checkouts this Worker made (both set from the session at
+      // checkout): a Payment Link or any other integration, whose reference
+      // the buyer can choose, never gives a plan.
+      const userId = s.metadata?.user_id;
+      if (!userId || s.client_reference_id !== userId) {
+        console.warn(`checkout ${s.id}: not made by Selection AI, ignored`);
+        break;
+      }
       if (s.customer) await linkCustomer(env, userId, s.customer);
       if (s.mode === 'subscription' && s.subscription) await syncSubscription(env, s.subscription, userId);
       else if (s.mode === 'payment' && s.payment_status === 'paid') await savePass(env, s, userId);
@@ -368,13 +430,14 @@ export async function webhook(request: Request, env: Env): Promise<Response> {
       break;
     case 'charge.refunded':
       // A pass refunded in full ends at once.
-      if (obj.refunded && typeof obj.payment_intent === 'string') {
-        await rest(env, `subscriptions?kind=eq.pass&payment=eq.${encodeURIComponent(obj.payment_intent)}`, {
-          method: 'PATCH',
-          headers: { prefer: 'return=minimal' },
-          body: JSON.stringify({ status: 'refunded', updated_at: new Date().toISOString() }),
-        });
-      }
+      if (obj.refunded) await setPassStatus(env, obj.payment_intent, 'refunded');
+      break;
+    case 'charge.dispute.created':
+      // A chargeback ends a pass while it is open; one won gives it back.
+      await setPassStatus(env, obj.payment_intent, 'disputed');
+      break;
+    case 'charge.dispute.closed':
+      if (obj.status === 'won') await setPassStatus(env, obj.payment_intent, 'paid', 'disputed');
       break;
   }
   return new Response('ok');
@@ -386,7 +449,7 @@ export async function verify(payload: string, header: string, secret: string, no
   const pairs = header.split(',').map((p) => p.split('=') as [string, string]);
   const timestamp = pairs.find(([k]) => k === 't')?.[1];
   const sigs = pairs.filter(([k]) => k === 'v1').map(([, v]) => v);
-  if (!timestamp || !sigs.length || Math.abs(now / 1000 - Number(timestamp)) > TOLERANCE_S) return false;
+  if (!timestamp || !sigs.length || !Number.isFinite(Number(timestamp)) || Math.abs(now / 1000 - Number(timestamp)) > TOLERANCE_S) return false;
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${payload}`));
   const hex = Array.from(new Uint8Array(mac), (b) => b.toString(16).padStart(2, '0')).join('');

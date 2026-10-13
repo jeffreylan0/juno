@@ -55,16 +55,30 @@ async function post<T>(path: string, body: unknown = {}): Promise<T> {
   return data;
 }
 
+/** Only ever Stripe's own pages: whatever the Worker answers, nothing else is opened. */
+const STRIPE_HOSTS = ['checkout.stripe.com', 'billing.stripe.com'];
+
+function openStripe(url: unknown): void {
+  let page: URL | null = null;
+  try {
+    page = new URL(String(url));
+  } catch {
+    // Not a URL: refused below.
+  }
+  if (page?.protocol !== 'https:' || !STRIPE_HOSTS.includes(page.hostname)) {
+    throw new AccountError("The payment service answered with a page that isn't Stripe's.", 'server');
+  }
+  window.open(page.href, '_blank', 'noopener');
+}
+
 /** Opens Stripe Checkout for one price, in the browser. */
 export async function startCheckout(key: string): Promise<void> {
-  const { url } = await post<{ url: string }>('/billing/checkout', { price: key });
-  window.open(url, '_blank', 'noopener');
+  openStripe((await post<{ url: string }>('/billing/checkout', { price: key })).url);
 }
 
 /** Opens Stripe's customer portal, in the browser. */
 export async function openPortal(): Promise<void> {
-  const { url } = await post<{ url: string }>('/billing/portal');
-  window.open(url, '_blank', 'noopener');
+  openStripe((await post<{ url: string }>('/billing/portal')).url);
 }
 
 /** Ends the account's billing (its subscriptions stop at once), before the account is deleted. */

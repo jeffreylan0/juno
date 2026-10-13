@@ -235,7 +235,7 @@ impl Store {
     }
 }
 
-fn is_secret(key: &str) -> bool {
+pub fn is_secret(key: &str) -> bool {
     SECRET_KEYS.contains(&key)
 }
 

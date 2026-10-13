@@ -16,7 +16,7 @@ import type { BarNotice } from '@/entrypoints/content/bar';
 import { Overlay, type OverlayHost } from '@/entrypoints/content/overlay';
 import { KIND_ORDER } from './kinds';
 import { dismissPageTooltip, showPageTooltip } from './tooltip';
-import { detectPdf, readerUrlFor, type PdfContext } from './pdf-detect';
+import { detectPdf, type PdfContext } from './pdf-detect';
 import { extensionAlive, send, type BarControlMsg, type RuntimeMessage, type SelectionDoneMsg } from './messages';
 import { getSettings, lastKindItem, migrateSettings, settingsItem } from './storage';
 
@@ -354,7 +354,7 @@ export class SelectionController {
           onClick: () =>
             this.act(() => {
               this.overlay.abort();
-              location.href = readerUrlFor(this.pdf.url, (p) => browser.runtime.getURL(p as `/${string}`));
+              void this.send({ type: 'reader:open', url: this.pdf.url });
             }),
         },
       ],
