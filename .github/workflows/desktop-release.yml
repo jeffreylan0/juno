@@ -1,0 +1,121 @@
+name: Test build
+
+# Installers for testers, built on real Macs and Windows machines: a universal
+# macOS .dmg (Apple Silicon and Intel), a Windows setup .exe, and the Chrome
+# extension as a .zip. A `desktop-v*` tag, or Actions → Test build → Run
+# workflow, publishes them as a GitHub prerelease with TESTERS.md as its
+# notes; a push that changes this file only builds them, to check it works.
+#
+# Built without WXT_SUPABASE_* or WXT_GATEWAY_URL: no accounts and no hosted
+# answers, so testers answer with their own key, a local model or
+# placeholders. No key of any kind goes into a build.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['desktop-v*']
+    branches: ['**']
+    paths: ['.github/workflows/desktop-release.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (universal .dmg)
+            os: macos-latest
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles dmg
+            bundle: desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            asset: mac.dmg
+            # Signed ad hoc: without a Developer ID macOS still warns once,
+            # but an unsigned bundle would be called "damaged" instead.
+            signing: '-'
+          - name: Windows (setup .exe)
+            os: windows-latest
+            targets: ''
+            args: --bundles nsis
+            bundle: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+            asset: windows-setup.exe
+            signing: ''
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+          key: release
+      - run: pnpm install --frozen-lockfile
+      - name: Build
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ matrix.signing }}
+        run: pnpm --filter desktop exec tauri build ${{ matrix.args }}
+      - name: Name the installer
+        shell: bash
+        run: |
+          version=$(node -p "require('./desktop/src-tauri/tauri.conf.json').version")
+          mkdir -p out
+          cp ${{ matrix.bundle }} "out/SelectionAI-$version-${{ matrix.asset }}"
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: out/*
+          if-no-files-found: error
+
+  extension:
+    name: Chrome extension (.zip)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter extension zip
+      - name: Name the zip
+        run: |
+          version=$(node -p "require('./extension/package.json').version")
+          mkdir -p out
+          cp extension/.output/*-chrome.zip "out/SelectionAI-$version-chrome-extension.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chrome-extension.zip
+          path: out/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish the prerelease
+    needs: [app, extension]
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('desktop-test-{0}', github.run_number) }}
+        run: |
+          ls -l out
+          gh release create "$TAG" out/* --prerelease --target "$GITHUB_SHA" \
+            --title "Selection AI test build ($TAG)" --notes-file TESTERS.md

@@ -146,4 +146,4 @@ Everything the product calls itself lives in `extension/brand.ts`: name, short n
 
 ## Next
 
-Accounts, plans and billing are built but off until the services are set up: `supabase/README.md` goes through it step by step. Then the eval set and Gate A, the store beta, a signed and notarized Mac build, and the in-page panel for Safari. The build status lists everything remaining.
+Test builds for friends (a Mac `.dmg`, a Windows `.exe` and the Chrome extension, without accounts) come from the *Test build* workflow; `TESTERS.md` is what testers read. Accounts, plans and billing are built but off until the services are set up: `supabase/README.md` goes through it step by step. Then the eval set and Gate A, the store beta, a signed and notarized Mac build, and the in-page panel for Safari. The build status lists everything remaining.

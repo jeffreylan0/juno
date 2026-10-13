@@ -1,0 +1,89 @@
+# Testing Selection AI
+
+Thanks for helping test. Selection AI lets you draw a box (or any shape) around something on your screen, like a math problem, a chart or a paragraph in a PDF, and ask Claude or ChatGPT about exactly that.
+
+This is an early test build. There are no accounts and no automatic updates yet. Your computer will also warn you once when you open it, because the app isn't signed by Apple or Microsoft yet.
+
+## Download
+
+From **Assets** at the bottom of the release page, download the one for your computer:
+
+| Your computer | File |
+| --- | --- |
+| Mac with macOS 14 (Sonoma) or later, Apple Silicon or Intel | `SelectionAI-…-mac.dmg` |
+| Windows 10 or 11, 64-bit | `SelectionAI-…-windows-setup.exe` |
+| Chrome, Edge, Brave or Arc (optional: the browser extension) | `SelectionAI-…-chrome-extension.zip` |
+
+## Install on a Mac
+
+1. Open the `.dmg` and drag **Selection AI** into **Applications**.
+2. Open it from Applications. macOS says it "could not verify Selection AI is free of malware". Click **Done**, not Move to Trash.
+3. Open **System Settings → Privacy & Security**, scroll down to *"Selection AI" was blocked*, click **Open Anyway** and enter your password. This is needed once per build.
+   (If you use Terminal, `xattr -dr com.apple.quarantine "/Applications/Selection AI.app"` does the same thing.)
+4. The app lives in the menu bar, with no Dock icon, and its bar opens at the bottom of the screen. The first time, it asks for **Screen Recording**:
+   - Click *Turn on Screen Recording*.
+   - Switch **Selection AI** on under *Screen & System Audio Recording*.
+   - Click **Restart** on the bar.
+
+   This is the only permission the app asks for. It records no video and no audio: it takes one picture of the area you select, when you select it.
+
+## Install on Windows
+
+1. Run the `-setup.exe`. If Windows says *Windows protected your PC*, click **More info → Run anyway**.
+2. It installs for your account only, so no administrator password is needed. Leave *Run Selection AI* ticked at the end. Its icon is in the system tray; click **^** next to the clock if it's hidden.
+
+Windows asks for no permissions.
+
+## Choose who answers
+
+Open settings with the gear on the bar, or right-click the menu bar or tray icon and choose **Settings…**. Under **Answers**, pick one:
+
+- **Claude** or **ChatGPT**: paste an API key. Get one at [console.anthropic.com](https://console.anthropic.com/settings/keys) or [platform.openai.com](https://platform.openai.com/api-keys). API use is pay-as-you-go and is billed separately from a Claude or ChatGPT subscription. If you were given a key for testing, paste that.
+- **Local model**: a model running on your own computer, such as one served by Ollama. It must be a model that reads images.
+- **Placeholder**: made-up answers, no AI. Use it to try the selecting without a key.
+
+Your key stays on your computer, in a file only your user account can read. It is only ever sent to the company that issued it. When you ask, only your selection and your question go to the AI you chose. The app collects no analytics.
+
+## Use it
+
+1. Press **Option+Shift+S** on a Mac or **Alt+Shift+S** on Windows, or click the menu bar or tray icon. The screen dims a little and the bar comes up.
+2. **Box**: drag a rectangle. **Freeform**: draw around anything, in any shape.
+3. A panel opens at the top right with your selection. Press **Explain**, **Hint** or **Check**, or type your own question.
+
+**Esc** cancels. You can still scroll the page underneath while the bar is waiting.
+
+## The browser extension (optional)
+
+1. Unzip the `.zip` into a folder you'll keep. Chrome loads the extension from that folder.
+2. Go to `chrome://extensions`, turn on **Developer mode** (top right), click **Load unpacked** and choose the folder.
+3. Pin it from the puzzle-piece menu. Click it on any page, or press **Alt+Shift+S**.
+
+Its settings are separate from the app's, so choose who answers there too.
+
+## What to look for
+
+- **Installing:** where did you hesitate or get stuck?
+- **Different apps:** select over PDFs, slides, videos and video calls, websites, full-screen apps and a second monitor.
+- **Answers:** are they to the point? Does math display properly?
+- **Speed:** how long from letting go to the panel opening, and to the first words of the answer?
+- **Anything else:** anything that flickers, looks off, feels slow or is confusing in settings.
+
+## Report a problem
+
+Send it to the person who invited you, or open an issue at [github.com/jeffreylan0/selectionai/issues](https://github.com/jeffreylan0/selectionai/issues). Include:
+
+- **Your computer:** Mac or Windows, and its version. On a Mac, use Apple menu → About This Mac. On Windows, use Settings → System → About.
+- **What happened:** what you did, what you expected, and what happened instead.
+- **A picture:** a screenshot or screen recording if you can. Use Shift-Command-5 on a Mac, or Windows+Shift+S on Windows.
+
+Keep your API key out of screenshots.
+
+## Update or uninstall
+
+- **Updating:** there are no automatic updates yet. To update, install the new build over the old one. On a Mac, quit first (right-click the menu bar icon → Quit), then replace the app in Applications.
+- **Screen Recording after a Mac update:** each new build is a new app to macOS, so allow Screen Recording again. If the switch already shows as on but the app can't see the screen:
+  1. Select Selection AI in that list.
+  2. Remove it with **−**.
+  3. Open the app and turn it on again.
+- **Uninstalling on a Mac:** quit the app and drag it to the Trash. To also remove your settings, key and chats, delete `~/Library/Application Support/org.humanbn.selectionai`.
+- **Uninstalling on Windows:** go to Settings → Apps → Installed apps → Selection AI → Uninstall.
