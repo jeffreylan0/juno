@@ -16,7 +16,7 @@
     "jsdom": "^26.0.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.0",
+    "@playwright/test": "^1.64.0",
     "@types/jsdom": "^21.1.7",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
