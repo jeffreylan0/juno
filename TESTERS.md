@@ -1,6 +1,6 @@
-# Testing Selection AI
+# Testing Juno
 
-Thanks for helping test. Selection AI lets you draw a box (or any shape) around something on your screen, like a math problem, a chart or a paragraph in a PDF, and ask Claude or ChatGPT about exactly that.
+Thanks for helping test. Juno lets you draw a box (or any shape) around something on your screen, like a math problem, a chart or a paragraph in a PDF, and ask Claude or ChatGPT about exactly that.
 
 This is an early test build. There are no accounts and no automatic updates yet. Your computer will also warn you once when you open it, because the app isn't signed by Apple or Microsoft yet.
 
@@ -10,23 +10,23 @@ From **Assets** at the bottom of the release page, download the one for your com
 
 | Your computer | File |
 | --- | --- |
-| Mac with macOS 14 (Sonoma) or later, Apple Silicon or Intel | `SelectionAI-…-mac.dmg` |
-| Windows 10 or 11, 64-bit | `SelectionAI-…-windows-setup.exe` |
-| Chrome, Edge, Brave or Arc (optional: the browser extension) | `SelectionAI-…-chrome-extension.zip` |
+| Mac with macOS 14 (Sonoma) or later, Apple Silicon or Intel | `Juno-…-mac.dmg` |
+| Windows 10 or 11, 64-bit | `Juno-…-windows-setup.exe` |
+| Chrome, Edge, Brave or Arc (optional: the browser extension) | `Juno-…-chrome-extension.zip` |
 
 ## Check your download (optional)
 
-The release lists `SHA256SUMS`, the fingerprint of each file. On a Mac, `shasum -a 256 SelectionAI-*-mac.dmg` in Terminal should print the same line; on Windows, `Get-FileHash .\SelectionAI-*-setup.exe` in PowerShell. With the GitHub CLI, `gh attestation verify <file> --repo jeffreylan0/selectionai` also proves it was built by this repository's own workflow.
+The release lists `SHA256SUMS`, the fingerprint of each file. On a Mac, `shasum -a 256 Juno-*-mac.dmg` in Terminal should print the same line; on Windows, `Get-FileHash .\Juno-*-setup.exe` in PowerShell. With the GitHub CLI, `gh attestation verify <file> --repo jeffreylan0/selectionai` also proves it was built by this repository's own workflow.
 
 ## Install on a Mac
 
-1. Open the `.dmg` and drag **Selection AI** into **Applications**.
-2. Open it from Applications. macOS says it "could not verify Selection AI is free of malware". Click **Done**, not Move to Trash.
-3. Open **System Settings → Privacy & Security**, scroll down to *"Selection AI" was blocked*, click **Open Anyway** and enter your password. This is needed once per build.
-   (If you use Terminal, `xattr -dr com.apple.quarantine "/Applications/Selection AI.app"` does the same thing.)
+1. Open the `.dmg` and drag **Juno** into **Applications**.
+2. Open it from Applications. macOS says it "could not verify Juno is free of malware". Click **Done**, not Move to Trash.
+3. Open **System Settings → Privacy & Security**, scroll down to *"Juno" was blocked*, click **Open Anyway** and enter your password. This is needed once per build.
+   (If you use Terminal, `xattr -dr com.apple.quarantine "/Applications/Juno.app"` does the same thing.)
 4. The app lives in the menu bar, with no Dock icon, and its bar opens at the bottom of the screen. The first time, it asks for **Screen Recording**:
    - Click *Turn on Screen Recording*.
-   - Switch **Selection AI** on under *Screen & System Audio Recording*.
+   - Switch **Juno** on under *Screen & System Audio Recording*.
    - Click **Restart** on the bar.
 
    This is the only permission the app asks for. It records no video and no audio: it takes one picture of the area you select, when you select it.
@@ -34,7 +34,7 @@ The release lists `SHA256SUMS`, the fingerprint of each file. On a Mac, `shasum 
 ## Install on Windows
 
 1. Run the `-setup.exe`. If Windows says *Windows protected your PC*, click **More info → Run anyway**.
-2. It installs for your account only, so no administrator password is needed. Leave *Run Selection AI* ticked at the end. Its icon is in the system tray; click **^** next to the clock if it's hidden.
+2. It installs for your account only, so no administrator password is needed. Leave *Run Juno* ticked at the end. Its icon is in the system tray; click **^** next to the clock if it's hidden.
 
 Windows asks for no permissions.
 
@@ -74,7 +74,7 @@ Its settings are separate from the app's, so choose who answers there too.
 
 ## Report a problem
 
-Send it to the person who invited you, or open an issue at [github.com/jeffreylan0/selectionai/issues](https://github.com/jeffreylan0/selectionai/issues). Include:
+Email info@humanbn.com, or open an issue at [github.com/jeffreylan0/selectionai/issues](https://github.com/jeffreylan0/selectionai/issues). Include:
 
 - **Your computer:** Mac or Windows, and its version. On a Mac, use Apple menu → About This Mac. On Windows, use Settings → System → About.
 - **What happened:** what you did, what you expected, and what happened instead.
@@ -84,10 +84,16 @@ Keep your API key out of screenshots.
 
 ## Update or uninstall
 
+- **Coming from Selection AI:** earlier test builds were called Selection AI. Before you open Juno for the first time:
+  1. In Selection AI, turn *Open at login* off if you turned it on, then quit it.
+  2. Open Juno: it takes over Selection AI's settings, key and chats.
+  3. Then remove Selection AI (Mac: drag it to the Trash; Windows: Settings → Apps → Selection AI → Uninstall).
+
+  On a Mac, allow Screen Recording for Juno; the old *Selection AI* entry in that list can be removed with **−**.
 - **Updating:** there are no automatic updates yet. To update, install the new build over the old one. On a Mac, quit first (right-click the menu bar icon → Quit), then replace the app in Applications.
 - **Screen Recording after a Mac update:** each new build is a new app to macOS, so allow Screen Recording again. If the switch already shows as on but the app can't see the screen:
-  1. Select Selection AI in that list.
+  1. Select Juno in that list.
   2. Remove it with **−**.
   3. Open the app and turn it on again.
-- **Uninstalling on a Mac:** quit the app and drag it to the Trash. To also remove your settings, key and chats, delete `~/Library/Application Support/org.humanbn.selectionai`.
-- **Uninstalling on Windows:** go to Settings → Apps → Installed apps → Selection AI → Uninstall.
+- **Uninstalling on a Mac:** quit the app and drag it to the Trash. To also remove your settings, key and chats, delete `~/Library/Application Support/com.humanbn.juno`.
+- **Uninstalling on Windows:** go to Settings → Apps → Installed apps → Juno → Uninstall.

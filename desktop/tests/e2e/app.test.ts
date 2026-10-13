@@ -412,7 +412,7 @@ it('the gear on the bar opens settings: the app’s own shortcut, no blocked sit
   expect(text).not.toContain("browser's PDF viewer");
   expect(text).toContain("the window's title go to the AI you picked");
   expect(text).toContain('only your account can read');
-  expect(text).toContain('Quit Selection AI');
+  expect(text).toContain('Quit Juno');
 });
 
 it('Quit in settings ends the app (the menu bar icon starts a selection when clicked, so Quit lives here and in its right-click menu)', async () => {

@@ -269,7 +269,7 @@ describe('Google sign-in in the app', () => {
     expect(opened).toEqual(['https://proj.supabase.co/auth/v1/authorize?provider=google']);
     // What lib.rs emits when the system opens the app's link.
     const send = (url: string) => hub.transport('core').emitTo('settings', 'app:deep-link', url);
-    await send('selectionai://something-else');
+    await send('com.humanbn.juno://something-else');
     await send(`${AUTH_REDIRECT}?code=abc`);
     expect(await flow).toBe(`${AUTH_REDIRECT}?code=abc`);
   });

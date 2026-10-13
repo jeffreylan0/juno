@@ -1,4 +1,4 @@
-//! Selection AI for the desktop: the native core.
+//! Juno for the desktop: the native core.
 //!
 //! It does only what the system has to: the global shortcut, the menu bar (or
 //! tray) icon, the windows, screen capture, and keeping chats, screenshots and
@@ -395,7 +395,7 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
-/// Settings → Selection AI → Open at login: whether the app starts, in the
+/// Settings → Juno → Open at login: whether the app starts, in the
 /// menu bar only (`--hidden`), when the student logs in. Off unless they turn
 /// it on. No permission: a launch agent in ~/Library/LaunchAgents on macOS,
 /// the user's Run key on Windows, an autostart entry on Linux.
@@ -416,9 +416,9 @@ fn login_item_set(app: AppHandle, window: WebviewWindow, on: bool) -> Res<bool> 
     launcher.is_enabled().map_err(err)
 }
 
-/// The plugin writes the Run entry as `C:\…\Selection AI\app.exe --hidden`,
-/// unquoted: Windows would try `C:\…\Selection.exe` first (CWE-428). Written
-/// again here, quoted, under the same name.
+/// The plugin writes the Run entry unquoted (`C:\…\Juno\Juno.exe --hidden`):
+/// with a space anywhere in the path, Windows would try a shorter program
+/// name first (CWE-428). Written again here, quoted, under the same name.
 #[cfg(windows)]
 fn quote_run_entry(app: &AppHandle) -> Res<()> {
     let exe = std::env::current_exe().map_err(err)?;
@@ -430,14 +430,15 @@ fn quote_run_entry(app: &AppHandle) -> Res<()> {
 
 // ── The shortcut and the menu bar icon ───────────────────────────────────
 
-/// The app's own link: `selectionai://…`.
-const LINK_SCHEME: &str = "selectionai://";
+/// The app's own link, a reverse-DNS scheme (RFC 8252 §7.1): no other app
+/// named Juno can claim it by accident.
+const LINK_SCHEME: &str = "com.humanbn.juno://";
 
 /// The app's link was opened. Today that is only Google sign-in coming back
-/// (`selectionai://auth/callback`, platform/browser.ts `identity`): settings,
+/// (`com.humanbn.juno://auth/callback`, platform/browser.ts `identity`): settings,
 /// where it started, hear it and come forward.
 pub(crate) fn deep_link(app: &AppHandle, url: &str) {
-    if !url.starts_with("selectionai://auth/") {
+    if !url.starts_with("com.humanbn.juno://auth/") {
         return;
     }
     let _ = app.emit_to(wm::SETTINGS, "app:deep-link", url);
@@ -464,13 +465,13 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
     let label = if cfg!(target_os = "macos") { "Select (⌥⇧S)" } else { "Select (Alt+Shift+S)" };
     let select = MenuItem::with_id(app, "select", label, true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Selection AI", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Juno", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&select, &settings, &PredefinedMenuItem::separator(app)?, &quit])?;
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?;
     TrayIconBuilder::with_id("main")
         .icon(icon)
         .icon_as_template(true)
-        .tooltip(if cfg!(target_os = "macos") { "Selection AI: click to select (⌥⇧S)" } else { "Selection AI: click to select (Alt+Shift+S)" })
+        .tooltip(if cfg!(target_os = "macos") { "Juno: click to select (⌥⇧S)" } else { "Juno: click to select (Alt+Shift+S)" })
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
@@ -528,6 +529,7 @@ pub fn run() {
             // copy the keys, chats and screenshots to the domain's server.
             // (The same folder as before on macOS and Linux.)
             let dir = app.path().app_local_data_dir()?.join("store");
+            store::adopt_earlier_store(&dir, &[app.path().local_data_dir()?, app.path().data_dir()?]);
             std::fs::create_dir_all(&dir)?;
             let store = Store::open(&dir, store::system_secrets(&dir))?;
             let images = Images::open(&dir.join("images"))?;

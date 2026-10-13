@@ -30,7 +30,7 @@ import { refundAnswer, useAnswer } from './quota';
 import { accountOf } from './supabase';
 
 export interface Env {
-  /** Cloudflare account id of an AI Gateway named "selection-ai"; empty to call the vendors directly. */
+  /** Cloudflare account id of an AI Gateway named "juno"; empty to call the vendors directly. */
   AI_GATEWAY_ID: string;
   ANTHROPIC_API_KEY: string;
   OPENAI_API_KEY: string;

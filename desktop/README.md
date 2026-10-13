@@ -1,6 +1,6 @@
-# Selection AI for the desktop
+# Juno for the desktop
 
-The browser shortcut without the browser: the same key, bar, modes, panel, chats and account, over anything on screen — Preview, Acrobat, PowerPoint, Zoom, other extensions' PDF viewers, every browser. A [Tauri 2](https://tauri.app) app, Mac first, then Windows (see the plan, *Selection AI desktop app*).
+The browser shortcut without the browser: the same key, bar, modes, panel, chats and account, over anything on screen — Preview, Acrobat, PowerPoint, Zoom, other extensions' PDF viewers, every browser. A [Tauri 2](https://tauri.app) app, Mac first, then Windows (see the plan, *Juno desktop app*).
 
 ## What works today
 
@@ -21,10 +21,10 @@ This is the plan's spike and its *Box, Freeform and the panel on Mac* phase, wit
 | Native commands | every page can invoke every command, so the ones that matter check which window is asking: only the core takes a screenshot, and only while the bar is up; the overlay never sees or changes the keys; only Settings turns Open at login on or off (`lib.rs`, SECURITY.md) |
 | Settings | the extension's settings page in the same palette, as a card (a real window, as the panel) in the middle of the screen; once it is on screen the bar and the dim go (the chat carries on; the shortcut brings the bar back). With the app's shortcut, a Permissions section on macOS (Screen Recording: status, *Open System Settings*, *Restart*, and what the app does and does not ask for), no blocked sites (blocked apps come later) and no PDF reader (not needed) |
 | Permissions | **Screen Recording only**, on macOS (Windows asks for nothing). No keychain, no accessibility access, no microphone, no input monitoring. macOS names the switch "Screen & System Audio Recording"; the app records no audio |
-| Quit | Settings → Selection AI → *Quit Selection AI*, ⌘Q in the panel or settings, or the menu bar icon's right-click menu |
-| Open at login | Settings → Selection AI, off until turned on: the app starts in the menu bar only (`--hidden`). No permission: a launch agent in `~/Library/LaunchAgents` on macOS (the system may say a background item was added), the user's Run key on Windows |
-| Storage | chats in JSON files, screenshots as image files, under the app's data folder (`~/Library/Application Support/org.humanbn.selectionai` on macOS); temporary chats in memory only; API keys and the account session in one file only your account can read (`secrets.json`, mode 0600), as the browser keeps the extension's. Not the keychain: macOS ties a keychain item to the exact build that made it, so each new build asked for the keychain password, and once refused, asked at every read |
-| Accounts and plans | as in the extension (same build variables): email codes, and Google, which opens in the student's browser and comes back through the app's `selectionai://auth/callback` link (registered from the bundle on macOS, at first run on Windows); plans, Stripe checkout and the billing portal open in the browser too. Setup: `supabase/README.md` |
+| Quit | Settings → Juno → *Quit Juno*, ⌘Q in the panel or settings, or the menu bar icon's right-click menu |
+| Open at login | Settings → Juno, off until turned on: the app starts in the menu bar only (`--hidden`). No permission: a launch agent in `~/Library/LaunchAgents` on macOS (the system may say a background item was added), the user's Run key on Windows |
+| Storage | chats in JSON files, screenshots as image files, under the app's data folder (`~/Library/Application Support/com.humanbn.juno` on macOS); temporary chats in memory only; API keys and the account session in one file only your account can read (`secrets.json`, mode 0600), as the browser keeps the extension's. Not the keychain: macOS ties a keychain item to the exact build that made it, so each new build asked for the keychain password, and once refused, asked at every read |
+| Accounts and plans | as in the extension (same build variables): email codes, and Google, which opens in the student's browser and comes back through the app's `com.humanbn.juno://auth/callback` link (a reverse-DNS scheme, so no other app named Juno claims it) (registered from the bundle on macOS, at first run on Windows); plans, Stripe checkout and the billing portal open in the browser too. Setup: `supabase/README.md` |
 | Escape | before anything is selected: never mind, everything goes; while selecting: stops that selection. *While the bar waits* it works only when the bar has the keyboard (after clicking it), since the app does not take Escape from the app you are working in |
 
 ## Running it
@@ -44,11 +44,11 @@ pnpm desktop:dev          # the app with live reload (Vite on :5180)
 pnpm desktop:build        # a release .app and .dmg in desktop/src-tauri/target/release/bundle
 ```
 
-The app lives in the menu bar (no Dock icon). Opening it brings the bar straight up (`--hidden` starts it without, for starting at login). The first time, the bar asks for **Screen Recording**: *Turn on Screen Recording*, switch *Selection AI* on in System Settings → Privacy & Security → Screen & System Audio Recording, then press *Restart* on the bar (macOS applies the switch to a fresh process only).
+The app lives in the menu bar (no Dock icon). Opening it brings the bar straight up (`--hidden` starts it without, for starting at login). The first time, the bar asks for **Screen Recording**: *Turn on Screen Recording*, switch *Juno* on in System Settings → Privacy & Security → Screen & System Audio Recording, then press *Restart* on the bar (macOS applies the switch to a fresh process only).
 
-**Try the app's permissions with `pnpm desktop:app`, not `pnpm desktop:dev`.** `desktop:dev` runs a bare binary from your terminal, so macOS asks on behalf of whatever started it ("Visual Studio Code is requesting to bypass the system private window picker…") and would give *that* app Screen Recording. Don't allow it; if you did, switch the editor off again in System Settings. `desktop:app` builds a real (debug) `Selection AI.app` and opens it, so the prompt names Selection AI and the permission is the app's alone. Signed ad hoc, each rebuild is a new app to macOS and it asks again; set `APPLE_SIGNING_IDENTITY` to your Apple Development certificate and the permission survives rebuilds.
+**Try the app's permissions with `pnpm desktop:app`, not `pnpm desktop:dev`.** `desktop:dev` runs a bare binary from your terminal, so macOS asks on behalf of whatever started it ("Visual Studio Code is requesting to bypass the system private window picker…") and would give *that* app Screen Recording. Don't allow it; if you did, switch the editor off again in System Settings. `desktop:app` builds a real (debug) `Juno.app` and opens it, so the prompt names Juno and the permission is the app's alone. Signed ad hoc, each rebuild is a new app to macOS and it asks again; set `APPLE_SIGNING_IDENTITY` to your Apple Development certificate and the permission survives rebuilds.
 
-The app's bundle id is `org.humanbn.selectionai` (round 23). Builds before that used another id, so to macOS this is a new app: Screen Recording is asked for again, and keys and chats saved by those builds stay in their old folder under `~/Library/Application Support/` (delete it once you no longer need it). Earlier still, keys were kept in the keychain under "Selection AI"; the old items can be deleted in Keychain Access.
+The app is Juno, bundle id `com.humanbn.juno`. Builds before the rename were *Selection AI* (`org.humanbn.selectionai`): Juno's first start moves their settings, keys, chats and screenshots into its own folder (`store::adopt_earlier_store`), but to macOS it is a new app, so Screen Recording is asked for again and the old *Selection AI* entry in that list can be removed. Remove the old app too (turn its Open at login off first). Earlier still, keys were kept in the keychain under "Selection AI"; the old items can be deleted in Keychain Access.
 
 Accounts and hosted answers read the same `extension/.env.local` as the extension (`WXT_SUPABASE_URL`, `WXT_SUPABASE_KEY`, `WXT_GATEWAY_URL`).
 
@@ -89,7 +89,7 @@ Because the builds aren't signed with a Developer ID, macOS asks testers to *Ope
 11. Box armed, scroll with the trackpad over Preview: the page scrolls under the dim, which never flickers; moving the pointer and dragging selects as usual.
 12. A selection: the panel is there at once with a shimmering placeholder, then the screenshot. Its corners and shadow look like any Mac window's, with no halo. The gear opens settings and the bar and dim go; the macro rows show name, prompt and ✕ side by side.
 13. With the bar up, the gear → *All settings*: settings come up (in round 22 they did not: the app hid itself), then the bar and dim go.
-14. In a build with accounts (`supabase/README.md`): Settings → Account → *Continue with Google* opens the browser; after signing in it asks to open Selection AI, and settings come back signed in.
+14. In a build with accounts (`supabase/README.md`): Settings → Account → *Continue with Google* opens the browser; after signing in it asks to open Juno, and settings come back signed in.
 
 Anything that fails in 1, 3, 5 or 6 is the spike's question: whether the transparent overlay holds up, or becomes a small native window.
 
@@ -132,7 +132,7 @@ How the extension's browser APIs map:
 | the panel's port | an event-based port; the panel is only ever hidden, so it disconnects only if its page goes away |
 | `captureVisibleTab` + canvas crop | `capture_selection`: native capture, crop and mask |
 | `sidePanel.open/close` | `panel_open` / `panel_close` (and `panel_fit`, `window_show`) |
-| `identity.launchWebAuthFlow` (Google sign-in) | the browser, then the app's link `selectionai://auth/callback` back (`app:deep-link`) |
+| `identity.launchWebAuthFlow` (Google sign-in) | the browser, then the app's link `com.humanbn.juno://auth/callback` back (`app:deep-link`) |
 | `fetch` from the background | `tauri-plugin-http` (the native core), for any other origin |
 
 ## Tests

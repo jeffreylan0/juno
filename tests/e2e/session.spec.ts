@@ -331,7 +331,7 @@ test('on a blocked site the icon brings up no bar, and the tooltip under the ico
   // What the tooltip says, and its way to the setting.
   const tip = await context.newPage();
   await tip.goto(`chrome-extension://${extensionId}/notice.html?kind=blocked-site`);
-  await expect(tip.getByTestId('notice-blocked-site')).toContainText('Selection AI is off on this site.');
+  await expect(tip.getByTestId('notice-blocked-site')).toContainText('Juno is off on this site.');
   await expect(tip.locator('.sai-tip-x')).toBeVisible();
   await expect(tip.locator('.sai-tip-actions button')).toHaveText(['Change']);
 });
@@ -339,7 +339,7 @@ test('on a blocked site the icon brings up no bar, and the tooltip under the ico
 test('the first install asks once to pin the icon, and shows how', async ({ context, extensionId }) => {
   const tip = await context.newPage();
   await tip.goto(`chrome-extension://${extensionId}/notice.html?kind=pin`);
-  await expect(tip.getByTestId('pin-tip')).toContainText('Pin Selection AI');
+  await expect(tip.getByTestId('pin-tip')).toContainText('Pin Juno');
   await tip.getByTestId('pin-how').click();
   await expect(tip.getByTestId('pin-tip')).toContainText('Click the puzzle piece');
   await expect(tip.locator('.sai-tip-actions button')).toHaveCount(0);

@@ -23,5 +23,5 @@ html[data-card] .page { overflow-y: auto; scroll-behavior: smooth; scroll-paddin
 html[data-card] .top { cursor: default; }
 html[data-card] .topbar { cursor: default; user-select: none; -webkit-user-select: none; }
 
-/* Settings → Selection AI: the Quit button's key. */
+/* Settings → Juno: the Quit button's key. */
 .quit-key { margin-left: 8px; color: var(--muted); }

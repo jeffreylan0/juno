@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Selection AI as a desktop app (Tauri 2): the extension's bar, panel and chats over any app.",
+  "description": "Juno as a desktop app (Tauri 2): the extension's bar, panel and chats over any app.",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",

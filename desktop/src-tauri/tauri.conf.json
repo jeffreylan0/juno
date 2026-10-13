@@ -1,8 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Selection AI",
+  "productName": "Juno",
+  "mainBinaryName": "Juno",
   "version": "0.1.0",
-  "identifier": "org.humanbn.selectionai",
+  "identifier": "com.humanbn.juno",
   "build": {
     "beforeDevCommand": "pnpm web:dev",
     "devUrl": "http://localhost:5180",
@@ -42,7 +43,7 @@
   },
   "plugins": {
     "deep-link": {
-      "desktop": { "schemes": ["selectionai"] }
+      "desktop": { "schemes": ["com.humanbn.juno"] }
     }
   }
 }
