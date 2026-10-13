@@ -26,7 +26,11 @@
 --
 -- Signed-in students reach their own rows with their session token and the
 -- publishable key; row level security keeps each account to its own. The
--- secret key (the Worker's) bypasses it.
+-- secret key (the Worker's) bypasses it, so it is granted only what the
+-- Worker uses. Every privilege is stated here, so the result is the same
+-- whether the Data API's "Automatically expose new tables" is on or off.
+
+grant usage on schema public to anon, authenticated, service_role;
 
 -- ── Plans ────────────────────────────────────────────────────────────────
 
@@ -50,8 +54,8 @@ insert into public.plans (id, name, monthly_questions, cloud, rank) values
 on conflict (id) do nothing;
 
 alter table public.plans enable row level security;
-revoke all on public.plans from anon, authenticated;
-grant select on public.plans to anon, authenticated;
+revoke all on public.plans from anon, authenticated, service_role;
+grant select on public.plans to anon, authenticated, service_role;
 drop policy if exists "plans are public" on public.plans;
 create policy "plans are public" on public.plans for select to anon, authenticated using (true);
 
@@ -76,7 +80,7 @@ exception when duplicate_object then null; end $$;
 alter table public.entitlements drop column if exists stripe_customer, drop column if exists plan_renews_at;
 
 alter table public.entitlements enable row level security;
-revoke all on public.entitlements from anon, authenticated;
+revoke all on public.entitlements from anon, authenticated, service_role;
 drop policy if exists "own entitlements" on public.entitlements;
 
 -- For you, in the SQL editor: give an account cloud storage and/or a plan.
@@ -104,7 +108,7 @@ begin
   on conflict (user_id) do update
     set cloud = excluded.cloud, plan = excluded.plan, monthly_questions = excluded.monthly_questions, updated_at = now();
 end $$;
-revoke execute on function public.set_entitlement(text, boolean, text, integer) from public, anon, authenticated;
+revoke execute on function public.set_entitlement(text, boolean, text, integer) from public, anon, authenticated, service_role;
 
 -- ── Billing: Stripe customers, subscriptions and passes ──────────────────
 
@@ -114,7 +118,8 @@ create table if not exists public.customers (
   created_at timestamptz not null default now()
 );
 alter table public.customers enable row level security;
-revoke all on public.customers from anon, authenticated;
+revoke all on public.customers from anon, authenticated, service_role;
+grant select, insert, update, delete on public.customers to service_role;
 
 create table if not exists public.subscriptions (
   -- Stripe's subscription id (sub_…), or for a pass its Checkout Session (cs_…).
@@ -136,7 +141,8 @@ create table if not exists public.subscriptions (
 );
 create index if not exists subscriptions_by_user on public.subscriptions (user_id);
 alter table public.subscriptions enable row level security;
-revoke all on public.subscriptions from anon, authenticated;
+revoke all on public.subscriptions from anon, authenticated, service_role;
+grant select, insert, update on public.subscriptions to service_role;
 
 -- ── What an account gets ─────────────────────────────────────────────────
 
@@ -211,7 +217,7 @@ begin
   end if;
   return public.account_of((select auth.uid()));
 end $$;
-revoke execute on function public.my_account() from public, anon;
+revoke execute on function public.my_account() from public, anon, service_role;
 grant execute on function public.my_account() to authenticated;
 
 -- Whether the signed-in account has cloud storage, for the policies below.
@@ -219,7 +225,7 @@ create or replace function public.has_cloud()
 returns boolean language sql stable security definer set search_path = '' as $$
   select coalesce((public.account_of((select auth.uid())) ->> 'cloud')::boolean, false)
 $$;
-revoke execute on function public.has_cloud() from public, anon;
+revoke execute on function public.has_cloud() from public, anon, service_role;
 grant execute on function public.has_cloud() to authenticated;
 
 -- From the earlier version: worked out in account_of now.
@@ -247,7 +253,7 @@ create table if not exists public.chats (
 create index if not exists chats_by_sync on public.chats (user_id, synced_at);
 
 alter table public.chats enable row level security;
-revoke all on public.chats from anon, authenticated;
+revoke all on public.chats from anon, authenticated, service_role;
 grant select, insert, update on public.chats to authenticated;
 drop policy if exists "read own chats" on public.chats;
 create policy "read own chats" on public.chats
@@ -284,7 +290,7 @@ begin
   get diagnostics n = row_count;
   return n;
 end $$;
-revoke execute on function public.push_chats(jsonb) from public, anon;
+revoke execute on function public.push_chats(jsonb) from public, anon, service_role;
 grant execute on function public.push_chats(jsonb) to authenticated;
 
 -- "Delete all chats": every chat of this account becomes a tombstone.
@@ -301,7 +307,7 @@ begin
   get diagnostics n = row_count;
   return n;
 end $$;
-revoke execute on function public.delete_all_chats() from public, anon;
+revoke execute on function public.delete_all_chats() from public, anon, service_role;
 grant execute on function public.delete_all_chats() to authenticated;
 
 -- ── Hosted-answer usage ──────────────────────────────────────────────────
@@ -314,7 +320,7 @@ create table if not exists public.usage (
   primary key (user_id, period)
 );
 alter table public.usage enable row level security;
-revoke all on public.usage from anon, authenticated;
+revoke all on public.usage from anon, authenticated, service_role;
 drop policy if exists "own usage" on public.usage;
 
 -- Called by the Worker (secret key) before each hosted answer: counts one if
@@ -363,7 +369,7 @@ begin
   end if;
   delete from auth.users where id = (select auth.uid());
 end $$;
-revoke execute on function public.delete_me() from public, anon;
+revoke execute on function public.delete_me() from public, anon, service_role;
 grant execute on function public.delete_me() to authenticated;
 
 -- ── Screenshots ──────────────────────────────────────────────────────────

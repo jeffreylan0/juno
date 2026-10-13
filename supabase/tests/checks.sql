@@ -109,6 +109,34 @@ select pg_temp.check((public.use_answer('00000000-0000-0000-0000-00000000000b')-
 select pg_temp.check(not (public.use_answer('00000000-0000-0000-0000-00000000000a')->>'ok')::boolean, 'A has no plan');
 select pg_temp.check(not (public.use_answer('00000000-0000-0000-0000-0000000000ff')->>'ok')::boolean, 'unknown user has none');
 
+-- ── The Worker's own reads and writes (billing.ts), and nothing more ──
+reset role;
+set role service_role;
+select pg_temp.check((select count(*) from public.plans where id = 'plus') = 1, 'the Worker reads plans');
+insert into public.customers (user_id, stripe_customer) values ('00000000-0000-0000-0000-00000000000d', 'cus_d1')
+  on conflict (user_id) do update set stripe_customer = excluded.stripe_customer;
+insert into public.customers (user_id, stripe_customer) values ('00000000-0000-0000-0000-00000000000d', 'cus_d2')
+  on conflict (user_id) do update set stripe_customer = excluded.stripe_customer;
+select pg_temp.check((select user_id from public.customers where stripe_customer = 'cus_d2') = '00000000-0000-0000-0000-00000000000d', 'the Worker upserts and finds a customer');
+delete from public.customers where user_id = '00000000-0000-0000-0000-00000000000d';
+select pg_temp.check(not exists (select 1 from public.customers where user_id = '00000000-0000-0000-0000-00000000000d'), 'the Worker removes a customer');
+do $$ begin
+  perform 1 from public.chats;
+  raise exception 'FAILED: the Worker reads chats';
+exception when insufficient_privilege then null; end $$;
+do $$ begin
+  perform 1 from public.usage;
+  raise exception 'FAILED: the Worker reads usage directly';
+exception when insufficient_privilege then null; end $$;
+do $$ begin
+  perform 1 from public.entitlements;
+  raise exception 'FAILED: the Worker reads entitlements directly';
+exception when insufficient_privilege then null; end $$;
+do $$ begin
+  perform public.set_entitlement('b@example.com', true, 'unlimited');
+  raise exception 'FAILED: the Worker can give a plan';
+exception when insufficient_privilege then null; end $$;
+
 -- ── Subscriptions and passes (the Worker's webhook writes them) ──
 reset role;
 set role service_role;
@@ -119,6 +147,10 @@ select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'free' and (pg_temp.acct('c'
 insert into public.subscriptions (id, user_id, plan, kind, status, price, period_end)
 values ('sub_c', '00000000-0000-0000-0000-00000000000c', 'plus', 'subscription', 'active', 'plus_monthly', now() + interval '20 days');
 select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'plus' and (pg_temp.acct('c') ->> 'quota')::int = 600 and (pg_temp.acct('c') ->> 'cloud')::boolean, 'C subscribed: Plus');
+insert into public.subscriptions (id, user_id, plan, kind, status, price, period_end)
+values ('sub_c', '00000000-0000-0000-0000-00000000000c', 'plus', 'subscription', 'active', 'plus_monthly', now() + interval '25 days')
+on conflict (id) do update set status = excluded.status, period_end = excluded.period_end, updated_at = now();
+select pg_temp.check((select period_end > now() + interval '24 days' from public.subscriptions where id = 'sub_c'), 'the webhook upserts a subscription');
 select pg_temp.check((pg_temp.acct('c') -> 'billing' ->> 'active')::boolean and pg_temp.acct('c') -> 'billing' ->> 'kind' = 'subscription', 'C billing active');
 update public.subscriptions set status = 'past_due' where id = 'sub_c';
 select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'plus', 'a failed payment keeps Plus while Stripe retries');

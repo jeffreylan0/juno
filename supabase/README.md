@@ -34,7 +34,12 @@ Before starting, have ready: the business's legal details for Stripe (humanbn, i
 
 ## 1. Supabase project
 
-1. Create a project at supabase.com, in the region nearest your students. The free plan is enough to start (500 MB database, 1 GB storage, 50,000 monthly users), but it pauses after a week without traffic and has no backups: move to Pro before launch.
+1. Create a project at supabase.com, in the region nearest your students. The free plan is enough to start (500 MB database, 1 GB storage, 50,000 monthly users), but it pauses after a week without traffic and has no backups: move to Pro before launch. Under **Security**:
+   - **Enable Data API**: on. The apps and the Worker reach the database through it.
+   - **Automatically expose new tables**: off, as Supabase recommends. The migration grants each role exactly what it uses, so nothing else is reachable.
+   - **Enable automatic RLS**: on. A safety net for tables you add later; the migration already turns row level security on for every table.
+
+   A project made with the other choices works the same: the migration states every privilege itself.
 2. **Project Settings → API Keys**: note the project URL (`https://<ref>.supabase.co`), the **publishable** key (`sb_publishable_…`, goes in the apps) and the **secret** key (`sb_secret_…`, only ever in the Worker).
 3. **SQL Editor**: paste all of `migrations/20261006000000_accounts.sql` and run it. It is safe to run again after an update, and brings a project made from an earlier version of the file up to date.
 4. **Table Editor → plans**: the three plans it made. `free` is every signed-in account (0 hosted answers, no cloud storage); `plus` is the paid plan (600 hosted answers a month, cloud storage); `unlimited` is for you and testers. Change the numbers here at any time: they apply at once. The round-9 pricing proposal gives `free` about 30 hosted answers a month; leave it at 0 until the abuse protection in step 10 is on, since email sign-up is free.
@@ -170,6 +175,6 @@ Cloud storage copies saved chats and their screenshots both ways; temporary chat
 
 ## Checking it locally
 
-- `supabase/tests/run.sh` runs the migration twice on a throwaway PostgreSQL database (with small stand-ins for Supabase's `auth` and `storage`) and checks the rules: own rows only, cloud storage needed to save but never to delete, last write wins, quotas counted atomically, the free plan, hand-given plans, subscriptions (active, past due, cancelled, late) and passes (paid, refunded, run out), the most generous plan winning, account deletion cascading.
+- `supabase/tests/run.sh` runs the migration twice on a throwaway PostgreSQL database (with small stand-ins for Supabase's `auth` and `storage`), with Supabase's default Data API settings and again with the recommended ones, and checks the rules: the Worker's secret key limited to what it uses, own rows only, cloud storage needed to save but never to delete, last write wins, quotas counted atomically, the free plan, hand-given plans, subscriptions (active, past due, cancelled, late) and passes (paid, refunded, run out), the most generous plan winning, account deletion cascading.
 - `tests/unit/worker.test.ts` checks the Worker: sessions, the models it allows, Stripe's signature, the webhook mirroring a subscription and a pass, checkout and the prices on offer.
 - With the Stripe CLI, `stripe listen --forward-to localhost:8787/stripe/webhook` sends test-mode events to `wrangler dev`.
