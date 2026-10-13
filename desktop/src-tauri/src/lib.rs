@@ -61,7 +61,35 @@ fn area(name: &str) -> Res<Area> {
     Area::parse(name).ok_or_else(|| format!("no storage area {name:?}"))
 }
 
-/// Every window hears about every change, as `storage.onChanged` does.
+/// Refuses a command from any window but these. Every page can invoke every
+/// command, so the ones that matter check who is asking: the overlay, drawn
+/// over whatever is on screen, never needs the keys, the capture or the
+/// login item.
+fn only(window: &WebviewWindow, allowed: &[&str]) -> Res<()> {
+    if allowed.contains(&window.label()) {
+        Ok(())
+    } else {
+        Err(format!("not from the {} window", window.label()))
+    }
+}
+
+/// The API keys and the session: never to or from the overlay.
+fn keep_secrets_from(window: &WebviewWindow, keys: impl IntoIterator<Item = impl AsRef<str>>) -> Res<()> {
+    if window.label() == wm::OVERLAY && keys.into_iter().any(|k| store::is_secret(k.as_ref())) {
+        return Err("the overlay has no access to keys".into());
+    }
+    Ok(())
+}
+
+/// One storage write, at most: a long chat is a few MB.
+const MAX_WRITE_BYTES: usize = 32 * 1024 * 1024;
+/// One screenshot, as a data URL: crops are at most 1568 px a side.
+const MAX_IMAGE_URL_BYTES: usize = 32 * 1024 * 1024;
+/// Regions of the overlay that take clicks (the bar, a few tooltips).
+const MAX_REGIONS: usize = 64;
+
+/// Every window hears about every change, as `storage.onChanged` does; the
+/// overlay without the secrets' values.
 fn announce(app: &AppHandle, area: &str, changes: Changes) -> Res<()> {
     if changes.is_empty() {
         return Ok(());
@@ -71,36 +99,59 @@ fn announce(app: &AppHandle, area: &str, changes: Changes) -> Res<()> {
         area: &'a str,
         changes: Changes,
     }
-    app.emit("storage:changed", Changed { area, changes }).map_err(err)
+    if !changes.keys().any(|k| store::is_secret(k)) {
+        return app.emit("storage:changed", Changed { area, changes }).map_err(err);
+    }
+    let public: Changes = changes.iter().filter(|(k, _)| !store::is_secret(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    for window in app.webview_windows().into_values() {
+        let to = if window.label() == wm::OVERLAY { &public } else { &changes };
+        if !to.is_empty() {
+            app.emit_to(window.label(), "storage:changed", Changed { area, changes: to.clone() }).map_err(err)?;
+        }
+    }
+    Ok(())
 }
 
 // ── Storage (browser.storage) and screenshots (lib/images.ts) ────────────
 
 #[tauri::command(async)]
-fn storage_get(state: State<Shared>, area: String, keys: Option<Vec<String>>) -> Res<Map<String, Value>> {
-    state.store.get(self::area(&area)?, keys.as_deref()).map_err(err)
+fn storage_get(window: WebviewWindow, state: State<Shared>, area: String, keys: Option<Vec<String>>) -> Res<Map<String, Value>> {
+    let mut found = state.store.get(self::area(&area)?, keys.as_deref()).map_err(err)?;
+    if window.label() == wm::OVERLAY {
+        found.retain(|k, _| !store::is_secret(k));
+    }
+    Ok(found)
 }
 
 #[tauri::command(async)]
-fn storage_set(app: AppHandle, state: State<Shared>, area: String, items: Map<String, Value>) -> Res<()> {
+fn storage_set(app: AppHandle, window: WebviewWindow, state: State<Shared>, area: String, items: Map<String, Value>) -> Res<()> {
+    keep_secrets_from(&window, items.keys())?;
+    if serde_json::to_vec(&items).map_err(err)?.len() > MAX_WRITE_BYTES {
+        return Err("too much to store at once".into());
+    }
     let changes = state.store.set(self::area(&area)?, items).map_err(err)?;
     announce(&app, &area, changes)
 }
 
 #[tauri::command(async)]
-fn storage_remove(app: AppHandle, state: State<Shared>, area: String, keys: Vec<String>) -> Res<()> {
+fn storage_remove(app: AppHandle, window: WebviewWindow, state: State<Shared>, area: String, keys: Vec<String>) -> Res<()> {
+    keep_secrets_from(&window, &keys)?;
     let changes = state.store.remove(self::area(&area)?, &keys).map_err(err)?;
     announce(&app, &area, changes)
 }
 
 #[tauri::command(async)]
-fn storage_clear(app: AppHandle, state: State<Shared>, area: String) -> Res<()> {
+fn storage_clear(app: AppHandle, window: WebviewWindow, state: State<Shared>, area: String) -> Res<()> {
+    only(&window, &[wm::CORE, wm::PANEL, wm::SETTINGS])?;
     let changes = state.store.clear(self::area(&area)?).map_err(err)?;
     announce(&app, &area, changes)
 }
 
 #[tauri::command(async)]
 fn image_put(state: State<Shared>, id: String, chat_id: String, data_url: String) -> Res<()> {
+    if data_url.len() > MAX_IMAGE_URL_BYTES {
+        return Err("that screenshot is too large".into());
+    }
     state.images.put(&id, &chat_id, &data_url).map_err(err)
 }
 
@@ -144,7 +195,8 @@ fn overlay_focus(app: AppHandle) -> Res<()> {
 /// From the overlay page: whether a selection is armed (it takes every
 /// click), and otherwise which parts of it take clicks (the bar, tooltips).
 #[tauri::command(async)]
-fn overlay_pointer(state: State<Shared>, interactive: bool, regions: Vec<Rect>) {
+fn overlay_pointer(state: State<Shared>, interactive: bool, mut regions: Vec<Rect>) {
+    regions.truncate(MAX_REGIONS);
     let mut s = state.overlay.lock().unwrap();
     s.interactive = interactive;
     s.regions = regions;
@@ -254,9 +306,18 @@ fn shoot(app: &AppHandle, display: &Display) -> Result<image::RgbaImage, Capture
 }
 
 /// Captures the overlay's display and crops it to the selection (CSS pixels
-/// in the overlay). Also says which window it was made over.
+/// in the overlay). Also says which window it was made over. Only for the
+/// core, and only while the bar is up: a selection the student is making,
+/// never a screenshot taken at some other moment.
 #[tauri::command]
-async fn capture_selection(app: AppHandle, state: State<'_, Shared>, request: CropRequest) -> Result<Captured, CaptureFailure> {
+async fn capture_selection(app: AppHandle, window: WebviewWindow, state: State<'_, Shared>, request: CropRequest) -> Result<Captured, CaptureFailure> {
+    let refused = |message: &str| CaptureFailure { code: "failed", message: message.into() };
+    if window.label() != wm::CORE {
+        return Err(refused("Only the app's core takes screenshots"));
+    }
+    if !state.overlay.lock().unwrap().visible {
+        return Err(refused("The bar is not up"));
+    }
     let display = overlay_display(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         let space = Space::native();
@@ -344,10 +405,27 @@ fn login_item(app: AppHandle) -> Res<bool> {
 }
 
 #[tauri::command(async)]
-fn login_item_set(app: AppHandle, on: bool) -> Res<bool> {
+fn login_item_set(app: AppHandle, window: WebviewWindow, on: bool) -> Res<bool> {
+    only(&window, &[wm::SETTINGS])?;
     let launcher = app.autolaunch();
     if on { launcher.enable() } else { launcher.disable() }.map_err(err)?;
+    #[cfg(windows)]
+    if on {
+        quote_run_entry(&app)?;
+    }
     launcher.is_enabled().map_err(err)
+}
+
+/// The plugin writes the Run entry as `C:\…\Selection AI\app.exe --hidden`,
+/// unquoted: Windows would try `C:\…\Selection.exe` first (CWE-428). Written
+/// again here, quoted, under the same name.
+#[cfg(windows)]
+fn quote_run_entry(app: &AppHandle) -> Res<()> {
+    let exe = std::env::current_exe().map_err(err)?;
+    windows_registry::CURRENT_USER
+        .create(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run")
+        .and_then(|key| key.set_string(&app.package_info().name, format!("\"{}\" --hidden", exe.display())))
+        .map_err(err)
 }
 
 // ── The shortcut and the menu bar icon ───────────────────────────────────
@@ -446,7 +524,10 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            let dir = app.path().app_data_dir()?.join("store");
+            // Local, not roaming, app data: on Windows a roaming profile would
+            // copy the keys, chats and screenshots to the domain's server.
+            // (The same folder as before on macOS and Linux.)
+            let dir = app.path().app_local_data_dir()?.join("store");
             std::fs::create_dir_all(&dir)?;
             let store = Store::open(&dir, store::system_secrets(&dir))?;
             let images = Images::open(&dir.join("images"))?;

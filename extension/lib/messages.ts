@@ -203,6 +203,16 @@ export interface ReaderHelloMsg {
   type: 'reader:hello';
 }
 
+/**
+ * Bar → background: open this tab's PDF in the reader. The background
+ * navigates the tab itself, so no web page can open or frame the reader
+ * (it is not web-accessible).
+ */
+export interface ReaderOpenMsg {
+  type: 'reader:open';
+  url: string;
+}
+
 /** Background → content/reader: offer a click that can open the answer panel. */
 export interface PanelNeedsClickMsg {
   type: 'panel:needs-click';
@@ -255,7 +265,8 @@ export type RuntimeMessage =
   | PinWatchMsg
   | SyncNowMsg
   | AccountDeleteMsg
-  | ReaderHelloMsg;
+  | ReaderHelloMsg
+  | ReaderOpenMsg;
 
 export function isRuntimeMessage(x: unknown): x is RuntimeMessage {
   return !!x && typeof x === 'object' && typeof (x as { type?: unknown }).type === 'string';

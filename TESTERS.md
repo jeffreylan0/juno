@@ -14,6 +14,10 @@ From **Assets** at the bottom of the release page, download the one for your com
 | Windows 10 or 11, 64-bit | `SelectionAI-…-windows-setup.exe` |
 | Chrome, Edge, Brave or Arc (optional: the browser extension) | `SelectionAI-…-chrome-extension.zip` |
 
+## Check your download (optional)
+
+The release lists `SHA256SUMS`, the fingerprint of each file. On a Mac, `shasum -a 256 SelectionAI-*-mac.dmg` in Terminal should print the same line; on Windows, `Get-FileHash .\SelectionAI-*-setup.exe` in PowerShell. With the GitHub CLI, `gh attestation verify <file> --repo jeffreylan0/selectionai` also proves it was built by this repository's own workflow.
+
 ## Install on a Mac
 
 1. Open the `.dmg` and drag **Selection AI** into **Applications**.
@@ -39,7 +43,7 @@ Windows asks for no permissions.
 Open settings with the gear on the bar, or right-click the menu bar or tray icon and choose **Settings…**. Under **Answers**, pick one:
 
 - **Claude** or **ChatGPT**: paste an API key. Get one at [console.anthropic.com](https://console.anthropic.com/settings/keys) or [platform.openai.com](https://platform.openai.com/api-keys). API use is pay-as-you-go and is billed separately from a Claude or ChatGPT subscription. If you were given a key for testing, paste that.
-- **Local model**: a model running on your own computer, such as one served by Ollama. It must be a model that reads images.
+- **Local model**: a model running on your own computer, such as one served by Ollama. It must be a model that reads images. (In the app, a server on another computer needs an `https://` address or a `.local` name.)
 - **Placeholder**: made-up answers, no AI. Use it to try the selecting without a key.
 
 Your key stays on your computer, in a file only your user account can read. It is only ever sent to the company that issued it. When you ask, only your selection and your question go to the AI you chose. The app collects no analytics.

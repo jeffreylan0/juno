@@ -24,6 +24,10 @@ select pg_temp.check(public.push_chats('[{"id":"c1","updated_ms":200,"data":{"ti
 select pg_temp.check((select data->>'title' from public.chats where id = 'c1') = 'newer', 'newer data kept');
 select pg_temp.check(public.push_chats('[{"id":"c2","updated_ms":300,"deleted":true,"data":{"x":1}}]') = 1, 'tombstone');
 select pg_temp.check((select deleted and data is null from public.chats where id = 'c2'), 'tombstone has no data');
+select pg_temp.check(public.push_chats('[{"id":"c3","updated_ms":1000,"data":{"title":"three"}}]') = 1, 'A pushes c3');
+select pg_temp.check(public.push_chats('[{"id":"c3","updated_ms":10,"deleted":true}]') = 1, 'a deletion from a computer whose clock is behind still deletes');
+select pg_temp.check((select deleted and updated_ms > 1000 from public.chats where id = 'c3'), 'and counts as newer');
+select pg_temp.check(public.push_chats('[{"id":"never-here","updated_ms":5,"deleted":true}]') = 0, 'deleting a chat the cloud never had stores nothing');
 do $$ begin
   perform public.push_chats('[{"id":"bad id!","updated_ms":1,"data":{}}]');
   raise exception 'FAILED: bad id accepted';
@@ -32,10 +36,18 @@ do $$ begin
   perform public.push_chats((select jsonb_agg(jsonb_build_object('id','x'||g,'updated_ms',1,'data','{}'::jsonb)) from generate_series(1,51) g));
   raise exception 'FAILED: 51 rows accepted';
 exception when invalid_parameter_value then null; end $$;
--- Not through the function either: direct writes obey the same policies, and delete is not granted.
+-- Never directly: only through push_chats and delete_all_chats, which keep the limits.
 do $$ begin
   delete from public.chats where id = 'c1';
   raise exception 'FAILED: delete allowed';
+exception when insufficient_privilege then null; end $$;
+do $$ begin
+  update public.chats set data = '{"x":1}' where id = 'c1';
+  raise exception 'FAILED: direct update allowed';
+exception when insufficient_privilege then null; end $$;
+do $$ begin
+  insert into public.chats (id, updated_ms, deleted) select 't' || g, 1, true from generate_series(1, 3) g;
+  raise exception 'FAILED: direct insert of tombstones allowed';
 exception when insufficient_privilege then null; end $$;
 do $$ begin
   insert into public.chats (user_id, id, updated_ms, data) values ('00000000-0000-0000-0000-00000000000b', 'evil', 1, '{}');
@@ -91,7 +103,7 @@ do $$ begin
   perform public.push_chats('[{"id":"b1","updated_ms":1,"data":{}}]');
   raise exception 'FAILED: B saved without cloud storage';
 exception when insufficient_privilege then null; end $$;
-select pg_temp.check(public.push_chats('[{"id":"b1","updated_ms":1,"deleted":true}]') = 1, 'B can still delete (tombstone)');
+select pg_temp.check(public.push_chats('[{"id":"b1","updated_ms":1,"deleted":true}]') = 0, 'B can still delete; a chat the cloud never had leaves nothing behind');
 do $$ begin
   insert into storage.objects (bucket_id, name) values ('screenshots', '00000000-0000-0000-0000-00000000000b/c1/img1');
   raise exception 'FAILED: B uploaded without cloud storage';
@@ -159,6 +171,11 @@ select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'plus', 'a late renewal webh
 update public.subscriptions set period_end = now() - interval '5 days' where id = 'sub_c';
 select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'free', 'long past its period: over');
 update public.subscriptions set status = 'canceled', period_end = now() + interval '1 day' where id = 'sub_c';
+insert into public.subscriptions (id, user_id, plan, kind, status) values ('sub_no_end', '00000000-0000-0000-0000-00000000000c', 'plus', 'subscription', 'active');
+select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'free', 'a subscription with no period end gives nothing');
+reset role;
+delete from public.subscriptions where id = 'sub_no_end'; -- the Worker can't delete one
+set role service_role;
 select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'free', 'canceled: free');
 select pg_temp.check(not (pg_temp.acct('c') -> 'billing' ->> 'active')::boolean and pg_temp.acct('c') -> 'billing' ->> 'status' = 'canceled', 'canceled shows as ended');
 insert into public.subscriptions (id, user_id, plan, kind, status, period_end)
@@ -175,6 +192,45 @@ update public.subscriptions set period_end = now() + interval '1 day' where id =
 set role service_role;
 select pg_temp.check(pg_temp.acct('d') ->> 'plan' = 'unlimited' and (pg_temp.acct('d') ->> 'quota')::int = 100000, 'the most generous plan wins');
 
+-- ── Limits: what one account may keep (cloud_limits) ──
+reset role;
+set role authenticated;
+set request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000d"}';
+insert into storage.objects (bucket_id, name, metadata) values ('screenshots', '00000000-0000-0000-0000-00000000000d/c/first', '{"size":10}');
+select pg_temp.check(public.screenshot_room(), 'D has room for screenshots');
+reset role;
+insert into public.chats (user_id, id, updated_ms, data) select '00000000-0000-0000-0000-00000000000d', 'fill' || g, 1, '{}' from generate_series(1, 5000) g;
+insert into storage.objects (bucket_id, name, metadata) select 'screenshots', '00000000-0000-0000-0000-00000000000d/c/' || g, '{"size":10}' from generate_series(1, 20000) g;
+set role authenticated;
+set request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000d"}';
+do $$ begin
+  perform public.push_chats('[{"id":"one-more","updated_ms":1,"data":{}}]');
+  raise exception 'FAILED: a chat past the limit was saved';
+exception when program_limit_exceeded then null; end $$;
+select pg_temp.check(public.push_chats('[{"id":"fill1","updated_ms":2,"data":{"t":1}}]') = 1, 'a chat already there still changes at the limit');
+do $$ begin
+  insert into storage.objects (bucket_id, name) values ('screenshots', '00000000-0000-0000-0000-00000000000d/c/extra');
+  raise exception 'FAILED: a screenshot past the limit was stored';
+exception when insufficient_privilege then null; end $$;
+-- Deleting the account waits for its screenshots and its billing to go.
+do $$ begin
+  perform public.delete_me();
+  raise exception 'FAILED: deleted with screenshots left';
+exception when object_not_in_prerequisite_state then null; end $$;
+reset role;
+delete from storage.objects where name like '00000000-0000-0000-0000-00000000000d/%';
+insert into public.customers (user_id, stripe_customer) values ('00000000-0000-0000-0000-00000000000d', 'cus_d9');
+set role authenticated;
+set request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000d"}';
+do $$ begin
+  perform public.delete_me();
+  raise exception 'FAILED: deleted with billing open';
+exception when object_not_in_prerequisite_state then null; end $$;
+reset role;
+delete from public.customers where user_id = '00000000-0000-0000-0000-00000000000d';
+delete from public.chats where user_id = '00000000-0000-0000-0000-00000000000d';
+set role service_role;
+
 -- ── B reads its usage; deletes all chats; A deletes the account ──
 reset role;
 set role authenticated;
@@ -185,6 +241,12 @@ set request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000a"}';
 select pg_temp.check(public.delete_all_chats() = 1, 'A deletes all (one live chat)');
 select pg_temp.check((select bool_and(deleted) from public.chats), 'all tombstones');
 select pg_temp.check((select updated_ms from public.chats where id = 'c1') > 200, 'tombstone is newer');
+do $$ begin
+  perform public.delete_me();
+  raise exception 'FAILED: A deleted with a screenshot left';
+exception when object_not_in_prerequisite_state then null; end $$;
+-- As the apps do: the screenshots first (allowed without cloud storage, always), then the account.
+delete from storage.objects where bucket_id = 'screenshots' and name like '00000000-0000-0000-0000-00000000000a/%';
 select public.delete_me();
 reset role;
 select pg_temp.check(not exists (select 1 from auth.users where email = 'a@example.com'), 'A gone');

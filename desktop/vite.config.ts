@@ -12,6 +12,7 @@
 import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import { hardenLibraries } from '../extension/harden-libs';
 
 const here = (p: string) => resolve(__dirname, p);
 const extension = here('../extension');
@@ -31,7 +32,9 @@ export default defineConfig({
   root: here('.'),
   envDir: extension,
   envPrefix: ['WXT_', 'VITE_'],
-  plugins: [react()],
+  // The same build-time edits as the extension's (React and DOMPurify
+  // without their HTML-string and eval paths): extension/harden-libs.ts.
+  plugins: [react(), hardenLibraries()],
   resolve: {
     alias: [
       { find: /^@\/brand$/, replacement: here('src/brand.ts') },

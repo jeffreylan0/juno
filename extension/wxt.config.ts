@@ -30,6 +30,22 @@ if (process.env.E2E === '1') {
  */
 const ACCOUNTS = !!(process.env.WXT_SUPABASE_URL && process.env.WXT_SUPABASE_KEY);
 
+/**
+ * A build with accounts sends the session token to these, so a built
+ * extension only ever uses https:// (the hosted service otherwise defaults to
+ * a local dev Worker on plain HTTP). `wxt dev` may use this computer's.
+ */
+function checkServiceUrls(dev: boolean): void {
+  if (!ACCOUNTS || process.env.E2E === '1') return;
+  for (const name of ['WXT_SUPABASE_URL', 'WXT_GATEWAY_URL']) {
+    const value = process.env[name] ?? '';
+    const local = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(value);
+    if (!value.startsWith('https://') && !(dev && local)) {
+      throw new Error(`${name} must be an https:// address in a build with accounts (got "${value || 'nothing'}").`);
+    }
+  }
+}
+
 // See https://wxt.dev/api/config.html
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
@@ -38,12 +54,35 @@ export default defineConfig({
   manifestVersion: 3,
   srcDir: '.',
   outDir: '.output',
+  // The sources archive Mozilla's reviewers rebuild from (AMO_SOURCE.md): the
+  // whole workspace, since the build needs the root lockfile and shared/,
+  // without anything generated.
+  zip: {
+    sourcesRoot: resolve(__dirname, '..'),
+    excludeSources: [
+      '**/.output/**',
+      '**/.wxt/**',
+      '**/dist/**',
+      'desktop/src-tauri/target/**',
+      'desktop/src-tauri/gen/**',
+      'eval/out/**',
+      'eval/cache/**',
+      'test-results/**',
+      'playwright-report/**',
+    ],
+  },
   alias: {
     '@shared': resolve(__dirname, '../shared'),
   },
   vite: () => ({
     // KaTeX ships fonts; keep them inline-free and let WXT copy them.
     build: { target: 'es2022' },
+    // The in-page UI shuts the page out (lib/page-trust.ts); the E2E build
+    // keeps its shadow roots open for the tests to look inside.
+    define: {
+      'import.meta.env.SAI_IN_PAGE': 'true',
+      'import.meta.env.SAI_OPEN_SHADOW': JSON.stringify(process.env.E2E === '1'),
+    },
     // React and pdf.js without their innerHTML, eval and computed-import
     // paths (see harden-libs.ts), in the page bundles and in the worker
     // bundle Vite builds separately.
@@ -70,6 +109,7 @@ export default defineConfig({
     // dev build unable to load its own scripts. Never set E2E for a store
     // build; `pnpm zip` and the release workflow don't.
     'build:manifestGenerated': (wxt, manifest) => {
+      checkServiceUrls(wxt.config.command === 'serve');
       if (process.env.E2E === '1') {
         manifest.host_permissions = ['<all_urls>'];
         return;
@@ -96,8 +136,12 @@ export default defineConfig({
       ],
       host_permissions: [] as string[],
       // The default for extension pages, plus WebAssembly for the PDF
-      // reader's image decoders (pdf.js). No remote code, no eval.
-      content_security_policy: { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';" },
+      // reader's image decoders (pdf.js). No remote code, no eval, no plugins,
+      // and no remote images, media or fonts: a model's answer can't make a
+      // page fetch a URL (lib/render.ts). Screenshots are data: or blob: URLs.
+      content_security_policy: {
+        extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; img-src 'self' data: blob:; media-src 'none'; font-src 'self' data:; base-uri 'none'; form-action 'none'",
+      },
       // Alt/Option+Shift+S is the one family free in Chrome, Edge and Firefox
       // on both Windows and Mac (checked against each browser's published
       // shortcut list); every Ctrl/Cmd+Shift letter is taken somewhere. It is
@@ -119,7 +163,6 @@ export default defineConfig({
       action: {
         default_title: BRAND.actionTitle,
       },
-      web_accessible_resources: [{ resources: ['reader.html'], matches: ['<all_urls>'] }],
     };
 
     if (browser === 'firefox') {

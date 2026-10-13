@@ -266,8 +266,13 @@ export class ChatEngine {
         void (async () => {
           const s = await currentSession();
           if (!s) return { error: 'Signed out already.' };
-          await deleteAccount(s.user.id);
-          await this.sync?.reset();
+          const resume = await this.sync?.pause();
+          try {
+            await deleteAccount(s.user.id);
+            await this.sync?.reset();
+          } finally {
+            resume?.();
+          }
           return { ok: true };
         })()
           .catch((err: Error) => ({ error: err.message }))

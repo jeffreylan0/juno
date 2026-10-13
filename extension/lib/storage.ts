@@ -5,6 +5,7 @@
 import { storage } from '#imports';
 import { DEFAULT_MACROS, DEFAULT_PROMPT, DEFAULT_PROMPTS, type Macro } from '@shared/prompts';
 import type { ModelRef, Provider, SelectionKind } from '@shared/payload';
+import { sealedItem } from './sealed';
 
 export type { Macro } from '@shared/prompts';
 
@@ -96,9 +97,8 @@ export const settingsItem = storage.defineItem<Settings>('local:settings', {
  */
 export const lastKindItem = storage.defineItem<SelectionKind>('local:lastSelectionKind', { fallback: 'box' });
 
-export const keysItem = storage.defineItem<Keys>('local:keys', {
-  fallback: { anthropic: '', openai: '', session: '' },
-});
+/** Sealed at rest in the extension (lib/sealed.ts): content scripts can read storage.local. */
+export const keysItem = sealedItem<Keys>('local:keys', { anthropic: '', openai: '', session: '' });
 
 export async function getSettings(): Promise<Settings> {
   return migrateSettings(await settingsItem.getValue());
@@ -213,4 +213,27 @@ export async function getKeys(): Promise<Keys> {
 /** Whether a selection should be sent without waiting for the student. */
 export function shouldAutoSend(settings: Settings): boolean {
   return settings.sendBehavior === 'auto';
+}
+
+/**
+ * A blocked-sites entry as a hostname, whatever was typed: a pasted URL, a
+ * leading "*." or "www.", capitals, a trailing dot. Empty if there is none.
+ */
+export function siteOf(entry: string): string {
+  let host = entry.trim().toLowerCase();
+  try {
+    if (/^[a-z][a-z0-9+.-]*:\/\//.test(host)) host = new URL(host).hostname;
+  } catch {
+    // Not a URL after all: read as a name.
+  }
+  return host.split('/')[0]!.replace(/^\*\./, '').replace(/^www\./, '').replace(/\.$/, '');
+}
+
+/** Whether a page's host is a blocked site: the site itself or anything under it (exam.example.edu blocks a.exam.example.edu). */
+export function isBlockedHost(host: string, blocked: readonly string[]): boolean {
+  const h = host.toLowerCase().replace(/\.$/, '');
+  return blocked.some((entry) => {
+    const site = siteOf(entry);
+    return !!site && (h === site || h.endsWith(`.${site}`));
+  });
 }

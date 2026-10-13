@@ -76,7 +76,9 @@ async function main(): Promise<void> {
   const brand = document.querySelector('.brand');
   if (brand) brand.textContent = `${BRAND.shortName} reader`;
   const url = fileParam();
-  if (!url) return status('No PDF to open here.', true);
+  // Opened by the extension in a tab of its own, never inside another page,
+  // and only for a document that tab could load itself.
+  if (window.top !== window || !url || !/^(https?|file):/i.test(url)) return status('No PDF to open here.', true);
   els.file.textContent = decodeURIComponent(url.split('/').pop() ?? url);
   document.title = `${els.file.textContent} — ${BRAND.shortName} reader`;
 

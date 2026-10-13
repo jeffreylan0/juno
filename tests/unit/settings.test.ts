@@ -5,9 +5,11 @@ import {
   SETTINGS_VERSION,
   answerChoiceOf,
   fallbackQuestion,
+  isBlockedHost,
   migrateSettings,
   sanitizeMacros,
   shouldAutoSend,
+  siteOf,
   withAnswerChoice,
   type Settings,
 } from '@/lib/storage';
@@ -138,5 +140,25 @@ describe('answer choice', () => {
     expect(fallbackQuestion(DEFAULT_SETTINGS)).toBe(DEFAULT_SETTINGS.macros[0]!.prompt);
     expect(fallbackQuestion({ defaultPrompt: 'Solve it.', macros: [] })).toBe('Solve it.');
     expect(fallbackQuestion({ defaultPrompt: '', macros: [] })).toBe('Explain this.');
+  });
+});
+
+describe('blocked sites', () => {
+  it('reads what was typed as a site: a pasted URL, *., www., capitals, a trailing dot', () => {
+    expect(siteOf(' https://Exam.Example.edu/quiz/1 ')).toBe('exam.example.edu');
+    expect(siteOf('*.example.edu')).toBe('example.edu');
+    expect(siteOf('www.example.edu.')).toBe('example.edu');
+    expect(siteOf('example.edu/path')).toBe('example.edu');
+    expect(siteOf('   ')).toBe('');
+  });
+
+  it('blocks a site and everything under it, and nothing that merely ends the same way', () => {
+    const blocked = ['example.edu', 'https://quiz.school.org/x'];
+    expect(isBlockedHost('example.edu', blocked)).toBe(true);
+    expect(isBlockedHost('exam.example.edu', blocked)).toBe(true);
+    expect(isBlockedHost('www.example.edu', blocked)).toBe(true);
+    expect(isBlockedHost('quiz.school.org', blocked)).toBe(true);
+    expect(isBlockedHost('notexample.edu', blocked)).toBe(false);
+    expect(isBlockedHost('school.org', blocked)).toBe(false);
   });
 });

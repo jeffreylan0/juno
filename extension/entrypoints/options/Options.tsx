@@ -35,6 +35,7 @@ import {
   keysItem,
   sanitizeMacros,
   settingsItem,
+  siteOf,
   type Keys,
   type Macro,
   type SendBehavior,
@@ -500,6 +501,18 @@ function KeyStatus({ check, hasKey }: { check: Check; hasKey: boolean }) {
   );
 }
 
+/** Whether a local-model address is somewhere else: 'plain' over unencrypted HTTP, 'remote' over HTTPS, null on this computer. */
+function offComputer(address: string): 'plain' | 'remote' | null {
+  let url: URL;
+  try {
+    url = new URL(address.trim());
+  } catch {
+    return null;
+  }
+  if (/^(localhost|127(\.\d+){3}|\[::1\])$/i.test(url.hostname)) return null;
+  return url.protocol === 'https:' ? 'remote' : 'plain';
+}
+
 function LocalServer({ settings, save }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void> }) {
   const [url, setUrl] = useState(settings.localBaseUrl);
   const [model, setModel] = useState(settings.localModel);
@@ -528,6 +541,13 @@ function LocalServer({ settings, save }: { settings: Settings; save: (patch: Par
             saveUrl(e.target.value);
           }}
         />
+        {offComputer(url) && (
+          <small className="help warn" data-testid="local-remote">
+            {offComputer(url) === 'plain'
+              ? "This server isn't on this computer, and the address isn't https: screenshots and questions would cross the network unencrypted."
+              : "This server isn't on this computer: screenshots and questions leave it, to wherever that server is."}
+          </small>
+        )}
       </label>
       <label className="field">
         <span className="field-label">Model</span>
@@ -707,7 +727,7 @@ function PrivacySection({
     void save({
       blockedSites: v
         .split(/\n|,/)
-        .map((s) => s.trim().toLowerCase())
+        .map(siteOf)
         .filter(Boolean),
     }),
   );
@@ -756,7 +776,7 @@ function PrivacySection({
             </li>
           )}
           <li>
-            <b>A local model</b>: nothing leaves this computer.
+            <b>A local model</b> on this computer: nothing leaves it.
           </li>
           <li>
             <b>Temporary chats</b> are never saved{ACCOUNTS ? ' or synced' : ''}, and are deleted when you're done.

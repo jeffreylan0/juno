@@ -1,0 +1,36 @@
+# Weekly, grouped update PRs for the actions (pinned by commit), npm and
+# Cargo. A release waits a few days first (cooldown), as pnpm-workspace.yaml's
+# minimumReleaseAge does for installs. Security updates come as soon as
+# GitHub knows of an advisory (Settings → Code security: Dependabot alerts
+# and security updates on; SECURITY.md).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      actions:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: cargo
+    directory: /desktop/src-tauri
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]

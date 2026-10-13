@@ -210,11 +210,11 @@ test('a free account is offered Plus at Stripe’s prices; after paying it shows
     const json = (body: unknown) => route.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify(body) });
     if (path === '/billing/prices') return json(offers);
     posted.push({ path, auth: r.headers().authorization, body: r.postDataJSON() });
-    if (path === '/billing/checkout') return json({ url: 'https://checkout.stripe.test/c/pay/cs_1' });
-    if (path === '/billing/portal') return json({ url: 'https://billing.stripe.test/p/session/1' });
+    if (path === '/billing/checkout') return json({ url: 'https://checkout.stripe.com/c/pay/cs_1' });
+    if (path === '/billing/portal') return json({ url: 'https://billing.stripe.com/p/session/1' });
     return route.fulfill({ status: 404, headers: cors });
   });
-  await context.route('https://*.stripe.test/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Stripe</h1>' }));
+  await context.route('https://*.stripe.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Stripe</h1>' }));
 
   const options = await context.newPage();
   await options.goto(`chrome-extension://${extensionId}/options.html#account`);
@@ -229,7 +229,7 @@ test('a free account is offered Plus at Stripe’s prices; after paying it shows
   // Checkout opens in the browser, for the signed-in account.
   const checkout = context.waitForEvent('page');
   await account.getByTestId('buy-plus_monthly').click();
-  expect((await checkout).url()).toBe('https://checkout.stripe.test/c/pay/cs_1');
+  expect((await checkout).url()).toBe('https://checkout.stripe.com/c/pay/cs_1');
   expect(posted).toEqual([{ path: '/billing/checkout', auth: expect.stringMatching(/^Bearer at-/), body: { price: 'plus_monthly' } }]);
 
   // Paid: Stripe told the Worker, the Worker the database. Back on the page, it shows.
@@ -243,7 +243,7 @@ test('a free account is offered Plus at Stripe’s prices; after paying it shows
 
   const portal = context.waitForEvent('page');
   await account.getByTestId('manage-billing').click();
-  expect((await portal).url()).toBe('https://billing.stripe.test/p/session/1');
+  expect((await portal).url()).toBe('https://billing.stripe.com/p/session/1');
 
   // Cancelled in the portal: it says when it ends.
   fake.subscribe('student@example.com', { period_end: '2026-11-11T12:00:00Z', cancel_at_period_end: true });

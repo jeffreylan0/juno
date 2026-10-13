@@ -48,6 +48,10 @@ fn serve(app: &AppHandle, mut stream: TcpStream) -> std::io::Result<()> {
     let method = parts.next().unwrap_or("").to_string();
     let target = parts.next().unwrap_or("/").to_string();
     let mut length = 0usize;
+    // A browser always says where a request comes from; the tests never do.
+    // So a web page open while a test build runs can't drive it (a no-CORS
+    // POST would otherwise reach /eval).
+    let mut from_a_page = false;
     loop {
         let mut header = String::new();
         reader.read_line(&mut header)?;
@@ -58,9 +62,15 @@ fn serve(app: &AppHandle, mut stream: TcpStream) -> std::io::Result<()> {
             if name.eq_ignore_ascii_case("content-length") {
                 length = value.trim().parse().unwrap_or(0);
             }
+            if name.eq_ignore_ascii_case("origin") || name.eq_ignore_ascii_case("sec-fetch-site") {
+                from_a_page = true;
+            }
         }
     }
-    let mut body = vec![0; length];
+    if from_a_page {
+        return write!(stream, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    }
+    let mut body = vec![0; length.min(64 * 1024 * 1024)];
     reader.read_exact(&mut body)?;
     let body = String::from_utf8_lossy(&body).to_string();
     let (path, query) = target.split_once('?').unwrap_or((&target, ""));

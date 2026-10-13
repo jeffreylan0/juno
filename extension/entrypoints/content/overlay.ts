@@ -14,6 +14,7 @@
  * document in capture, which never needed focus in the first place.
  */
 import type { Rect, SelectionKind } from '@shared/payload';
+import { fromUser, privateShadow } from '@/lib/page-trust';
 import { Bar, BAR_STYLE, type BarNotice } from './bar';
 import { BoxSelector, HANDLES } from './select-box';
 import { LassoSelector, type Lasso } from './select-freeform';
@@ -219,7 +220,7 @@ export class Overlay {
     this.backInShot();
     if (this.waitingKeys) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.repeat || e.defaultPrevented) return;
+      if (!fromUser(e) || e.key !== 'Escape' || e.repeat || e.defaultPrevented) return;
       // The real target, inside any web component, not its shadow host.
       if (isEditable(e.composedPath()[0] ?? e.target)) return;
       // A page dialog open: this Escape is closing it.
@@ -281,10 +282,8 @@ export class Overlay {
     // A bar left by an earlier copy of this script (one the extension's update orphaned).
     document.querySelectorAll('selection-ai-overlay').forEach((el) => el.remove());
     const host = document.createElement('selection-ai-overlay');
-    // Open, not closed: the overlay holds nothing worth hiding — secrets stay
-    // on the options page — and open keeps it inspectable in DevTools and
-    // reachable from the end-to-end tests.
-    const shadow = host.attachShadow({ mode: 'open' });
+    // Closed, and deaf to events the page makes up (lib/page-trust.ts).
+    const shadow = privateShadow(host);
     const style = document.createElement('style');
     style.textContent = STYLE;
 
@@ -562,6 +561,7 @@ export class Overlay {
       };
 
       const onKey = (e: KeyboardEvent) => {
+        if (!fromUser(e)) return;
         if (e.key === 'Enter' && this.state === 'adjusting' && !isOurUi(e)) {
           // On our own Ask button, Enter already clicks it.
           e.preventDefault();

@@ -18,3 +18,6 @@ safari/
 desktop/dist/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
+
+# Wrangler's local secrets (worker/)
+.dev.vars*

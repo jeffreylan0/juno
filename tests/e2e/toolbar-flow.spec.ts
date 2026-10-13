@@ -102,22 +102,21 @@ test('armed, the page dims a little; while drawing, only outside the box', async
   // page undimmed, and the new surface does not fade in again.
   await page.locator(`${BAR} .chip[data-kind="box"]`).click();
   await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'armed');
-  const gaps = await page.evaluate(async () => {
+  // Sampled every frame from just before a real click until well after it.
+  await page.evaluate(() => {
     const root = document.querySelector('selection-ai-overlay')!.shadowRoot!;
-    let gaps = 0;
-    let frames = 0;
+    const seen = { gaps: 0, frames: 0 };
+    (window as unknown as { __modeSwap: typeof seen }).__modeSwap = seen;
     const sample = () => {
-      if (!root.querySelector('.backdrop.interactive:not(.leaving)')) gaps++;
-      if (++frames < 20) requestAnimationFrame(sample);
+      if (!root.querySelector('.backdrop.interactive:not(.leaving)')) seen.gaps++;
+      if (++seen.frames < 45) requestAnimationFrame(sample);
     };
-    (root.querySelector('.chip[data-kind="freeform"]') as HTMLElement).click();
-    await new Promise<void>((done) => {
-      requestAnimationFrame(sample);
-      setTimeout(done, 600);
-    });
-    return gaps;
+    requestAnimationFrame(sample);
   });
-  expect(gaps).toBe(0);
+  await page.locator(`${BAR} .chip[data-kind="freeform"]`).click();
+  await page.waitForFunction(() => (window as unknown as { __modeSwap: { frames: number } }).__modeSwap.frames >= 45);
+  expect(await page.evaluate(() => (window as unknown as { __modeSwap: { gaps: number } }).__modeSwap.gaps)).toBe(0);
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'armed');
   await expect(page.locator(`${OVERLAY} .backdrop.steady`)).toHaveCount(1);
 });
 
@@ -214,6 +213,27 @@ test('Escape before anything is selected hides the bar and the panel', async ({ 
   await page.keyboard.press('Escape');
   await expect(page.locator(OVERLAY)).toHaveCount(0);
   await closed;
+});
+
+test('the page’s own scripts can’t operate the bar: made-up clicks, keys and drags are ignored', async ({ context, serviceWorker }) => {
+  const page = await context.newPage();
+  await armed(serviceWorker, page);
+  await expect(page.locator(BAR)).toBeVisible({ timeout: 10_000 });
+  await page.evaluate(() => {
+    const root = document.querySelector('selection-ai-overlay')!.shadowRoot!;
+    (root.querySelector('.ghost') as HTMLElement).click();
+    (root.querySelector('.chip[data-kind="freeform"]') as HTMLElement).click();
+    const surface = root.querySelector('.backdrop.interactive') as HTMLElement;
+    for (const [type, x] of [['pointerdown', 100], ['pointermove', 300], ['pointerup', 300]] as const) {
+      surface.dispatchEvent(new PointerEvent(type, { bubbles: true, composed: true, clientX: x, clientY: x, pointerId: 1, isPrimary: true, button: 0, buttons: 1 }));
+    }
+    for (const target of [document, window]) target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    (root.querySelector('.close') as HTMLElement).click();
+  });
+  await page.waitForTimeout(300);
+  await expect(page.locator(OVERLAY)).toHaveAttribute('data-state', 'armed');
+  await expect(page.locator(`${BAR} .chip[data-kind="box"]`)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(`${BAR} .ghost`)).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('the page still scrolls while a selection is armed', async ({ context, serviceWorker }) => {

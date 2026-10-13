@@ -17,7 +17,9 @@
  *
  * Who owns the chats on this computer: the first account to sign in here
  * gets them uploaded. Another account signing in later gets its own chats
- * downloaded, and does not get the first one's uploaded.
+ * downloaded, and never gets the chats already here uploaded: not when it
+ * opens one, adds to it or deletes it (they stay "foreign" until the cloud
+ * shows one is this account's own).
  */
 import { storage } from '#imports';
 import {
@@ -61,6 +63,8 @@ interface SyncState {
   wipe?: boolean;
   /** Screenshot ids in the cloud, by chat. */
   uploaded: Record<string, string[]>;
+  /** Chats that were here when this account took over from another: never pushed to this one. */
+  foreign?: string[];
 }
 
 const stateItem = storage.defineItem<SyncState | null>('local:sync', { fallback: null });
@@ -129,6 +133,20 @@ export class ChatSync {
     return await this.running;
   }
 
+  /**
+   * Holds every sync until the returned function is called, once the run in
+   * progress is done: deleting the account must not race an upload.
+   */
+  async pause(): Promise<() => void> {
+    const was = this.stopped;
+    this.stopped = true;
+    clearTimeout(this.timer);
+    await this.running?.catch(() => {});
+    return () => {
+      this.stopped = was;
+    };
+  }
+
   /** The account was deleted: this computer's chats belong to nobody again. */
   async reset(): Promise<void> {
     this.known.clear();
@@ -170,7 +188,7 @@ export class ChatSync {
 
   private async markDirty(id: string): Promise<void> {
     const s = await this.state();
-    if (!s || s.dirty.includes(id)) return;
+    if (!s || s.dirty.includes(id) || s.foreign?.includes(id)) return;
     s.dirty.push(id);
     delete s.deleted[id];
     await this.save(s);
@@ -183,6 +201,10 @@ export class ChatSync {
     const at = Date.now();
     for (const id of ids) {
       if (s.wipe) break;
+      if (s.foreign?.includes(id)) {
+        s.foreign = s.foreign.filter((f) => f !== id);
+        continue;
+      }
       s.deleted[id] = at;
       s.dirty = s.dirty.filter((d) => d !== id);
       this.known.delete(id);
@@ -216,8 +238,10 @@ export class ChatSync {
     const s = await this.state();
     if (s?.owner === userId) return s;
     // The first account here takes this computer's chats; a later one does not.
-    const dirty = s ? [] : (await listChats()).map((c) => c.id);
-    const next: SyncState = { owner: userId, cursor: null, dirty, deleted: {}, uploaded: {} };
+    const here = (await listChats()).map((c) => c.id);
+    const next: SyncState = s
+      ? { owner: userId, cursor: null, dirty: [], deleted: {}, uploaded: {}, foreign: here }
+      : { owner: userId, cursor: null, dirty: here, deleted: {}, uploaded: {} };
     this.known.clear();
     await this.save(next);
     return next;
@@ -354,6 +378,8 @@ export class ChatSync {
 
   /** Takes one row from the cloud; returns the chats it removed here. */
   private async apply(row: CloudChatRow, s: SyncState, uid: string): Promise<string[]> {
+    // In this account's cloud: its own chat after all (it signed in here before).
+    if (s.foreign?.includes(row.id)) s.foreign = s.foreign.filter((f) => f !== row.id);
     const local = await getSavedChat(row.id);
     const mine = local ? versionOf(local) : 0;
 

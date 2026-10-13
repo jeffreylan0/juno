@@ -201,10 +201,11 @@ test('settings show only what the chosen AI needs, check a key for free, and sav
     .poll(async () =>
       serviceWorker.evaluate(async () => {
         const { settings, keys } = await chrome.storage.local.get(['settings', 'keys']);
-        return { provider: settings?.provider, vendor: settings?.vendor, model: settings?.modelOverride?.model, key: keys?.anthropic };
+        return { provider: settings?.provider, vendor: settings?.vendor, model: settings?.modelOverride?.model, sealed: keys?.sealed };
       }),
     )
-    .toEqual({ provider: 'byok', vendor: 'anthropic', model: 'claude-sonnet-5-5', key: 'sk-ant-good' });
+    .toEqual({ provider: 'byok', vendor: 'anthropic', model: 'claude-sonnet-5-5', sealed: 1 });
+  expect(await serviceWorker.evaluate(async () => JSON.stringify(await chrome.storage.local.get(null)))).not.toContain('sk-ant-good');
 
   // A local model swaps the key for a server address.
   await options.getByTestId('answer-local').click();

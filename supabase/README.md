@@ -46,7 +46,8 @@ Before starting, have ready: the business's legal details for Stripe (humanbn, i
 
 ## 2. Email codes
 
-1. **Authentication → Sign In / Providers → Email**: enabled; *Email OTP length* 6 (the apps accept 6–10); *Email OTP expiration* 3600 s or less.
+1. **Authentication → Sign In / Providers → Email**: enabled; *Email OTP length* **8** (the apps accept 6–10; each digit makes guessing ten times harder); *Email OTP expiration* **600** s (10 minutes, NIST SP 800-63B's limit for a one-time code); *Confirm email* on; *Secure password change* on. The apps never use passwords: leave *Allow new users to sign up* on (codes create accounts) but don't add a password sign-in anywhere. **Allow anonymous sign-ins** stays off.
+   **Authentication → Rate Limits**: keep the defaults or lower them: emails sent per hour (codes), token verifications per 5 minutes per IP, token refreshes. They are what stops someone guessing codes or burning your email quota.
 2. **Authentication → Emails → Templates**: in both **Magic link** and **Confirm signup**, put the code in the message, for example:
 
    ```html
@@ -55,7 +56,7 @@ Before starting, have ready: the business's legal details for Stripe (humanbn, i
    <p>It works once and expires within an hour. If you didn't ask for it, ignore this email.</p>
    ```
 
-   Without `{{ .Token }}` the email carries only a link, which the apps do not use.
+   Without `{{ .Token }}` the email carries only a link, which the apps do not use. Add a line such as *Never share this code. Selection AI will never ask you for it.*: a code is the whole sign-in.
 3. **Authentication → Emails → SMTP Settings**: a real sender (Resend, Postmark, Amazon SES, …), from an address on your domain with its SPF and DKIM records set. Supabase's built-in sender only reaches members of your Supabase team, a few emails an hour.
 
 ## 3. Google sign-in
@@ -66,7 +67,7 @@ Before starting, have ready: the business's legal details for Stripe (humanbn, i
 
 ## 4. Redirect URLs
 
-Supabase only sends a sign-in back to addresses on its list. **Authentication → URL Configuration → Redirect URLs**, add:
+Supabase only sends a sign-in back to addresses on its list. **Authentication → URL Configuration**: set **Site URL** to your own site (for example `https://humanbn.org`), not the default `http://localhost:3000`: Supabase falls back to it for a redirect it doesn't recognise. Then **Redirect URLs**, add:
 
 | Where | Redirect URL |
 | --- | --- |
@@ -112,10 +113,10 @@ Do all of this in **test mode** first (the toggle at the top of the dashboard), 
 
    The apps show whatever prices these keys name, in the order of `STRIPE_PRICES` in `worker/wrangler.toml`. To change a price later, make a new price and move the lookup key to it (*Transfer lookup key*); students already subscribed keep theirs. A one-time price is a pass: Plus for `pass_days` days, no renewal.
 3. **Settings → Billing → Customer portal**: allow *Update payment methods*, *View invoice history* and *Cancel subscriptions* (at the end of the period); under *Subscriptions → Customers can switch plans*, add the monthly and yearly prices. Save.
-4. **Settings → Billing → Subscriptions and emails**: turn on Smart Retries, and the emails for failed payments and expiring cards, so a declined card is retried before anything ends. (While Stripe retries, the account keeps Plus and Settings tells the student to update their card.)
+4. **Settings → Billing → Subscriptions and emails**: turn on Smart Retries, and the emails for failed payments and expiring cards, so a declined card is retried before anything ends. Set what happens *if all retries for a payment fail* to **Cancel the subscription** (not "leave it past due", which would keep Plus on unpaid for a whole period). (While Stripe retries, the account keeps Plus and Settings tells the student to update their card.)
 5. **Tax**: Stripe Tax (**Tax → Set up**) registers where you must collect sales tax or VAT and adds it at checkout; then set `STRIPE_TAX = "on"` in `worker/wrangler.toml` and deploy. If you would rather not handle sales tax and VAT registrations yourself, a merchant of record (Paddle, Lemon Squeezy) does it for a larger fee, but that would replace `worker/src/billing.ts`; decide before launch.
-6. ★ **A restricted API key** (Developers → API keys → Create restricted key), with only: *Customers* write, *Checkout Sessions* write, *Customer portal* write, *Prices* read, *Products* read, *Subscriptions* read. Then `npx wrangler secret put STRIPE_SECRET_KEY`.
-7. ★ **The webhook** (Developers → Webhooks → Add endpoint): `https://<your Worker>/stripe/webhook`, sending `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `customer.subscription.paused`, `customer.subscription.resumed` and `charge.refunded`. Copy its signing secret: `npx wrangler secret put STRIPE_WEBHOOK_SECRET`.
+6. ★ **A restricted API key** (Developers → API keys → Create restricted key), with only: *Customers* write, *Checkout Sessions* write, *Customer portal* write, *Prices* read, *Products* read, *Subscriptions* read, *PaymentIntents* read, *Charges* read (the last two so a pass's payment is read back from Stripe: refunded or disputed passes end). Then `npx wrangler secret put STRIPE_SECRET_KEY`.
+7. ★ **The webhook** (Developers → Webhooks → Add endpoint): `https://<your Worker>/stripe/webhook`, sending `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `customer.subscription.paused`, `customer.subscription.resumed`, `charge.refunded`, `charge.dispute.created` and `charge.dispute.closed`. Don't make Payment Links or other Checkout integrations on this Stripe account for Selection AI: the Worker gives a plan only for checkouts it made itself, so those would take payment and give nothing. Copy its signing secret: `npx wrangler secret put STRIPE_WEBHOOK_SECRET`.
 8. **Try it** (test mode): sign in to a test build, Settings → Account → *$7.99 a month*, pay with card `4242 4242 4242 4242` (any future date, any CVC). Back in Settings, the plan line says *Plus · Renews on …*, hosted answers show 600 left, and cloud storage can be turned on. In Supabase, `subscriptions` has the row. *Manage billing* opens the portal; cancel there and Settings says *Ends on …*. Try the semester price too, and a declined card (`4000 0000 0000 0341`) to see *Your last payment didn't go through*.
 9. **Go live**: switch the dashboard to live mode, repeat the starred steps (live prices, live restricted key, live webhook and its secret), and `wrangler secret put` the live values over the test ones.
 
@@ -168,13 +169,15 @@ Cloud storage copies saved chats and their screenshots both ways; temporary chat
 ## 10. Before launch
 
 - **Legal**: privacy policy (what is stored, where, for how long; who processes it: Supabase, Cloudflare, Stripe, Anthropic, OpenAI), terms of service with the refund policy, and 13+ in the terms (COPPA); a data agreement path if schools buy (FERPA). The Chrome Web Store and AMO data disclosures must match.
-- **Abuse**: free accounts are one email away. Before giving `free` any hosted answers, turn on **Authentication → Attack Protection → CAPTCHA** (Cloudflare Turnstile) in Supabase (the apps' sign-in will need to pass the token: a small change, not built yet) and rate limits in the AI Gateway.
+- **Abuse**: free accounts are one email away. Before giving `free` any hosted answers, turn on **Authentication → Attack Protection → CAPTCHA** (Cloudflare Turnstile) in Supabase (the apps' sign-in will need to pass the token: a small change, not built yet) and rate limits in the AI Gateway. The Worker already limits each account to 10 hosted answers a minute and refuses requests bigger than a long chat (`worker/src/models.ts`); the database caps what one account may keep in the cloud (`cloud_limits()` in the migration: 5,000 chats, 20,000 screenshots).
+- **Database**: **Project Settings → Database → SSL Configuration**: *Enforce SSL* on. **Network Restrictions**: the apps and the Worker use only the Data API, so allow direct Postgres connections from nowhere (or only your own address while you work). **Advisors → Security Advisor**: run it after every migration; it should flag nothing but the functions signed-in students are meant to call (`my_account`, `push_chats`, `delete_all_chats`, `delete_me`, `has_cloud`, `screenshot_room`), which check `auth.uid()` themselves.
 - **Money**: a monthly spend limit on the Anthropic and OpenAI workspaces the Worker uses; Stripe Radar's default rules on.
 - **Operations**: Supabase Pro (daily backups) and its usage alerts; the Worker's logs (Cloudflare → Workers → selection-ai → Logs) for failed webhooks; Stripe → Developers → Webhooks shows every delivery and can resend one.
-- **Keys**: rotate any secret that was ever pasted anywhere but `wrangler secret put` and the Supabase dashboard.
+- **Keys**: rotate any secret that was ever pasted anywhere but `wrangler secret put` and the Supabase dashboard. The Worker's secret key is all-powerful outside the tables it was granted (Supabase Auth's admin API, every screenshot): if it may have leaked, make a new one in **Project Settings → API Keys**, `wrangler secret put SUPABASE_SECRET_KEY`, then delete the old one. The same for the Stripe restricted key and webhook secret, and the AI keys.
+- **Privacy policy**: say that backups (and Supabase's auth audit log, which keeps emails and IP addresses) hold a deleted account for their retention period, and how long that is on your plan.
 
 ## Checking it locally
 
-- `supabase/tests/run.sh` runs the migration twice on a throwaway PostgreSQL database (with small stand-ins for Supabase's `auth` and `storage`), with Supabase's default Data API settings and again with the recommended ones, and checks the rules: the Worker's secret key limited to what it uses, own rows only, cloud storage needed to save but never to delete, last write wins, quotas counted atomically, the free plan, hand-given plans, subscriptions (active, past due, cancelled, late) and passes (paid, refunded, run out), the most generous plan winning, account deletion cascading.
-- `tests/unit/worker.test.ts` checks the Worker: sessions, the models it allows, Stripe's signature, the webhook mirroring a subscription and a pass, checkout and the prices on offer.
+- `supabase/tests/run.sh` runs the migration twice on a throwaway PostgreSQL database (with small stand-ins for Supabase's `auth` and `storage`), with Supabase's default Data API settings and again with the recommended ones, and checks the rules: the Worker's secret key limited to what it uses, chats written only through the functions that keep the limits, deletions that always take effect, account deletion refused while billing or screenshots remain, own rows only, cloud storage needed to save but never to delete, last write wins, quotas counted atomically, the free plan, hand-given plans, subscriptions (active, past due, cancelled, late) and passes (paid, refunded, run out), the most generous plan winning, account deletion cascading.
+- `tests/unit/worker.test.ts` checks the Worker: sessions (and junk tokens refused without a call to Supabase), exactly the models it allows, requests rebuilt from text and inline screenshots only and capped in size, Stripe's signature, the webhook mirroring a subscription and a pass (refunds and chargebacks end it; checkouts the Worker didn't make give nothing), checkout and the prices on offer.
 - With the Stripe CLI, `stripe listen --forward-to localhost:8787/stripe/webhook` sends test-mode events to `wrangler dev`.

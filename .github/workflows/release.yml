@@ -2,30 +2,59 @@ name: Release
 
 # Week 13: a version tag builds every zip and submits to the three stores that
 # take one command. Safari stays a manual Xcode upload.
+#
+# Two jobs, so the store credentials meet as little code as possible: the
+# build (dependencies, tests, the bundler) runs with none, and the submit job
+# only installs and runs `wxt submit`, inside the "stores" environment, whose
+# secrets and required reviewer are set in Settings → Environments (SECURITY.md).
+# No caches: a release never restores anything an ordinary run saved.
 on:
   push:
     tags: ['v*']
 
+permissions:
+  contents: read
+
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - name: Build zips
         run: |
           pnpm --filter extension zip
           pnpm --filter extension zip:firefox
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: zips
           path: extension/.output/*.zip
+          if-no-files-found: error
+
+  submit:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: stores
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: zips
+          path: extension/.output
       - name: Submit
         # Secrets are set once each store account exists (weeks 6, 8).
         env:

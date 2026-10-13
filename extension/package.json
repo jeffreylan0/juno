@@ -18,7 +18,7 @@
   "dependencies": {
     "@selection-ai/shared": "workspace:*",
     "dompurify": "^3.2.0",
-    "katex": "^0.16.22",
+    "katex": "^0.18.11",
     "marked": "^15.0.0",
     "pdfjs-dist": "^6.3.289",
     "react": "^19.0.0",

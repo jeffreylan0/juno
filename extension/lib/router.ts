@@ -4,16 +4,11 @@
  * model; text-only asks go to a small one, which only the eval's experiments
  * and chats saved by earlier versions (text selections) still make.
  */
-import type { ModelRef, Part, Plan, Route, Vendor } from '@shared/payload';
+import { MODEL_TABLE } from '@shared/models';
+import type { ModelRef, Part, Plan, Route } from '@shared/payload';
 
-/**
- * Current models, checked against the vendors' model pages on 2026-09-28.
- * Every one of them reads images, which box selections need.
- */
-export const MODEL_TABLE: Record<Exclude<Vendor, 'local' | 'mock'>, Record<Route, string>> = {
-  anthropic: { small: 'claude-haiku-4-5-20251001', large: 'claude-sonnet-5-5' },
-  openai: { small: 'gpt-6-luna', large: 'gpt-6-sol' },
-};
+/** The automatic choice's models (shared with the Worker, which allows only these). */
+export { MODEL_TABLE };
 
 /**
  * The models offered in the panel's picker, cheapest first. Any other model a
