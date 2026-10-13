@@ -111,7 +111,7 @@ fn place(window: &WebviewWindow, placement: Placement) -> tauri::Result<()> {
 
 pub fn make_core(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     WebviewWindowBuilder::new(app, CORE, WebviewUrl::App("web/core.html".into()))
-        .title("Selection AI (core)")
+        .title("Juno (core)")
         .visible(false)
         .skip_taskbar(true)
         .focused(false)
@@ -150,7 +150,7 @@ pub fn overlay(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         return Ok(w);
     }
     let window = WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("web/overlay.html".into()))
-        .title("Selection AI")
+        .title("Juno")
         .transparent(true)
         .decorations(false)
         .shadow(false)
@@ -272,7 +272,7 @@ pub fn make_panel(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     if let Some(w) = app.get_webview_window(PANEL) {
         return Ok(w);
     }
-    let window = card(app, PANEL, "web/panel.html", "Selection AI")
+    let window = card(app, PANEL, "web/panel.html", "Juno")
         .inner_size(PANEL_WIDTH, PANEL_HEIGHT)
         .min_inner_size(320.0, 320.0)
         .always_on_top(true)
@@ -353,7 +353,7 @@ pub fn open_settings(app: &AppHandle, hash: Option<&str>) -> tauri::Result<()> {
         Some(h) => format!("web/settings.html#{h}"),
         None => "web/settings.html".to_string(),
     };
-    let window = card(app, SETTINGS, &url, "Selection AI Settings").inner_size(SETTINGS_SIZE.0, SETTINGS_SIZE.1).min_inner_size(520.0, 420.0).build()?;
+    let window = card(app, SETTINGS, &url, "Juno Settings").inner_size(SETTINGS_SIZE.0, SETTINGS_SIZE.1).min_inner_size(520.0, 420.0).build()?;
     finish_card(&window);
     if let Some((d, _)) = display_under_pointer(app) {
         place(&window, d.centred_placement(Space::native(), SETTINGS_SIZE.0, SETTINGS_SIZE.1))?;

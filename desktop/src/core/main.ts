@@ -192,7 +192,7 @@ async function handleSelectionDone(msg: SelectionDoneMsg): Promise<void> {
         throw Object.assign(new Error(failure?.message ?? String(raw)), {
           notice:
             failure?.code === 'permission'
-              ? "Couldn't see the screen: Screen Recording is off for Selection AI. Turn it on in System Settings, then restart the app."
+              ? "Couldn't see the screen: Screen Recording is off for Juno. Turn it on in System Settings, then restart the app."
               : "Couldn't take a screenshot of that. Try again.",
         });
       }

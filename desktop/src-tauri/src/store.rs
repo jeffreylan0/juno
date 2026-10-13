@@ -235,6 +235,33 @@ impl Store {
     }
 }
 
+/// The app's id before it was named Juno: its data folder, under each base.
+pub const EARLIER_IDENTIFIER: &str = "org.humanbn.selectionai";
+
+/// The first start after the rename to Juno: the earlier build's `store`
+/// folder (settings, keys, chats, screenshots) moves into Juno's, so nothing
+/// has to be entered again. Tried under each base in turn (on Windows, the
+/// earlier builds kept it in the roaming profile); nothing happens once Juno
+/// has a folder of its own, or if there is no earlier one.
+pub fn adopt_earlier_store(dir: &Path, bases: &[PathBuf]) {
+    if dir.exists() {
+        return;
+    }
+    for base in bases {
+        let earlier = base.join(EARLIER_IDENTIFIER).join("store");
+        if !earlier.is_dir() {
+            continue;
+        }
+        if let Some(parent) = dir.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        match fs::rename(&earlier, dir) {
+            Ok(()) => return,
+            Err(e) => eprintln!("[juno] could not move the earlier build's data: {e}"),
+        }
+    }
+}
+
 pub fn is_secret(key: &str) -> bool {
     SECRET_KEYS.contains(&key)
 }
@@ -480,6 +507,27 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sai-store-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn the_earlier_builds_data_moves_into_junos_folder_once() {
+        let base = temp_dir("adopt");
+        let roaming = base.join("roaming");
+        let local = base.join("local");
+        let earlier = roaming.join(EARLIER_IDENTIFIER).join("store");
+        fs::create_dir_all(&earlier).unwrap();
+        fs::write(earlier.join("secrets.json"), b"{}").unwrap();
+        let dir = local.join("com.humanbn.juno").join("store");
+
+        adopt_earlier_store(&dir, &[local.clone(), roaming.clone()]);
+        assert!(dir.join("secrets.json").is_file());
+        assert!(!earlier.exists());
+
+        // Juno has its own folder now: a later earlier-build folder is left alone.
+        fs::create_dir_all(&earlier).unwrap();
+        adopt_earlier_store(&dir, &[roaming]);
+        assert!(earlier.exists());
+        let _ = fs::remove_dir_all(&base);
     }
 
     fn keys(list: &[&str]) -> Vec<String> {

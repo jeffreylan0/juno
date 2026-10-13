@@ -1,10 +1,10 @@
-# Selection AI
+# Juno
 
 Draw a box or any shape around something and ask Claude or ChatGPT about exactly that. Only the selection is sent, as its screenshot: every model we use reads images, text and maths included. Answers render with KaTeX and mhchem, so math, chemistry and physics come out readable.
 
 The build plan's planner, which re-sent a selection as extracted text, LaTeX or tables where it could, is not used: page text scraped from under a box garbled real layouts and duplicated the screenshot. The eval keeps a `planner` route so the idea can still be measured for Gate A. Text and Element selection were removed (round 23) for the same reason: the screenshot is what the model reads best.
 
-A product of humanbn. Chrome, Edge and Firefox from one WXT codebase; Safari later. A desktop app (Mac first, then Windows) brings the same bar, panel and chats to any app on screen — Preview, Acrobat, PowerPoint, other extensions' PDF viewers — from the same code: see [desktop/README.md](desktop/README.md).
+A product of humanbn ([humanbn.com](https://humanbn.com), info@humanbn.com). Chrome, Edge and Firefox from one WXT codebase; Safari later. A desktop app (Mac first, then Windows) brings the same bar, panel and chats to any app on screen — Preview, Acrobat, PowerPoint, other extensions' PDF viewers — from the same code: see [desktop/README.md](desktop/README.md).
 
 ## Status
 
@@ -18,7 +18,7 @@ A product of humanbn. Chrome, Edge and Firefox from one WXT codebase; Safari lat
 | Notices | above the macros: placeholder answers, no key, a rejected key, and "Disconnected" when the chosen AI cannot be reached. Warnings about the page itself are a yellow tooltip at the top of the page (or under the icon, on pages the extension cannot touch) |
 | Accounts and plans | optional: Google or an emailed code (Supabase). Plans (Free, Plus, given by hand) with hosted answers and cloud storage of chats; Plus bought with Stripe (monthly, yearly or a semester pass), managed in Stripe's portal; the account's dashboard in Settings. All built; turned on by the setup in `supabase/README.md` |
 | Real answers | your own Anthropic or OpenAI key: free key check, model picker beside the macros, prompt caching for follow-ups, errors that say what to do; temporary chats ask for the shortest retention the API allows |
-| PDFs | the browser's viewer works for Box and Freeform but cannot scroll while selecting; Selection AI's PDF.js reader can |
+| PDFs | the browser's viewer works for Box and Freeform but cannot scroll while selecting; Juno's PDF.js reader can |
 | Providers | placeholder, local (Ollama), BYOK (Anthropic + OpenAI), hosted (the Worker, for plans with hosted answers) |
 | Eval | 5 seed problems of 100; mock and image-only routes run |
 | Worker, Supabase | token check against the project's signing keys, per-account monthly count, Anthropic and OpenAI streamed in one shape, Stripe checkout, portal and webhook; schema with row level security, tested on PostgreSQL |
@@ -51,7 +51,7 @@ Each selection is labelled Box or Freeform with the page it came from, exactly a
 
 A box is clamped to the visible viewport, because `captureVisibleTab` can only return what is on screen; drag against an edge and the bar says so, and the wheel is ignored for the duration of a drag so the crop always matches what was framed. Selecting across the fold needs scroll-and-stitch capture, which is not built.
 
-One place scrolling cannot work is the browser's own PDF viewer. That page is a plugin in an `<embed>`: it exposes no scrollable element to forward the wheel to, and it swallows mouse events. On a PDF you get the drag or the wheel, not both, and a tooltip says so while offering Selection AI's own PDF.js reader, which scrolls while selecting (and has a text layer, so its text can be found and copied). Local files need *Allow access to file URLs* turned on for the extension in `chrome://extensions`.
+One place scrolling cannot work is the browser's own PDF viewer. That page is a plugin in an `<embed>`: it exposes no scrollable element to forward the wheel to, and it swallows mouse events. On a PDF you get the drag or the wheel, not both, and a tooltip says so while offering Juno's own PDF.js reader, which scrolls while selecting (and has a text layer, so its text can be found and copied). Local files need *Allow access to file URLs* turned on for the extension in `chrome://extensions`.
 
 The default is placeholder answers — no network, no spend.
 
@@ -126,7 +126,7 @@ Four browser rules are worth knowing before changing the toolbar flow. A full-sc
 Your own keys (bring-your-own-key) and your sign-in session never leave the computer except to the service they belong to: an Anthropic key only to Anthropic, an OpenAI key only to OpenAI, the session only to Supabase and the Worker.
 
 - **Extension**: `storage.local`, inside the browser profile, sealed (AES-GCM, `lib/sealed.ts`) with a key that never leaves the extension's own origin: a non-extractable key in its IndexedDB. `storage.local` is also readable by content scripts, which share a process with the page they run on, so what one could read is ciphertext; only the extension's own pages and background can open it. Never on a web page, never in the selection bar.
-- **App**: one file, `secrets.json` in the app's data folder (`~/Library/Application Support/org.humanbn.selectionai/store/` on macOS, `%LOCALAPPDATA%\org.humanbn.selectionai\store\` on Windows, never the roaming profile), readable only by your user account (mode 0600 on macOS and Linux; the user's own profile folder on Windows). The overlay window, drawn over whatever is on screen, can't read it at all. Not the keychain: macOS ties a keychain item to the exact build that made it, so every unsigned build asked for the keychain password. Once the app is signed with a Developer ID, the keychain can hold the file's key without prompts.
+- **App**: one file, `secrets.json` in the app's data folder (`~/Library/Application Support/com.humanbn.juno/store/` on macOS, `%LOCALAPPDATA%\com.humanbn.juno\store\` on Windows, never the roaming profile), readable only by your user account (mode 0600 on macOS and Linux; the user's own profile folder on Windows). The overlay window, drawn over whatever is on screen, can't read it at all. Not the keychain: macOS ties a keychain item to the exact build that made it, so every unsigned build asked for the keychain password. Once the app is signed with a Developer ID, the keychain can hold the file's key without prompts.
 - Both protect against other accounts on the computer, as the browser does for every extension, not against software running as you.
 - **Plans**: a student on a plan sends no key at all. Hosted answers go through the Worker with the session token; the Worker holds the service's own keys. Payments go through Stripe's own pages: card details never touch the apps or the Worker.
 
@@ -144,7 +144,11 @@ Calls to Anthropic and OpenAI go from the background with no host permission, as
 
 ## Rebranding
 
-Everything the product calls itself lives in `extension/brand.ts`: name, short name, store description, the toolbar tooltip and how copy refers to the icon ("the extension icon"). The manifest, page titles, the settings page and the panel read from it. The icon is drawn once, in `extension/assets/brand/icon.svg`; `pnpm brand:icons` renders it to every PNG size with the Playwright Chromium the tests already use. Keep `GECKO_ID` unchanged through any rename, or Firefox treats the renamed add-on as a new one and existing users stop getting updates.
+Everything the product calls itself lives in `extension/brand.ts`: name, short name, store description, the toolbar tooltip and how copy refers to the icon ("the extension icon"). The manifest, page titles, the settings page and the panel read from it. The icon is drawn once, in `extension/assets/brand/icon.svg`; `pnpm brand:icons` renders it to every PNG size with the Playwright Chromium the tests already use. The app's name, bundle id (`com.humanbn.juno`) and link scheme (`com.humanbn.juno://`) are in `desktop/src-tauri/tauri.conf.json`.
+
+The product was called Selection AI until it became Juno, before any store listing; its Firefox id (`juno@humanbn.com`) and the app's bundle id changed with it. From the first listing on, keep `GECKO_ID` and the bundle id unchanged through any rename, or Firefox and macOS treat the renamed product as a new one and existing users stop getting updates. Names nobody sees keep the old project name on purpose: the repository, the packages and crate, the in-page elements (`selection-ai-overlay`), log prefixes, and the storage and IndexedDB names, which hold students' chats and screenshots and would be lost if renamed.
+
+The outward contact is info@humanbn.com: store listings, Stripe, Google's sign-in screen, the privacy policy, testers. The management address that owns the service accounts is deliberately not written anywhere in this public repository (SECURITY.md).
 
 ## Next
 

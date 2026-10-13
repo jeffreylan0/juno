@@ -125,6 +125,7 @@ export default defineConfig({
       name: BRAND.name,
       short_name: BRAND.shortName,
       description: BRAND.description,
+      homepage_url: BRAND.homepage,
       // Permissions are kept to the store checklist: activeTab, scripting,
       // storage, sidePanel, and identity (Google sign-in) with accounts.
       permissions: [

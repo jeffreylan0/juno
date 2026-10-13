@@ -1,4 +1,4 @@
--- Selection AI: accounts, plans and subscriptions, cloud chats, hosted-answer
+-- Juno: accounts, plans and subscriptions, cloud chats, hosted-answer
 -- counts.
 --
 -- Run once, as is, in the Supabase dashboard's SQL editor (or with

@@ -248,12 +248,12 @@ export function donePage(request: Request): Response {
   const result = new URL(request.url).searchParams.get('result');
   const [title, line] =
     result === 'paid'
-      ? ["You're all set", 'Thank you! Go back to Selection AI: your plan is on within a few seconds.']
+      ? ["You're all set", 'Thank you! Go back to Juno: your plan is on within a few seconds.']
       : result === 'managed'
-        ? ['Done', 'Go back to Selection AI. Any change shows there within a few seconds.']
-        : ['Nothing was charged', 'Checkout was cancelled. Go back to Selection AI whenever you like.'];
+        ? ['Done', 'Go back to Juno. Any change shows there within a few seconds.']
+        : ['Nothing was charged', 'Checkout was cancelled. Go back to Juno whenever you like.'];
   const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title} · Selection AI</title>
+<title>${title} · Juno</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#faf9f5;color:#141413;font:16px/1.5 system-ui,sans-serif}
 main{max-width:28rem;padding:2rem;text-align:center}h1{font-size:1.4rem;margin:0 0 .5rem}p{margin:0;color:#5e5d59}
 @media (prefers-color-scheme:dark){body{background:#262624;color:#faf9f5}p{color:#b7b5a9}}</style>
@@ -413,7 +413,7 @@ export async function webhook(request: Request, env: Env): Promise<Response> {
       // the buyer can choose, never gives a plan.
       const userId = s.metadata?.user_id;
       if (!userId || s.client_reference_id !== userId) {
-        console.warn(`checkout ${s.id}: not made by Selection AI, ignored`);
+        console.warn(`checkout ${s.id}: not made by Juno, ignored`);
         break;
       }
       if (s.customer) await linkCustomer(env, userId, s.customer);

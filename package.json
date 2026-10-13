@@ -2,7 +2,7 @@
   "name": "selection-ai",
   "private": true,
   "version": "0.1.0",
-  "description": "Selection AI: draw a box or any shape around something on screen and ask Claude or ChatGPT about exactly that.",
+  "description": "Juno: draw a box or any shape around something on screen and ask Claude or ChatGPT about exactly that.",
   "packageManager": "pnpm@10.28.0",
   "engines": {
     "node": ">=22"

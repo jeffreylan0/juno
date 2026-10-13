@@ -104,7 +104,7 @@ export function parseAsk(raw: unknown): { vendor: 'anthropic' | 'openai'; model:
 }
 
 function base(env: Env, vendor: 'anthropic' | 'openai'): string {
-  if (env.AI_GATEWAY_ID) return `https://gateway.ai.cloudflare.com/v1/${env.AI_GATEWAY_ID}/selection-ai/${vendor}`;
+  if (env.AI_GATEWAY_ID) return `https://gateway.ai.cloudflare.com/v1/${env.AI_GATEWAY_ID}/juno/${vendor}`;
   return vendor === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com/v1';
 }
 

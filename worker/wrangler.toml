@@ -1,14 +1,14 @@
 # Hosted answers and billing (see src/index.ts). Secrets are set with
 # `wrangler secret put`, never committed: SUPABASE_URL, SUPABASE_SECRET_KEY,
 # ANTHROPIC_API_KEY, OPENAI_API_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET.
-name = "selection-ai"
+name = "juno"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
 # Cloudflare account id, to send answers through an AI Gateway named
-# "selection-ai" (rate limits, spend analytics; logging is switched off per
+# "juno" (rate limits, spend analytics; logging is switched off per
 # request). Empty: the Worker calls the vendors directly.
 AI_GATEWAY_ID = ""
 # The prices on offer: Stripe lookup keys, in the order the apps show them

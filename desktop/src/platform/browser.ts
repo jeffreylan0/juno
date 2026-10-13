@@ -82,7 +82,7 @@ let counter = 0;
 const uid = () => `${Date.now().toString(36)}-${(counter++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 /** Where Google sign-in comes back to: the app's own link (lib.rs hands it to settings as `app:deep-link`). */
-export const AUTH_REDIRECT = 'selectionai://auth/callback';
+export const AUTH_REDIRECT = 'com.humanbn.juno://auth/callback';
 /** How long a sign-in in the browser is waited for. */
 const AUTH_WAIT_MS = 10 * 60_000;
 

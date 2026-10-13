@@ -8,26 +8,33 @@
  *   4. Rebuild. The manifest, page titles, the settings page and every
  *      user-facing sentence that names the product read from here.
  *
- * Do NOT change GECKO_ID when renaming: Firefox identifies the add-on by it,
- * and a new id would ship as a different add-on that existing users never
- * get updated to. The same goes for the Chrome Web Store item once listed.
+ * Do NOT change GECKO_ID once the add-on is listed: Firefox identifies the
+ * add-on by it, and a new id would ship as a different add-on that existing
+ * users never get updated to. (It last changed with the rename to Juno,
+ * before any listing.) The same goes for the Chrome Web Store item.
+ *
+ * The outward contact is info@humanbn.com (the store listings, Stripe, the
+ * Google sign-in screen, the privacy policy). The management address that
+ * owns the service accounts is never written into this public repository.
  */
 export const BRAND = {
   /** Full name: store listing, manifest, page titles. Max 75 characters (Chrome). */
-  name: 'Selection AI',
+  name: 'Juno',
   /** Under the icon and in tight spots. Max 12 characters to avoid truncation. */
-  shortName: 'Selection AI',
+  shortName: 'Juno',
   /** Store and manifest description. Max 132 characters (Chrome). */
   description:
     'Draw a box or any shape around a problem and ask Claude or ChatGPT about exactly that. Math, chemistry and physics render properly.',
   /** Tooltip on the toolbar button. */
-  actionTitle: 'Selection AI — select and ask',
+  actionTitle: 'Juno — select and ask',
   /** How user-facing copy refers to the toolbar button. */
   iconName: 'the extension icon',
+  /** The maker's site: the manifest's homepage, which the stores link to. */
+  homepage: 'https://humanbn.com',
 } as const;
 
-/** Firefox add-on id. Stable forever; see above. */
-export const GECKO_ID = 'selection-ai@humanbn.org';
+/** Firefox add-on id. Stable forever once listed; see above. */
+export const GECKO_ID = 'juno@humanbn.com';
 
 /**
  * The public half of the key that fixes the Chrome extension id at

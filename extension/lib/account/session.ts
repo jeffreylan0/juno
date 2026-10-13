@@ -192,7 +192,7 @@ export async function signInWithGoogle(): Promise<AccountSession> {
   const code = params.get('code');
   if (!code) {
     // The redirect's own words are not shown: in the app, any web page can
-    // open selectionai://auth/callback?error_description=… while a sign-in
+    // open com.humanbn.juno://auth/callback?error_description=… while a sign-in
     // waits, and would get its text into Settings.
     if (params.get('error')) console.warn('[selection-ai] Google sign-in failed:', params.get('error'));
     throw new AccountError("Google sign-in didn't finish. Try again.", 'server');

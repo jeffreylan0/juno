@@ -1,5 +1,5 @@
 /**
- * Settings → Selection AI (the app only): which version this is, opening at
+ * Settings → Juno (the app only): which version this is, opening at
  * login, and Quit. The menu bar icon starts a selection when clicked, so
  * quitting lives here (and in that icon's right-click menu, and ⌘Q in the
  * app's windows).

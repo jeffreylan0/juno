@@ -4,7 +4,7 @@
  * `pnpm desktop:dev` runs a bare binary from a terminal, so macOS asks for
  * Screen Recording on behalf of whatever started it (VS Code, Terminal) and,
  * if allowed, grants it to that app instead. Run as a bundle, the prompt
- * names Selection AI and the permission is the app's alone.
+ * names Juno and the permission is the app's alone.
  *
  * Signed ad hoc, each rebuild is a new app to macOS, which then asks again.
  * Set APPLE_SIGNING_IDENTITY to an Apple Development certificate's name and
@@ -22,7 +22,7 @@ if (process.platform !== 'darwin') {
 }
 const built = spawnSync('pnpm', ['tauri', 'build', '--debug', '--bundles', 'app'], { cwd: resolve(here, '..'), stdio: 'inherit' });
 if (built.status !== 0) process.exit(built.status ?? 1);
-const app = resolve(here, '../src-tauri/target/debug/bundle/macos/Selection AI.app');
+const app = resolve(here, '../src-tauri/target/debug/bundle/macos/Juno.app');
 if (!existsSync(app)) {
   console.error(`Built, but no app at ${app}`);
   process.exit(1);

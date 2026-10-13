@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Please report it privately through GitHub: the repository's **Security** tab → **Report a vulnerability**. Don't open a public issue. Expect an answer within a few days. Only the latest version (the store release, or the newest test build) gets fixes.
+Please report it privately through GitHub: the repository's **Security** tab → **Report a vulnerability**, or by email to info@humanbn.com. Don't open a public issue. Expect an answer within a few days. Only the latest version (the store release, or the newest test build) gets fixes.
 
 ## What is protected, and from whom
 
@@ -18,7 +18,7 @@ Please report it privately through GitHub: the repository's **Security** tab →
 The design assumes these attackers:
 
 - **A web page.** It may run scripts next to the in-page bar, or plant instructions for the model in the page title or the selected text (prompt injection).
-- **Other software or users on the computer.** This includes other users' accounts and apps that try to claim the app's link (`selectionai://`).
+- **Other software or users on the computer.** This includes other users' accounts and apps that try to claim the app's link (`com.humanbn.juno://`).
 - **Someone on the network.**
 - **Another account, or an abusive one.** For example, an account that signs up free and scripts requests.
 - **A compromised dependency or build step.** For example, a package or GitHub Action that turns malicious.
@@ -149,6 +149,11 @@ Beyond strong passwords and business accounts:
 
 ### 1. Accounts and access
 
+- **Two addresses, two jobs:**
+  - info@humanbn.com is the public face: store listings, Stripe's public details, Google's sign-in screen, the privacy policy, support, vulnerability reports.
+  - The management address owns the accounts: GitHub, Cloudflare, Supabase, Stripe, Google Cloud, Apple, the stores, the registrar.
+  - Keep the management address out of anything public: this repository, the apps, store listings, email signatures and DNS. Turn on WHOIS privacy at the registrar too.
+  - Publishing it makes it a phishing target: every account recovery runs through it. Ideally it also has its own strong second factor and receives nothing else.
 - **Phishing-resistant two-factor everywhere:** passkeys or hardware security keys, not SMS. That means GitHub, Cloudflare, Supabase, Stripe, Google (Cloud console and Workspace), the Apple Developer account, the Chrome Web Store, addons.mozilla.org, Microsoft Partner Center, your domain registrar, and the email account that receives everyone's password resets. Keep recovery codes offline.
 - **Two-factor for the whole team:** where the service allows it, require it for everyone:
   - GitHub: Organization → Authentication security.
@@ -210,7 +215,7 @@ Beyond strong passwords and business accounts:
 - **Stripe:**
   - The restricted key with only the listed permissions, and the webhook with the listed events.
   - *Cancel the subscription* after failed retries.
-  - No Payment Links for Selection AI.
+  - No Payment Links for Juno.
 - **Cloudflare:**
   - The Worker on your own domain.
   - The rate limit in `wrangler.toml` (its `namespace_id` must be unique in the account).
