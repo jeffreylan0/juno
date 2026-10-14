@@ -70,6 +70,7 @@ jobs:
       # whether anything showed (desktop/scripts/smoke-windows.ps1).
       - name: Open the app and see what shows
         if: runner.os == 'Windows'
+        timeout-minutes: 5
         # Windows PowerShell (.NET Framework): its Add-Type compiles the script's helper with System.Drawing as is.
         shell: powershell
         run: |
