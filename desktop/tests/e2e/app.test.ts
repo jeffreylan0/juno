@@ -171,6 +171,12 @@ it('the chats button on the bar opens the panel on the list of chats, with nothi
 });
 
 it('the panel: ✕ first, then the chats menu; text at the system’s size; notices float over the chat and go by themselves', async () => {
+  // Made at start, hidden: a notice's time runs out before anyone sees it (as it did on Windows).
+  const ring = `document.querySelector('.notice-timer circle')`;
+  await waitFor('the notice in the hidden panel', () => app.read('panel', `!!${ring}`));
+  await app.eval('panel', `${ring}.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))`);
+  await waitFor('the notice gone', async () => !(await app.read('panel', `!!document.querySelector('[data-testid=notice]')`)));
+
   await app.summon();
   await armed();
   await box(150, 150, 250, 250);
@@ -187,13 +193,13 @@ it('the panel: ✕ first, then the chats menu; text at the system’s size; noti
   // Linux sizes as Windows does: 14 px body text.
   expect(await app.read('panel', `getComputedStyle(document.documentElement).fontSize`)).toBe('14px');
 
-  // Placeholder answers (the default) say so, over the end of the chat, on a timer.
-  await waitFor('the notice', () => app.read('panel', `!!document.querySelector('[data-testid=notice]')`));
+  // Shown, the panel brings the notice back (placeholder answers, the default), over the end of the chat, on a timer.
+  await waitFor('the notice back', () => app.read('panel', `!!document.querySelector('[data-testid=notice]')`));
   expect(await app.read('panel', `getComputedStyle(document.querySelector('.notices')).position`)).toBe('absolute');
-  expect(await app.read('panel', `document.querySelector('.notice-timer circle').style.animationDuration`)).toBe('9000ms');
+  expect(await app.read('panel', `${ring}.style.animationDuration`)).toBe('9000ms');
   // The ring runs out: the notice goes.
-  await app.eval('panel', `document.querySelector('.notice-timer circle').dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))`);
-  await waitFor('the notice gone', async () => !(await app.read('panel', `!!document.querySelector('[data-testid=notice]')`)));
+  await app.eval('panel', `${ring}.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))`);
+  await waitFor('the notice gone again', async () => !(await app.read('panel', `!!document.querySelector('[data-testid=notice]')`)));
 });
 
 it('opening the app brings the bar straight up, armed, as the shortcut does', async () => {

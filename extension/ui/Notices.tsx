@@ -12,7 +12,7 @@
  * With `lasts` (the app), each notice goes by itself after that long: a ring
  * round its ✕ runs down meanwhile, and pointing at the notice holds it. Gone,
  * it stays gone while it says the same thing (the panel brings notices back
- * with each new chat).
+ * with each new chat, and each time the app shows it).
  */
 import { useState } from 'react';
 import { ASSISTANT } from '@/lib/router';

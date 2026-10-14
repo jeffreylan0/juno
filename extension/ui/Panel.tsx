@@ -127,16 +127,20 @@ export function Panel() {
     [chatId],
   );
 
-  // The app's bar has a chats button: the panel opens on the list of chats.
-  // A new chat, or a selection on its way, closes it again.
+  // The app's bar has a chats button: the panel opens on the list of chats
+  // (a selection on its way closes it again). The app also says when it
+  // shows the panel (card:enter), which brings back notices that went by
+  // themselves: their time runs out while the panel is hidden.
+  const [shown, setShown] = useState(0);
   useEffect(() => {
     const onMessage = (raw: unknown) => {
-      if ((raw as { type?: string })?.type === 'panel:chats') setMenuOpen(true);
+      const type = (raw as { type?: string })?.type;
+      if (type === 'panel:chats') setMenuOpen(true);
+      else if (type === 'card:enter') setShown((n) => n + 1);
     };
     browser.runtime.onMessage.addListener(onMessage);
     return () => browser.runtime.onMessage.removeListener(onMessage);
   }, []);
-  useEffect(() => setMenuOpen(false), [chatId]);
 
   // A new selection: the default prompt goes in the box (empty unless the
   // student set one) and the cursor goes after it. Sending straight away,
@@ -310,8 +314,8 @@ export function Panel() {
 
       <div className="ask">
         <Notices
-          // A new chat brings back notices that went by themselves.
-          key={chatId ?? ''}
+          // A new chat, or the panel shown again, brings back notices that went by themselves.
+          key={`${chatId ?? ''}:${shown}`}
           lasts={SURFACE.noticeMs}
           settings={settings}
           keys={keys}
