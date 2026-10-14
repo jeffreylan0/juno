@@ -50,6 +50,8 @@ The design doesn't defend against malware running as the student's own user acco
 - **Windows start-at-login:** the Run entry's path is quoted, so Windows can't run a different program planted in the install folder's parent.
 - **Deep links:** they are accepted only while a sign-in is pending, and show only fixed text.
 - **Test hook:** the test-only HTTP hook isn't compiled into releases, and it refuses any request that comes from a browser.
+- **Screen capture on Windows:** the app's windows are left out of captures (display affinity) only while the app takes its own screenshot, so recordings, screen sharing and remote desktops show the app like any other window.
+- **Log:** `juno.log` keeps only the app's own steps and errors (each line stripped of control characters and capped), never what was asked, the screen or a key.
 
 **Worker** (OWASP API Security Top 10; RFC 8725 for JWT)
 
@@ -64,12 +66,22 @@ The design doesn't defend against malware running as the student's own user acco
   - Each request is capped at 100 messages, 20 images and 200,000 characters of text, and the body is capped in bytes however it is sent.
   - Each account gets at most 10 answers a minute.
   - An answer is refunded when the AI fails or can't be reached.
+  - Prompt caches are scoped to one chat (see *Prompt caching* below), and the AI Gateway's response cache is skipped on every request.
 - **Stripe webhook:**
   - The signature uses a timestamp tolerance and a constant-time comparison.
   - Only checkouts the Worker made give a plan.
   - Subscriptions and passes are read back fresh from Stripe, so refunds and chargebacks end a pass.
   - Events for deleted accounts are acknowledged instead of retried.
 - **Responses:** JSON is sent `nosniff`, and the one HTML page has a strict CSP. Logs carry no prompt text.
+
+**Prompt caching**
+
+Anthropic and OpenAI keep a short-lived cache of a prompt's beginning, so a follow-up in the same chat does not pay for (or wait on) the screenshots again. Neither shares caches between organizations; Anthropic isolates them per workspace (since 2026-02-05), OpenAI per organization. A hit needs the same bytes from the start of the prompt, and returns faster, which is how a shared cache can leak: someone who can guess a prompt exactly can time whether somebody else sent it recently (Gu et al., *Auditing Prompt Caching in Language Model APIs*, ICML 2025).
+
+- **Your own key:** the cache is your own organization's. Nobody else's requests can hit it, unless the key is shared (a class sharing one key shares one cache).
+- **Hosted answers:** every student shares humanbn's organization and workspace. So the Worker starts each prompt with a scope of its own per chat, a hash of the account id and the chat's first question, and sends it to OpenAI as `prompt_cache_key` too. Follow-ups in a chat still hit its cache; no other chat or student can. The hash can't be reversed or linked from one chat to the next by the vendor, since the account id never leaves the Worker.
+- **AI Gateway:** its response cache would hand one student the stored answer to another's identical request and keep answers at Cloudflare, so the Worker skips it on every request (`cf-aig-skip-cache`). Leave caching off in the gateway's settings too.
+- **Local models:** nothing leaves the computer.
 
 **Database** (Supabase guidance; PostgreSQL least privilege)
 

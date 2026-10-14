@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AUTH_REDIRECT, WINDOW_ID, createBrowser } from '../../desktop/src/platform/browser';
 import type { Transport } from '../../desktop/src/platform/transport';
 import { pageTitle } from '../../desktop/src/core/tips';
+import { isExternal } from '../../desktop/src/platform/net';
 import { readPointerState, trackPointer } from '../../desktop/src/overlay/pointer';
 
 type Handler = (payload: unknown) => void;
@@ -275,13 +276,46 @@ describe('Google sign-in in the app', () => {
   });
 });
 
+describe('which requests go out through the native core', () => {
+  it('sites and local models do; the app’s own page, commands and files never do', () => {
+    // Windows: the page is http://tauri.localhost and Tauri's commands are fetches to http://ipc.localhost.
+    const windows = 'http://tauri.localhost';
+    expect(isExternal('http://ipc.localhost/app_info', windows)).toBe(false);
+    expect(isExternal('http://ipc.localhost/plugin%3Ahttp%7Cfetch', windows)).toBe(false);
+    expect(isExternal('http://asset.localhost/x.png', windows)).toBe(false);
+    expect(isExternal('/assets/core.js', windows)).toBe(false);
+    // macOS and Linux: their own schemes.
+    expect(isExternal('ipc://localhost/app_info', 'tauri://localhost')).toBe(false);
+    // Everything else leaves the app.
+    expect(isExternal('https://api.anthropic.com/v1/messages', windows)).toBe(true);
+    expect(isExternal('http://localhost:11434/v1/models', windows)).toBe(true);
+    expect(isExternal('http://127.0.0.1:1234/v1/models', 'tauri://localhost')).toBe(true);
+  });
+});
+
 describe('a selection’s title in the app', () => {
-  it('is the window, then the app, unless the window already names it', () => {
-    expect(pageTitle({ app: 'Preview', title: 'Chapter 3.pdf' })).toBe('Chapter 3.pdf · Preview');
-    expect(pageTitle({ app: 'WINWORD', title: 'Lab report - Word' })).toBe('Lab report - Word · WINWORD');
+  it('is the name of what the window shows, without the app’s name', () => {
+    expect(pageTitle({ app: 'Preview', title: 'Chapter 3.pdf' })).toBe('Chapter 3.pdf');
+    expect(pageTitle({ app: 'WINWORD', title: 'Lab report - Word' })).toBe('Lab report');
+    expect(pageTitle({ app: 'Safari', title: 'Kinematics — Safari' })).toBe('Kinematics');
+    expect(pageTitle({ app: 'firefox', title: 'Quiz 2.1 - Assignments | Stemble — Mozilla Firefox' })).toBe('Quiz 2.1 - Assignments | Stemble');
+    expect(pageTitle({ app: 'msedge', title: 'Kinematics and 3 more pages - Microsoft\u200b Edge' })).toBe('Kinematics');
     expect(pageTitle({ app: 'Notability', title: '' })).toBe('Notability');
-    expect(pageTitle({ app: 'Safari', title: 'Kinematics — Safari' })).toBe('Kinematics — Safari');
     expect(pageTitle({ app: '', title: '  Notes   1 ' })).toBe('Notes 1');
+    // A last part that is not the app stays.
+    expect(pageTitle({ app: 'Firefox', title: 'Lecture 4 - Physics 7C' })).toBe('Lecture 4 - Physics 7C');
+    expect(pageTitle({ app: 'Google Chrome', title: 'Essay - Google Docs' })).toBe('Essay - Google Docs');
+  });
+
+  it('leaves out counters that change from one step to the next', () => {
+    const quiz = 'Quiz 2.1 - Assignments - Chem 1LD F26 | Stemble';
+    expect(pageTitle({ app: 'Firefox', title: `Task 10 of 13 - ${quiz}` })).toBe(quiz);
+    expect(pageTitle({ app: 'Firefox', title: `Task 1 of 13 - ${quiz}` })).toBe(quiz);
+    expect(pageTitle({ app: 'chrome', title: 'Question 3/20 | Practice exam - Google Chrome' })).toBe('Practice exam');
+    expect(pageTitle({ app: 'Firefox', title: '(4) Inbox' })).toBe('Inbox');
+    expect(pageTitle({ app: 'Firefox', title: 'Inbox (12) - me@school.edu - Mail' })).toBe('Inbox - me@school.edu - Mail');
+    // Nothing left but the counter: the app's name.
+    expect(pageTitle({ app: 'Keynote', title: 'Slide 4 of 30' })).toBe('Keynote');
   });
 });
 

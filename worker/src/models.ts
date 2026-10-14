@@ -6,8 +6,18 @@
  * What may be asked is checked before anything is spent: only the models the
  * apps choose themselves, only text and screenshots, and no more of either
  * than a long chat has. Optionally through Cloudflare's AI Gateway
- * (AI_GATEWAY_ID) for spend analytics. Its request logging is switched off on
- * every call: hosted answers keep no copy of what was asked.
+ * (AI_GATEWAY_ID) for spend analytics. Its request logging and its response
+ * cache are switched off on every call: hosted answers keep no copy of what
+ * was asked, and never hand one student an answer made for another.
+ *
+ * Prompt caching: every hosted student shares the service's one OpenAI
+ * organisation and one Anthropic workspace, where a cached prompt prefix
+ * would serve anyone sending the same bytes, and how fast an answer starts
+ * could tell them someone had. So each chat gets its own cache scope
+ * (cacheScope): a line at the very start of the prompt, and OpenAI's
+ * prompt_cache_key. Follow-ups in a chat still hit its cache; nothing is
+ * shared between chats or students, and the scope says nothing about who
+ * asked (a hash the vendors cannot link from one chat to the next).
  */
 import { MODEL_TABLE } from '@selection-ai/shared/models';
 import type { Env } from './index';
@@ -108,36 +118,56 @@ function base(env: Env, vendor: 'anthropic' | 'openai'): string {
   return vendor === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com/v1';
 }
 
-function gatewayHeaders(env: Env, ephemeral: boolean | undefined): Record<string, string> {
+function gatewayHeaders(env: Env): Record<string, string> {
   if (!env.AI_GATEWAY_ID) return {};
-  return { 'cf-aig-collect-log': 'false', ...(ephemeral ? { 'cf-aig-skip-cache': 'true' } : {}) };
+  return { 'cf-aig-collect-log': 'false', 'cf-aig-skip-cache': 'true' };
+}
+
+/**
+ * One chat's own prompt-cache scope (see the top of this file): the same for
+ * every turn of a chat, different for every chat and every student. A hash
+ * of who asks and the chat's first question, which a chat never changes;
+ * the account id is the service's own, so the vendors can neither reverse
+ * it nor link two chats of one student.
+ */
+export async function cacheScope(userId: string, messages: ChatMessage[]): Promise<string> {
+  const first = messages.find((m) => m.role !== 'system');
+  const bytes = new TextEncoder().encode(`juno prompt cache\0${userId}\0${JSON.stringify(first?.content ?? '')}`);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return Array.from(digest.slice(0, 12), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** The messages, the cache scope first: a cached prefix then starts with it. */
+export function scoped(messages: ChatMessage[], scope: string): ChatMessage[] {
+  return [{ role: 'system', content: `Chat ${scope}.` }, ...messages];
 }
 
 /** The vendor's response: an error as is, or a 200 whose body is OpenAI-shaped SSE. */
-export async function callVendor(vendor: 'anthropic' | 'openai', model: string, body: AskBody, env: Env): Promise<Response> {
+export async function callVendor(vendor: 'anthropic' | 'openai', model: string, body: AskBody, env: Env, scope: string): Promise<Response> {
   if (vendor === 'openai') {
     return await fetch(`${base(env, 'openai')}/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${env.OPENAI_API_KEY}`, ...gatewayHeaders(env, body.ephemeral) },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${env.OPENAI_API_KEY}`, ...gatewayHeaders(env) },
       body: JSON.stringify({
         model,
-        messages: body.messages,
+        messages: scoped(body.messages, scope),
         max_completion_tokens: MAX_OUTPUT_TOKENS,
         store: false,
         stream: true,
         stream_options: { include_usage: true },
+        prompt_cache_key: scope,
       }),
     });
   }
 
-  const { system, messages } = toAnthropic(body.messages);
+  const { system, messages } = toAnthropic(scoped(body.messages, scope));
   const res = await fetch(`${base(env, 'anthropic')}/messages`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'x-api-key': env.ANTHROPIC_API_KEY,
       'anthropic-version': '2023-06-01',
-      ...gatewayHeaders(env, body.ephemeral),
+      ...gatewayHeaders(env),
     },
     body: JSON.stringify({ model, system, messages, max_tokens: MAX_OUTPUT_TOKENS, stream: true }),
   });

@@ -66,3 +66,21 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter desktop test:native
       - run: pnpm --filter desktop exec tauri build --debug --no-bundle
+      # Opened as a student opens it: its log, its windows and the screen say
+      # whether anything showed (desktop/scripts/smoke-windows.ps1).
+      - name: Open the app and see what shows
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        # Windows PowerShell (.NET Framework): its Add-Type compiles the script's helper with System.Drawing as is.
+        shell: powershell
+        run: |
+          $exe = Get-ChildItem desktop/src-tauri/target/debug -Filter *.exe | Select-Object -First 1
+          ./desktop/scripts/smoke-windows.ps1 -Exe $exe.FullName
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && runner.os == 'Windows'
+        with:
+          name: windows-smoke
+          path: |
+            ${{ runner.temp }}/juno-smoke.jpg
+            ${{ runner.temp }}/juno-smoke-waiting.jpg
+          if-no-files-found: ignore

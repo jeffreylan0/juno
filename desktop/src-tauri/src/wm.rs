@@ -165,8 +165,6 @@ pub fn overlay(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .focused(false)
         // Hidden between selections, but it must answer the moment it shows.
         .background_throttling(BackgroundThrottlingPolicy::Disabled)
-        // Windows: out of every capture, ours included (see capture/windows.rs).
-        .content_protected(cfg!(windows))
         .build()?;
     #[cfg(target_os = "macos")]
     mac::float_above_everything(&window, true);
@@ -176,7 +174,10 @@ pub fn overlay(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 /// Puts the overlay on the display under the pointer and shows it; `focus`
 /// also gives it the keyboard (Escape and Enter while selecting).
 pub fn show_overlay(app: &AppHandle, state: &SharedOverlay, focus: bool) -> tauri::Result<()> {
-    let Some((display, scale)) = display_under_pointer(app) else { return Ok(()) };
+    let Some((display, scale)) = display_under_pointer(app) else {
+        crate::diag::note("overlay: no display to show on");
+        return Ok(());
+    };
     unhide(app);
     let window = overlay(app)?;
     let moved = state.lock().unwrap().display.as_ref() != Some(&display);
@@ -224,8 +225,7 @@ fn card<'a>(app: &'a AppHandle, label: &'a str, url: &str, title: &str) -> Webvi
         .title(title)
         .resizable(true)
         .visible(false)
-        .focused(false)
-        .content_protected(cfg!(windows));
+        .focused(false);
     #[cfg(target_os = "macos")]
     let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
     #[cfg(not(target_os = "macos"))]

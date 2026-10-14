@@ -31,6 +31,13 @@ export interface SelectionControllerOptions {
   captureExcludesOverlay?: boolean;
   /** Scrolling while armed goes to what is beneath the overlay (the app; see OverlayOptions). */
   scrollThrough?: () => void;
+  /** The app's compact bar, with a chats button that does this (bar.ts). */
+  compactBar?: { onChats: () => void };
+  /**
+   * The mode picked on the bar is remembered for the next time it comes up
+   * (the extension). The app always starts in Box.
+   */
+  rememberMode?: boolean;
 }
 
 export class SelectionController {
@@ -70,7 +77,7 @@ export class SelectionController {
         this.act(() =>
           this.soon(() => {
             // The icon starts wherever the student left off next time.
-            void lastKindItem.setValue(kind).catch(() => {});
+            if (opts.rememberMode !== false) void lastKindItem.setValue(kind).catch(() => {});
             void this.start(kind);
           }),
         ),
@@ -78,8 +85,15 @@ export class SelectionController {
       // Escape while the bar waits: hide it (and the panel), like ✕.
       onEscapeWhileWaiting: () => this.act(() => this.finish()),
       onGhost: () => this.act(() => this.soon(() => void this.toggleGhost())),
+      // The chats on the panel, with nothing armed: the dim would cover them.
+      onChats: opts.compactBar &&
+        (() =>
+          this.act(() => {
+            this.disarm();
+            opts.compactBar!.onChats();
+          })),
       },
-      { fadeAfterShot: !!opts.captureExcludesOverlay, scrollThrough: opts.scrollThrough },
+      { fadeAfterShot: !!opts.captureExcludesOverlay, scrollThrough: opts.scrollThrough, compactBar: !!opts.compactBar },
     );
     // A newer copy of this script took over, or the extension went away.
     opts.host?.onInvalidated(() => this.destroy());
@@ -89,6 +103,11 @@ export class SelectionController {
   /** A note attached under the bar (the app's permissions, say), or null to take it away. */
   notice(notice: BarNotice | null): void {
     if (!this.gone) this.overlay.setNotice(notice);
+  }
+
+  /** Whether the answer panel is open (the app), so the bar leaves it what is on it. */
+  panelOpen(open: boolean): void {
+    if (!this.gone) this.overlay.setPanelOpen(open);
   }
 
   /** A message from the background for the bar on this page. */
@@ -122,6 +141,19 @@ export class SelectionController {
     this.soon(() => {
       if (this.armed) return;
       this.generation++;
+      this.overlay.ready();
+    });
+  }
+
+  /**
+   * The armed selection stops, quietly (no "never mind" that could finish
+   * the chat), and the bar waits.
+   */
+  private disarm(): void {
+    if (!this.armed) return;
+    this.soon(() => {
+      this.generation++;
+      this.armed = null;
       this.overlay.ready();
     });
   }

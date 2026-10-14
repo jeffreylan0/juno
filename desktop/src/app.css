@@ -6,17 +6,16 @@
 html, body, #root { height: 100%; }
 
 /* A card: the window itself is the card (the system rounds it and draws its
-   shadow, wm.rs), filled with the page's background; the content rises in. */
+   shadow, wm.rs), filled with the page's background; the content rises in,
+   and the window goes at once (card.ts). */
 html[data-card], html[data-card] body { background: var(--bg); overflow: hidden; overscroll-behavior: none; }
 html[data-card] .panel, html[data-card] .page {
   height: 100%; background: var(--bg); overflow: hidden;
   animation: card-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 html[data-card] .panel { transform-origin: top right; }
-html[data-card='leaving'] .panel, html[data-card='leaving'] .page { animation: card-out 150ms ease-in forwards; }
 @keyframes card-in { from { opacity: 0; transform: translateY(-6px) scale(0.985); } }
-@keyframes card-out { to { opacity: 0; transform: translateY(-4px) scale(0.985); } }
-@media (prefers-reduced-motion: reduce) { html[data-card] .panel, html[data-card] .page, html[data-card='leaving'] .panel, html[data-card='leaving'] .page { animation-duration: 1ms; } }
+@media (prefers-reduced-motion: reduce) { html[data-card] .panel, html[data-card] .page { animation-duration: 1ms; } }
 
 /* Settings scroll inside the card, under its top bar. */
 html[data-card] .page { overflow-y: auto; scroll-behavior: smooth; scroll-padding-top: 72px; }
@@ -25,3 +24,24 @@ html[data-card] .topbar { cursor: default; user-select: none; -webkit-user-selec
 
 /* Settings → Juno: the Quit button's key. */
 .quit-key { margin-left: 8px; color: var(--muted); }
+
+/*
+ * The panel's text at the system's own sizes (panel/main.tsx sets
+ * data-system): macOS body text is 13 px, its small text 11 px; Windows 11's
+ * is 14 px and 12 px. The extension's larger sizes suit a browser side panel.
+ */
+html[data-system] { --body: 13px; --callout: 12px; --small: 11px; font-size: var(--body); }
+html[data-system='windows'], html[data-system='linux'] { --body: 14px; --callout: 13px; --small: 12px; }
+html[data-system] :is(.composer textarea, .macro, .chat-title, .chat-title-input, .title-input, .drawer-title, .search input, .chat-open) { font-size: var(--body); }
+html[data-system] :is(.notice, .notice-action, .model-picker-face, .model-picker select, .what-i-read, .empty .privacy, .chat-confirm, .chat-confirm-actions button, .selection-missing) { font-size: var(--callout); }
+html[data-system] :is(.selection-head, .chat-list h3, .drawer-foot, .composer-hint, .link, .error-actions button, kbd) { font-size: var(--small); }
+html[data-system] .markdown code { font-size: calc(var(--body) - 1px); }
+html[data-system] .selection-mono { font-size: calc(var(--body) - 1px); }
+
+/* Notices float over the end of the chat, above the answer, rather than
+   pushing it up, and go by themselves (Notices.tsx); under the chats drawer. */
+html[data-system] .ask { position: relative; }
+html[data-system] .notices { position: absolute; left: 12px; right: 12px; bottom: calc(100% + 4px); z-index: 5; }
+html[data-system] .notice { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.1); animation: notice-in 180ms ease-out; }
+@keyframes notice-in { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { html[data-system] .notice { animation: none; } }

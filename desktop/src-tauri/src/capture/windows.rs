@@ -1,23 +1,50 @@
-//! Windows: a GDI copy of the screen. The app's own windows are made with
-//! display affinity "exclude from capture" (wm.rs), so the system leaves them
-//! out of this copy (Windows 10 version 2004 and later). No permission needed.
-//! Coordinates are physical pixels (the app is per-monitor DPI aware).
+//! Windows: a GDI copy of the screen. For that one copy, the app's own windows
+//! get display affinity "exclude from capture", so the system leaves them out
+//! (Windows 10 version 2004 and later); the rest of the time they show in
+//! recordings, screen sharing and remote desktops like any window. No
+//! permission needed. Coordinates are physical pixels (the app is per-monitor
+//! DPI aware).
 
 use std::ffi::c_void;
 
 use image::RgbaImage;
 use windows::core::{BOOL, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
-use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+use windows::Win32::Graphics::Dwm::{DwmFlush, DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SelectObject, BITMAPINFO,
     BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, SRCCOPY,
 };
 use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
-use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible};
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
+    WDA_NONE,
+};
 
 use super::{Access, CaptureError, Source};
 use crate::geometry::Rect;
+
+/// Runs `capture` with `windows` (the app's own, as raw handles) left out of
+/// screen captures, and only while it runs.
+pub fn without_windows<T>(windows: &[isize], capture: impl FnOnce() -> T) -> T {
+    let set = |affinity| {
+        for &w in windows {
+            // SAFETY: a window of this process; a stale handle only fails.
+            unsafe {
+                let _ = SetWindowDisplayAffinity(HWND(w as *mut c_void), affinity);
+            }
+        }
+    };
+    set(WDA_EXCLUDEFROMCAPTURE);
+    // The system applies it when it next composes the screen.
+    // SAFETY: no arguments; it only waits for the compositor.
+    if unsafe { DwmFlush().and_then(|_| DwmFlush()) }.is_err() {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let out = capture();
+    set(WDA_NONE);
+    out
+}
 
 pub fn capture_display(frame: Rect, _scale: f64) -> Result<RgbaImage, CaptureError> {
     let (x, y) = (frame.x.round() as i32, frame.y.round() as i32);

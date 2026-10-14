@@ -5,7 +5,7 @@
  * desktop half, in place of tabs, the toolbar icon and the side panel:
  *
  *  - the shortcut (or the menu bar icon, or opening the app) brings the bar
- *    up, armed in the last mode used, on the display under the pointer;
+ *    up, armed in Box, on the display under the pointer;
  *    while macOS has not let the app see the screen, the bar comes up with
  *    a note asking for it instead (overlay/notices.ts);
  *  - a selection is committed: the panel shows (it is made at start and
@@ -14,20 +14,21 @@
  *  - the selection is done: the native core captures that display without
  *    the app's own windows and crops it; the selection joins the chat;
  *  - ✕ on the bar or the panel (or Escape before anything was selected)
- *    hides both and finishes the chat, by lib/current.ts's rules.
+ *    hides both and finishes the chat, by lib/current.ts's rules;
+ *  - the bar's chats button opens the panel on its list of chats; while the
+ *    panel shows, the bar leaves the ghost, settings and chats to it.
  *
  * There is one panel, so one "window" of chats (WINDOW_ID). Where the
  * extension knows a tab, the app knows the window a selection was made over,
  * from the native core, at capture time.
  */
-import { browser, transport } from '../platform/install';
+import { browser, note, transport } from '../platform/install';
 import { WINDOW_ID, type Port } from '../platform/browser';
 import { appFetch } from '../platform/net';
 import { getChat } from '@/lib/chats';
 import { endChat, ensureCurrent, getCurrent, panelOpened, setTemporary, switchTo } from '@/lib/current';
 import { ChatEngine, reply, type KeptCapture } from '@/lib/engine';
 import { PANEL_PORT, isRuntimeMessage, type BarControlMsg, type PanelPortMsg, type RuntimeMessage, type SelectionDoneMsg } from '@/lib/messages';
-import { lastKindItem } from '@/lib/storage';
 import type { NoticeReply } from '../overlay/notices';
 import { pageTitle, type OverlayNotice } from './tips';
 
@@ -37,13 +38,8 @@ const W = WINDOW_ID;
 const panels = new Set<Port>();
 /** Whether the panel is on screen: it is kept, hidden, between chats (wm.rs). */
 let panelShown = false;
-/** Bumped by every show and hide of the panel, so a late hide never undoes a newer show. */
-let panelTurn = 0;
 const engine = new ChatEngine({ fetch: appFetch, panelsOpen: () => panelShown }).start();
 const serial = <T>(task: () => Promise<T>) => engine.serial(task);
-
-/** The panel's exit (card.ts), and a moment for the message to get there. */
-const PANEL_LEAVE_MS = 190;
 
 /** Whether the bar is up. */
 let barUp = false;
@@ -58,7 +54,9 @@ let barUp = false;
 let overlayLoaded: () => void = () => {};
 let overlayReady = new Promise<void>((r) => (overlayLoaded = r));
 
-async function tellOverlay(msg: BarControlMsg | { type: 'overlay:notice'; notice: OverlayNotice | null }): Promise<void> {
+async function tellOverlay(
+  msg: BarControlMsg | { type: 'overlay:notice'; notice: OverlayNotice | null } | { type: 'overlay:panel'; open: boolean },
+): Promise<void> {
   await Promise.race([overlayReady, new Promise((r) => setTimeout(r, 4000))]);
   await browser.tell('overlay', msg);
 }
@@ -74,15 +72,15 @@ let shortcutUntold = false;
 
 /**
  * The shortcut, the menu, or opening the app: the bar comes up selecting in
- * the last mode used. On macOS, until the app may record the screen, it
- * comes up with nothing armed and a note asking for that instead.
+ * Box, whatever was used last time. On macOS, until the app may record the
+ * screen, it comes up with nothing armed and a note asking for that instead.
  */
 async function summon(): Promise<void> {
   const blocked = (await transport.invoke<string>('screen_access')) === 'denied' && !screenLater;
-  const mode = await lastKindItem.getValue();
+  const mode = 'box';
   const ghost = !!(await getCurrent(W))?.temporary;
   // Focused, so Escape (and Enter on a drawn box) reach it while selecting.
-  await transport.invoke('overlay_show', { focus: true });
+  await transport.invoke('overlay_show', { focus: true }).catch((err) => note(`overlay_show failed: ${String(err)}`));
   barUp = true;
   let notice: OverlayNotice | null = null;
   if (blocked) notice = screenAsked ? 'screen-restart' : 'screen-permission';
@@ -108,24 +106,29 @@ async function screenNotNow(): Promise<void> {
   await summon();
 }
 
-/** ✕ on the bar or the panel (or Escape before anything was selected): both go, the chat is finished. */
+/**
+ * ✕ on the bar or the panel (or Escape before anything was selected): both
+ * go, then the chat is finished. In that order: finished first, the panel
+ * would show its empty new chat for a moment on its way out.
+ */
 async function finishChat(): Promise<void> {
-  await serial(() => endChat(W));
   if (barUp) {
     barUp = false;
-    await tellOverlay({ type: 'bar:hide' });
+    void tellOverlay({ type: 'bar:hide' });
   }
   await closePanel();
+  await serial(() => endChat(W));
 }
 
-/** The panel plays its exit (card.ts), then is hidden, unless it was shown again meanwhile. */
+/**
+ * The panel goes at once. (Its content fading out would leave the empty
+ * window, which the system draws, on screen for a moment: a flash.)
+ */
 async function closePanel(): Promise<void> {
   if (!panelShown) return;
   panelShown = false;
-  const turn = ++panelTurn;
-  await browser.tell('panel', { type: 'card:leave' }).catch(() => {});
-  await new Promise((r) => setTimeout(r, PANEL_LEAVE_MS));
-  if (turn === panelTurn) await transport.invoke('panel_close').catch(() => {});
+  void tellOverlay({ type: 'overlay:panel', open: false });
+  await transport.invoke('panel_close').catch(() => {});
 }
 
 /** Escape stopped a selection: with nothing selected in this chat yet it meant "never mind". */
@@ -143,10 +146,18 @@ async function tellGhost(on: boolean): Promise<void> {
 
 /** Shows the panel, playing its entrance if it was hidden. */
 async function openPanel(): Promise<void> {
-  ++panelTurn;
-  if (!panelShown) await browser.tell('panel', { type: 'card:enter' }).catch(() => {});
+  if (!panelShown) {
+    await browser.tell('panel', { type: 'card:enter' }).catch(() => {});
+    void tellOverlay({ type: 'overlay:panel', open: true });
+  }
   panelShown = true;
-  await transport.invoke('panel_open', { focus: true }).catch((err) => console.warn('[selection-ai] panel', err));
+  await transport.invoke('panel_open', { focus: true }).catch((err) => note(`panel_open failed: ${String(err)}`));
+}
+
+/** The bar's chats button: the panel, open on its list of chats. */
+async function openChats(): Promise<void> {
+  await browser.tell('panel', { type: 'panel:chats' }).catch(() => {});
+  await openPanel();
 }
 
 // ── A selection ──────────────────────────────────────────────────────────
@@ -227,11 +238,11 @@ browser.runtime.onConnect.addListener((port) => {
 
 // ── Messages from the overlay, the panel and settings ───────────────────
 
-const DESKTOP_MESSAGES = new Set(['overlay:ready', 'screen:enable', 'screen:later', 'screen:denied']);
+const DESKTOP_MESSAGES = new Set(['overlay:ready', 'screen:enable', 'screen:later', 'screen:denied', 'chats:open']);
 
 browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
   if (!isRuntimeMessage(raw) && !DESKTOP_MESSAGES.has((raw as { type?: string })?.type ?? '')) return;
-  const msg = raw as RuntimeMessage | NoticeReply | { type: 'overlay:ready' };
+  const msg = raw as RuntimeMessage | NoticeReply | { type: 'overlay:ready' | 'chats:open' };
   if (isRuntimeMessage(msg) && engine.handles(msg)) return engine.handle(msg, sendResponse);
   switch (msg.type) {
     case 'overlay:ready':
@@ -240,6 +251,9 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
       return;
     case 'screen:enable':
       void enableScreen();
+      return;
+    case 'chats:open':
+      void openChats();
       return;
     case 'screen:later':
       void screenNotNow();
@@ -306,8 +320,7 @@ void transport
   .invoke<{ hidden: boolean; shortcut: { error: string | null } }>('app_info')
   .then(async (info) => {
     shortcutUntold = !!info.shortcut.error;
+    note(info.hidden ? 'ready (hidden)' : 'ready');
     if (!info.hidden) await summon();
   })
-  .catch((err) => console.warn('[selection-ai] start', err));
-
-void browser.ready.then(() => console.info('[selection-ai] core ready'));
+  .catch((err) => note(`start failed: ${String(err)}`));

@@ -24,4 +24,6 @@ export const SURFACE: Surface = {
   blockedSites: false,
   pdfViewer: false,
   ownWindow: true,
+  // Long enough to read twice; pointing at one holds it (Notices.tsx).
+  noticeMs: 9000,
 };

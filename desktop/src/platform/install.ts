@@ -17,6 +17,11 @@ import { installFetch } from './net';
 import { tauriTransport } from './transport';
 
 export const transport = tauriTransport();
+
+/** A step of this window's, or an error, for the app's log (juno.log: src-tauri/src/diag.rs). */
+export const note = (text: string): void => void transport.invoke('diag_note', { text }).catch(() => {});
+addEventListener('error', (e) => note(`error: ${e.message} (${e.filename.split('/').pop()}:${e.lineno})`));
+addEventListener('unhandledrejection', (e) => note(`unhandled: ${(e.reason as Error)?.message ?? String(e.reason)}`));
 export const browser = createBrowser(transport, { openUrl: (url) => void openUrl(url) });
 
 (globalThis as unknown as { browser: typeof browser }).browser = browser;

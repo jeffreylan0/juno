@@ -25,7 +25,7 @@
 import { stillSignedIn, verifySession, type Session } from './auth';
 import { BillingError, checkout, close, donePage, portal, prices, webhook } from './billing';
 import { readBody } from './body';
-import { BadRequest, callVendor, parseAsk } from './models';
+import { BadRequest, cacheScope, callVendor, parseAsk } from './models';
 import { refundAnswer, useAnswer } from './quota';
 import { accountOf } from './supabase';
 
@@ -111,7 +111,7 @@ async function ask(request: Request, session: Session, env: Env): Promise<Respon
 
   let upstream: Response;
   try {
-    upstream = await callVendor(vendor, model, body, env);
+    upstream = await callVendor(vendor, model, body, env, await cacheScope(session.userId, body.messages));
   } catch (err) {
     await refundAnswer(session, use.period, env);
     throw err;

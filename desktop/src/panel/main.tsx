@@ -12,9 +12,12 @@ import '@/ui/panel.css';
 import 'katex/dist/katex.min.css';
 import '../app.css';
 import { cardWindow } from '../card';
+import { MAC } from '../os';
 import { fitToChat } from './fit';
 
 document.title = BRAND.name;
+// The system's own text sizes (app.css).
+document.documentElement.dataset.system = MAC ? 'mac' : /Windows/.test(navigator.userAgent) ? 'windows' : 'linux';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

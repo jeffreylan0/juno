@@ -3,21 +3,19 @@
  * with the title bar hidden, so the system rounds them and draws their
  * shadow (wm.rs); on Windows and Linux windows without decorations. The
  * page fills the window with its own background and its content comes in
- * with a short rise and goes with a fade. The top bar drags the window; the
+ * with a short rise. They go at once: content fading out would leave the
+ * empty window on screen for a moment. The top bar drags the window; the
  * page's own ✕ (SURFACE.ownWindow) closes it; ⌘Q quits.
  *
  * Settings are made hidden and shown from here once the page has drawn, so
  * they never flash white or empty first. The panel is made at start and
- * kept: the core shows and hides it, telling it `card:enter` and
- * `card:leave` so it plays its entrance and exit.
+ * kept: the core shows and hides it, telling it `card:enter` so it plays its
+ * entrance.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { browser } from './platform/install';
 import { MAC } from './os';
-
-/** How long the exit plays before the window goes. */
-const LEAVE_MS = 150;
 
 /** What on the top bar is a control, not a place to drag the window by. */
 const CONTROLS = 'button, a, input, select, textarea, label, [role="button"], [contenteditable="true"]';
@@ -45,26 +43,14 @@ export function cardWindow(opts: CardOptions): void {
     void getCurrentWindow().startDragging().catch(() => {});
   });
 
-  // The page's ✕: the exit plays, then the window goes.
-  let leaving = false;
-  const close = window.close.bind(window);
-  window.close = () => {
-    if (opts.onClose) return opts.onClose();
-    if (leaving) return;
-    leaving = true;
-    root.dataset.card = 'leaving';
-    setTimeout(close, LEAVE_MS);
-  };
+  // The page's ✕.
+  if (opts.onClose) window.close = opts.onClose;
 
-  // Shown and hidden by the core (the panel). The exit's last frame holds
-  // until the next entrance, so the card never shows stale content first.
+  // Shown by the core again (the panel): its entrance plays again.
   browser.runtime.onMessage.addListener((msg) => {
-    const type = (msg as { type?: string })?.type;
-    if (type === 'card:leave') root.dataset.card = 'leaving';
-    else if (type === 'card:enter') {
-      enter();
-      opts.onEnter?.();
-    }
+    if ((msg as { type?: string })?.type !== 'card:enter') return;
+    enter();
+    opts.onEnter?.();
   });
 
   // ⌘Q quits the app from its windows, as in any Mac app (it has no menu bar of its own).
@@ -87,7 +73,6 @@ export function cardWindow(opts: CardOptions): void {
 
 /** Plays the entrance again (the window is about to show). */
 function enter(): void {
-  document.documentElement.dataset.card = 'in';
   for (const el of document.querySelectorAll<HTMLElement>('.panel, .page')) {
     el.style.animation = 'none';
     void el.offsetWidth;

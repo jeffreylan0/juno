@@ -23,6 +23,8 @@ export interface Surface {
   pdfViewer: boolean;
   /** The panel and settings are windows of their own, with their own ✕ (the app). */
   ownWindow: boolean;
+  /** How long a notice in the panel stays before it goes by itself (the app); null: until dealt with. */
+  noticeMs: number | null;
 }
 
 export const SURFACE: Surface = {
@@ -34,4 +36,5 @@ export const SURFACE: Surface = {
   blockedSites: true,
   pdfViewer: true,
   ownWindow: false,
+  noticeMs: null,
 };

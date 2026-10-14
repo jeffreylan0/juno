@@ -45,6 +45,24 @@ async function waiting() {
   });
 }
 
+/**
+ * The waiting bar once the panel is open, as the native core knows it: it
+ * narrows then (chats, ghost and gear are the panel's), so a position read
+ * before that misses it.
+ */
+async function settledBar() {
+  await waitFor('the panel', async () => (await app.window('panel'))?.visible);
+  const width = await waitFor('the bar without chats, ghost and gear', async () => {
+    const l = await barLayout();
+    return l.shown.length === 0 ? l.bar.width : null;
+  });
+  const o = await waitFor('the narrower bar told to the core', async () => {
+    const o = await app.overlay();
+    return o.visible && !o.interactive && o.regions[0] && Math.abs(o.regions[0].width - width) <= 2 ? o : null;
+  });
+  return o.regions[0]!;
+}
+
 async function selections(n: number): Promise<Chat> {
   return await waitFor(`${n} selection(s) in the chat`, async () => {
     const chat = await app.currentChat();
@@ -69,7 +87,7 @@ const box = (x0: number, y0: number, x1: number, y1: number) =>
     [x1, y1],
   ]);
 
-it('the shortcut brings the bar up over the display, armed in the last mode, with Box and Freeform on offer', async () => {
+it('the shortcut brings the bar up over the display, armed in Box, with Box and Freeform on offer', async () => {
   // The real key, through the X server, to the app's global shortcut.
   const pressed = Date.now();
   await app.xdo('key', 'alt+shift+s');
@@ -87,6 +105,101 @@ it('the shortcut brings the bar up over the display, armed in the last mode, wit
   expect(await app.read('overlay', `getComputedStyle(${bar(`querySelector('.ask')`)}).display`)).toBe('none');
   // The panel waits, hidden, for the first selection.
   expect((await app.window('panel'))?.visible).toBe(false);
+});
+
+it('the bar always comes up in Box, whatever mode was used last', async () => {
+  await app.summon();
+  await armed('box');
+  await app.eval('overlay', bar(`querySelector('.chip[data-kind=freeform]').click()`));
+  await armed('freeform');
+  // Nothing selected yet: Escape means never mind, and the bar goes.
+  await app.xdo('mousemove', '640', '400');
+  await app.xdo('key', 'Escape');
+  await waitFor('the overlay hidden', async () => !(await app.overlay()).visible);
+  await app.summon();
+  await armed('box');
+  expect((await app.storage('local')).lastSelectionKind).toBeUndefined();
+});
+
+/** Where the bar and its modes are, and which of its chats, ghost and gear show. */
+const barLayout = () =>
+  app.read<{ bar: { left: number; width: number }; chips: { left: number; width: number }; shown: string[] }>(
+    'overlay',
+    `(() => {
+      const s = document.querySelector('selection-ai-overlay').shadowRoot;
+      const at = (q) => { const r = s.querySelector(q).getBoundingClientRect(); return { left: r.left, width: r.width }; };
+      const shown = ['.chats', '.ghost', '.gear'].filter((q) => getComputedStyle(s.querySelector(q)).display !== 'none');
+      return { bar: at('.bar'), chips: at('.chips'), shown };
+    })()`,
+  );
+
+it('the bar is compact, its modes in the middle; chats, ghost and gear leave it to the panel while the panel is open', async () => {
+  await app.summon();
+  await armed();
+  const before = await barLayout();
+  // About half the extension's 640 px.
+  expect(before.bar.width).toBeLessThan(340);
+  const middle = (r: { left: number; width: number }) => r.left + r.width / 2;
+  expect(Math.abs(middle(before.chips) - middle(before.bar))).toBeLessThanOrEqual(1);
+  expect(before.shown).toEqual(['.chats', '.ghost', '.gear']);
+
+  await box(150, 150, 250, 250);
+  await selections(1);
+  await waitFor('the panel', async () => (await app.window('panel'))?.visible);
+  await waitFor('the bar without them', async () => (await barLayout()).shown.length === 0);
+  const open = await barLayout();
+  expect(Math.abs(middle(open.chips) - middle(open.bar))).toBeLessThanOrEqual(1);
+});
+
+it('the chats button on the bar opens the panel on the list of chats, with nothing armed over it', async () => {
+  await app.summon();
+  await armed();
+  await box(150, 150, 250, 250);
+  const chat = await selections(1);
+  await app.eval('panel', 'window.close()');
+  await waitFor('the panel hidden', async () => (await app.window('panel'))?.visible === false);
+
+  await app.summon();
+  await armed();
+  await app.eval('overlay', bar(`querySelector('.chats').click()`));
+  await waitFor('the panel', async () => (await app.window('panel'))?.visible);
+  await waitFor('the chat menu', () => app.read('panel', `!!document.querySelector('[data-testid=chat-menu]')`));
+  expect(await app.read('panel', `document.querySelector('[data-testid=chat-menu] nav').textContent`)).toContain(chat.title);
+  // The selection was put down (the bar waits), and no chat was finished for it.
+  await waiting();
+  expect((await app.storage('local')).chatIndex).toHaveLength(1);
+});
+
+it('the panel: ✕ first, then the chats menu; text at the system’s size; notices float over the chat and go by themselves', async () => {
+  // Made at start, hidden: a notice's time runs out before anyone sees it (as it did on Windows).
+  const ring = `document.querySelector('.notice-timer circle')`;
+  await waitFor('the notice in the hidden panel', () => app.read('panel', `!!${ring}`));
+  await app.eval('panel', `${ring}.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))`);
+  await waitFor('the notice gone', async () => !(await app.read('panel', `!!document.querySelector('[data-testid=notice]')`)));
+
+  await app.summon();
+  await armed();
+  await box(150, 150, 250, 250);
+  await selections(1);
+  await waitFor('the panel', async () => (await app.window('panel'))?.visible);
+  await waitFor('the selection in the panel', () => app.read('panel', `!!document.querySelector('[data-testid=selection]')`));
+  expect(await app.read('panel', `[...document.querySelectorAll('.topbar button')].map((b) => b.dataset.testid)`)).toEqual([
+    'close',
+    'menu',
+    'chat-title',
+    'temporary',
+    'settings',
+  ]);
+  // Linux sizes as Windows does: 14 px body text.
+  expect(await app.read('panel', `getComputedStyle(document.documentElement).fontSize`)).toBe('14px');
+
+  // Shown, the panel brings the notice back (placeholder answers, the default), over the end of the chat, on a timer.
+  await waitFor('the notice back', () => app.read('panel', `!!document.querySelector('[data-testid=notice]')`));
+  expect(await app.read('panel', `getComputedStyle(document.querySelector('.notices')).position`)).toBe('absolute');
+  expect(await app.read('panel', `${ring}.style.animationDuration`)).toBe('9000ms');
+  // The ring runs out: the notice goes.
+  await app.eval('panel', `${ring}.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))`);
+  await waitFor('the notice gone again', async () => !(await app.read('panel', `!!document.querySelector('[data-testid=notice]')`)));
 });
 
 it('opening the app brings the bar straight up, armed, as the shortcut does', async () => {
@@ -231,8 +344,7 @@ it('while the bar waits, the pointer goes through to the app beneath, except on 
   await app.xdo('mousemove', '640', '400');
   await waitFor('the overlay taking the pointer', async () => (await app.overlay()).ignoring === false);
   await box(150, 150, 250, 250);
-  const { regions } = await waiting();
-  const b = regions[0]!;
+  const b = await settledBar();
 
   await app.xdo('mousemove', '640', '300');
   await waitFor('clicks going through', async () => (await app.overlay()).ignoring === true);
@@ -245,8 +357,7 @@ it('✕ on the bar finishes the chat: the bar and the panel go, and the chat sta
   await armed();
   await box(150, 150, 250, 250);
   const chat = await selections(1);
-  const { regions } = await waiting();
-  const b = regions[0]!;
+  const b = await settledBar();
   // The ✕ is the bar's first control: a real click on it.
   await app.xdo('mousemove', String(b.x + 23), String(b.y + b.height / 2));
   await waitFor('the bar taking the click', async () => (await app.overlay()).ignoring === false);

@@ -116,6 +116,8 @@ export interface OverlayHandlers {
   onEscapeWhileWaiting: () => void;
   /** The ghost on the bar was pressed. */
   onGhost: () => void;
+  /** The bar's chats button (the app's bar has one). */
+  onChats?: () => void;
 }
 
 export interface OverlayOptions {
@@ -132,6 +134,8 @@ export interface OverlayOptions {
    * whatever is beneath until the pointer moves to select.
    */
   scrollThrough?: () => void;
+  /** The app's compact bar (bar.ts). */
+  compactBar?: boolean;
 }
 
 /** How long the dim takes to fade when a selection ends. */
@@ -178,6 +182,8 @@ export class Overlay {
   private leaving: Animation | null = null;
   private ghost = false;
   private notice: BarNotice | null = null;
+  /** The answer panel is open (the app): see Bar.setPanelOpen. */
+  private panelOpen = false;
   /** The mode being selected in, or null while the bar waits. */
   private kind: SelectionKind | null = null;
   /** The selection being made waits for Send (the setting) rather than going when drawn. */
@@ -271,6 +277,12 @@ export class Overlay {
     this.bar?.setNotice(notice);
   }
 
+  /** Whether the answer panel is open (the app), so the bar leaves it what is on it. */
+  setPanelOpen(open: boolean): void {
+    this.panelOpen = open;
+    this.bar?.setPanelOpen(open);
+  }
+
   /** Puts the bar up if it is not already, opening from its middle; a bar on its way out comes back. */
   private show(): void {
     if (this.leaving) {
@@ -294,17 +306,22 @@ export class Overlay {
     tip.className = 'tip';
     tip.setAttribute(UI_ATTR, 'tip');
 
-    const bar = new Bar({
-      onClose: () => {
-        this.abort();
-        this.handlers.onClose();
+    const bar = new Bar(
+      {
+        onClose: () => {
+          this.abort();
+          this.handlers.onClose();
+        },
+        onConfirm: () => this.confirmCurrent?.(),
+        onModeChange: (next) => this.handlers.onModeChange(next),
+        onGhost: () => this.handlers.onGhost(),
+        onChats: this.handlers.onChats,
       },
-      onConfirm: () => this.confirmCurrent?.(),
-      onModeChange: (next) => this.handlers.onModeChange(next),
-      onGhost: () => this.handlers.onGhost(),
-    });
+      { compact: this.options.compactBar },
+    );
     bar.setGhost(this.ghost);
     bar.setNotice(this.notice);
+    bar.setPanelOpen(this.panelOpen);
 
     root.append(tip, bar.hintEl, bar.el);
     shadow.append(style, root);
