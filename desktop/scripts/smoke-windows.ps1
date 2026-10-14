@@ -1,8 +1,10 @@
 # Opens the built app on Windows the way a student does (not --hidden) and
 # says what came of it: the app's log, its windows, and what changed on the
-# screen, with a small picture of the screen. Fails if the app quit, never
-# finished starting, its pages never reached it (no bar in its log), or it
-# showed none of its windows. For CI (.github/workflows/desktop.yml).
+# screen, with a small picture of the screen. Then makes a selection with the
+# real mouse and looks again once the bar waits (clicks then go through the
+# overlay, which on Windows changes its window style). Fails if the app quit,
+# never finished starting, its pages never reached it (no bar in its log), or
+# it showed none of its windows. For CI (.github/workflows/desktop.yml).
 param(
   [Parameter(Mandatory = $true)] [string] $Exe,
   [int] $Wait = 25,
@@ -28,7 +30,27 @@ public static class Smoke {
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] static extern IntPtr GetWindowLongPtr(IntPtr h, int i);
   [DllImport("user32.dll")] static extern bool GetWindowDisplayAffinity(IntPtr h, out uint a);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
   [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+
+  /// A drag with the left button, as a student makes one.
+  public static void Drag(int x0, int y0, int x1, int y1) {
+    SetCursorPos(x0, y0);
+    System.Threading.Thread.Sleep(200);
+    mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+    for (int i = 1; i <= 12; i++) {
+      SetCursorPos(x0 + (x1 - x0) * i / 12, y0 + (y1 - y0) * i / 12);
+      System.Threading.Thread.Sleep(30);
+    }
+    System.Threading.Thread.Sleep(80);
+    mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+  }
+
+  public static string At(Bitmap b, int x, int y) {
+    var c = b.GetPixel(x, y);
+    return c.R + "," + c.G + "," + c.B;
+  }
 
   /// The app's own windows (Tao's class) on screen.
   public static int Visible;
@@ -80,6 +102,15 @@ public static class Smoke {
 }
 '@
 
+function Picture([System.Drawing.Bitmap] $shot, [string] $file, [string] $prefix) {
+  $small = New-Object System.Drawing.Bitmap $shot, ([int]($shot.Width / 2)), ([int]($shot.Height / 2))
+  $small.Save($file, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+  $text = [Convert]::ToBase64String([IO.File]::ReadAllBytes($file))
+  Write-Host "-- picture $file ($($text.Length) base64 characters)"
+  for ($i = 0; $i -lt $text.Length; $i += 2000) { Write-Host "$($prefix):$($text.Substring($i, [Math]::Min(2000, $text.Length - $i)))" }
+  Write-Host '-- end of picture'
+}
+
 function Shot {
   $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
   $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
@@ -119,12 +150,28 @@ if ($before -and $after) {
   Write-Host "`n== The screen: $count pixels changed ('#' mostly, '+' a little)"
   Write-Host $grid
   # A small copy of the screen, in the log as base64 (between the markers).
-  $small = New-Object System.Drawing.Bitmap $after, ([int]($after.Width / 2)), ([int]($after.Height / 2))
-  $small.Save($Picture, [System.Drawing.Imaging.ImageFormat]::Jpeg)
-  $text = [Convert]::ToBase64String([IO.File]::ReadAllBytes($Picture))
-  Write-Host "-- picture $Picture ($($text.Length) base64 characters)"
-  for ($i = 0; $i -lt $text.Length; $i += 2000) { Write-Host "pic:$($text.Substring($i, [Math]::Min(2000, $text.Length - $i)))" }
-  Write-Host '-- end of picture'
+  Picture $after $Picture 'pic'
+}
+
+# A selection: a box dragged with the real mouse, then the pointer away
+# from the bar, where clicks go through the overlay to the app beneath.
+if ($alive -and $after) {
+  $w = $after.Width; $h = $after.Height
+  Write-Host "`n== A selection"
+  [Smoke]::Drag([int]($w * 0.2), [int]($h * 0.25), [int]($w * 0.45), [int]($h * 0.5))
+  Start-Sleep -Seconds 5
+  [void][Smoke]::SetCursorPos([int]($w * 0.15), [int]($h * 0.4))
+  Start-Sleep -Seconds 2
+  $app.Refresh()
+  $waiting = Shot
+  [Smoke]::Windows($app.Id) | ForEach-Object { Write-Host $_ }
+  # Where the bar sits (bottom middle), armed and then waiting: the bar's dark grey both times if it stayed on screen.
+  $bx = [int]($w / 2 - 60); $by = $h - 54
+  Write-Host "bar at $bx,$($by): armed $([Smoke]::At($after, $bx, $by)), waiting $([Smoke]::At($waiting, $bx, $by))"
+  Write-Host '-- juno.log now'
+  if (Test-Path $log) { Get-Content $log | Select-Object -Last 8 | ForEach-Object { Write-Host $_ } }
+  Picture $waiting "$env:RUNNER_TEMP\juno-smoke-waiting.jpg" 'pic2'
+  $alive = -not $app.HasExited
 }
 
 if ($alive) { Stop-Process -Id $app.Id -Force }

@@ -343,6 +343,8 @@ async fn capture_selection(app: AppHandle, window: WebviewWindow, state: State<'
         let frame = display.global_frame(space);
         let shot = shoot(&app, &display)?;
         let cropped = crop::crop(&shot, &request).map_err(|e| CaptureError::Failed(e.to_string()))?;
+        static FIRST: std::sync::Once = std::sync::Once::new();
+        FIRST.call_once(|| diag::note(&format!("capture: first, {}x{} of a {}x{} display", cropped.width(), cropped.height(), shot.width(), shot.height())));
         let r = request.rect;
         let (cx, cy) = (r.x + r.width / 2.0, r.y + r.height / 2.0);
         let at = match space {
@@ -353,7 +355,10 @@ async fn capture_selection(app: AppHandle, window: WebviewWindow, state: State<'
     })
     .await
     .map_err(|e| CaptureFailure { code: "failed", message: e.to_string() })?
-    .map_err(CaptureFailure::from)
+    .map_err(|e| {
+        diag::note(&format!("capture failed: {e}"));
+        CaptureFailure::from(e)
+    })
 }
 
 #[tauri::command(async)]

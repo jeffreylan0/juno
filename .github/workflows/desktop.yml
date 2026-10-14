@@ -80,5 +80,7 @@ jobs:
         if: always() && runner.os == 'Windows'
         with:
           name: windows-smoke
-          path: ${{ runner.temp }}/juno-smoke.jpg
+          path: |
+            ${{ runner.temp }}/juno-smoke.jpg
+            ${{ runner.temp }}/juno-smoke-waiting.jpg
           if-no-files-found: ignore
