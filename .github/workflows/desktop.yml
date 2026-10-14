@@ -70,7 +70,8 @@ jobs:
       # whether anything showed (desktop/scripts/smoke-windows.ps1).
       - name: Open the app and see what shows
         if: runner.os == 'Windows'
-        shell: pwsh
+        # Windows PowerShell (.NET Framework): its Add-Type compiles the script's helper with System.Drawing as is.
+        shell: powershell
         run: |
           $exe = Get-ChildItem desktop/src-tauri/target/debug -Filter *.exe | Select-Object -First 1
           ./desktop/scripts/smoke-windows.ps1 -Exe $exe.FullName
