@@ -97,7 +97,7 @@ export const BAR_STYLE = `
    least the bar's); a note or the settings widen the bar while open. */
 .bar.compact { width: auto; max-width: calc(100vw - 32px); }
 .bar.compact.wide { width: min(460px, calc(100vw - 32px)); }
-.bar.compact .row { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; padding: 8px; }
+.bar.compact .row { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; padding: 8px; }
 .bar.compact .start { justify-self: start; display: flex; }
 .bar.compact .end { justify-self: end; display: flex; align-items: center; gap: 2px; }
 .bar.compact .chips { margin-right: 0; }

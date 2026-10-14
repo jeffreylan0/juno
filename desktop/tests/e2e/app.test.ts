@@ -45,6 +45,24 @@ async function waiting() {
   });
 }
 
+/**
+ * The waiting bar once the panel is open, as the native core knows it: it
+ * narrows then (chats, ghost and gear are the panel's), so a position read
+ * before that misses it.
+ */
+async function settledBar() {
+  await waitFor('the panel', async () => (await app.window('panel'))?.visible);
+  const width = await waitFor('the bar without chats, ghost and gear', async () => {
+    const l = await barLayout();
+    return l.shown.length === 0 ? l.bar.width : null;
+  });
+  const o = await waitFor('the narrower bar told to the core', async () => {
+    const o = await app.overlay();
+    return o.visible && !o.interactive && o.regions[0] && Math.abs(o.regions[0].width - width) <= 2 ? o : null;
+  });
+  return o.regions[0]!;
+}
+
 async function selections(n: number): Promise<Chat> {
   return await waitFor(`${n} selection(s) in the chat`, async () => {
     const chat = await app.currentChat();
@@ -119,6 +137,7 @@ it('the bar is compact, its modes in the middle; chats, ghost and gear leave it 
   await app.summon();
   await armed();
   const before = await barLayout();
+  // About half the extension's 640 px.
   expect(before.bar.width).toBeLessThan(340);
   const middle = (r: { left: number; width: number }) => r.left + r.width / 2;
   expect(Math.abs(middle(before.chips) - middle(before.bar))).toBeLessThanOrEqual(1);
@@ -319,8 +338,7 @@ it('while the bar waits, the pointer goes through to the app beneath, except on 
   await app.xdo('mousemove', '640', '400');
   await waitFor('the overlay taking the pointer', async () => (await app.overlay()).ignoring === false);
   await box(150, 150, 250, 250);
-  const { regions } = await waiting();
-  const b = regions[0]!;
+  const b = await settledBar();
 
   await app.xdo('mousemove', '640', '300');
   await waitFor('clicks going through', async () => (await app.overlay()).ignoring === true);
@@ -333,8 +351,7 @@ it('✕ on the bar finishes the chat: the bar and the panel go, and the chat sta
   await armed();
   await box(150, 150, 250, 250);
   const chat = await selections(1);
-  const { regions } = await waiting();
-  const b = regions[0]!;
+  const b = await settledBar();
   // The ✕ is the bar's first control: a real click on it.
   await app.xdo('mousemove', String(b.x + 23), String(b.y + b.height / 2));
   await waitFor('the bar taking the click', async () => (await app.overlay()).ignoring === false);
