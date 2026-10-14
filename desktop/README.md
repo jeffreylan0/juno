@@ -54,7 +54,7 @@ Accounts and hosted answers read the same `extension/.env.local` as the extensio
 
 ### When it misbehaves on someone else's computer
 
-The app keeps a short log of its own steps and errors: each start, each window's page loading, the first bar shown, page errors, a panic, or a failed start (on Windows also said in a message box). Never what was asked, the screen or a key. It is `juno.log` in `~/Library/Logs/Juno/` on macOS, `%LOCALAPPDATA%\com.humanbn.juno\` on Windows (`src-tauri/src/diag.rs`). CI opens the Windows build the same way a student does and prints that log, the app's windows and what changed on screen (`scripts/smoke-windows.ps1`).
+The app keeps a short log of its own steps and errors: each start, each window's page loading, the first bar shown, page errors, a panic, or a failed start (on Windows also said in a message box). Never what was asked, the screen or a key. It is `juno.log` in `~/Library/Logs/Juno/` on macOS, `%LOCALAPPDATA%\com.humanbn.juno\` on Windows (`src-tauri/src/diag.rs`). CI opens the Windows build the same way a student does and prints that log, the app's windows and what changed on screen (`scripts/smoke-windows.ps1`), and fails unless the bar came up.
 
 ### Test builds for other people
 
