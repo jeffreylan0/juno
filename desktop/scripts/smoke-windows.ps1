@@ -55,6 +55,25 @@ public static class Smoke {
   /// The app's own windows (Tao's class) on screen.
   public static int Visible;
 
+  /// Every process's top-level windows on screen whose title has `text`, one line each.
+  public static List<string> Titled(string text) {
+    var found = new List<string>();
+    EnumWindows((h, l) => {
+      var t = new StringBuilder(256);
+      GetWindowText(h, t, 256);
+      if (!IsWindowVisible(h) || t.ToString().IndexOf(text) < 0) return true;
+      var c = new StringBuilder(256);
+      GetClassName(h, c, 256);
+      uint p;
+      GetWindowThreadProcessId(h, out p);
+      RECT r;
+      GetWindowRect(h, out r);
+      found.Add(String.Format("'{0}' [{1}] pid {2} at {3},{4} size {5}x{6}", t, c, p, r.L, r.T, r.R - r.L, r.B - r.T));
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
+
   /// The process's top-level windows, one line each.
   public static List<string> Windows(int pid) {
     var found = new List<string>();
@@ -165,6 +184,8 @@ if ($alive -and $after) {
   $app.Refresh()
   $waiting = Shot
   [Smoke]::Windows($app.Id) | ForEach-Object { Write-Host $_ }
+  Write-Host '-- on screen with Juno in the title, any process'
+  [Smoke]::Titled('Juno') | ForEach-Object { Write-Host $_ }
   # Where the bar sits (bottom middle), armed and then waiting: the bar's dark grey both times if it stayed on screen.
   $bx = [int]($w / 2 - 60); $by = $h - 54
   Write-Host "bar at $bx,$($by): armed $([Smoke]::At($after, $bx, $by)), waiting $([Smoke]::At($waiting, $bx, $by))"

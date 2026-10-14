@@ -300,11 +300,19 @@ fn shoot(app: &AppHandle, display: &Display) -> Result<image::RgbaImage, Capture
         let _ = app;
         take()
     };
-    // Windows: the app's windows are left out of this one capture only
-    // (capture/windows.rs), so recordings and screen sharing still show them.
+    // Windows: the app's windows on screen are left out of this one capture
+    // only (capture/windows.rs), so recordings and screen sharing still show
+    // them. Not the hidden ones (the core): changing a never-shown window's
+    // affinity drew it, empty, on screen.
     #[cfg(windows)]
     let shot = {
-        let ours: Vec<isize> = app.webview_windows().values().filter_map(|w| w.hwnd().ok()).map(|h| h.0 as isize).collect();
+        let ours: Vec<isize> = app
+            .webview_windows()
+            .values()
+            .filter(|w| w.is_visible().unwrap_or(false))
+            .filter_map(|w| w.hwnd().ok())
+            .map(|h| h.0 as isize)
+            .collect();
         capture::without_windows(&ours, take)
     };
     // X11 cannot leave a window out of a capture: the overlay steps aside for it.
