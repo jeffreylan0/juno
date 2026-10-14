@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AUTH_REDIRECT, WINDOW_ID, createBrowser } from '../../desktop/src/platform/browser';
 import type { Transport } from '../../desktop/src/platform/transport';
 import { pageTitle } from '../../desktop/src/core/tips';
+import { isExternal } from '../../desktop/src/platform/net';
 import { readPointerState, trackPointer } from '../../desktop/src/overlay/pointer';
 
 type Handler = (payload: unknown) => void;
@@ -272,6 +273,23 @@ describe('Google sign-in in the app', () => {
     await send('com.humanbn.juno://something-else');
     await send(`${AUTH_REDIRECT}?code=abc`);
     expect(await flow).toBe(`${AUTH_REDIRECT}?code=abc`);
+  });
+});
+
+describe('which requests go out through the native core', () => {
+  it('sites and local models do; the app’s own page, commands and files never do', () => {
+    // Windows: the page is http://tauri.localhost and Tauri's commands are fetches to http://ipc.localhost.
+    const windows = 'http://tauri.localhost';
+    expect(isExternal('http://ipc.localhost/app_info', windows)).toBe(false);
+    expect(isExternal('http://ipc.localhost/plugin%3Ahttp%7Cfetch', windows)).toBe(false);
+    expect(isExternal('http://asset.localhost/x.png', windows)).toBe(false);
+    expect(isExternal('/assets/core.js', windows)).toBe(false);
+    // macOS and Linux: their own schemes.
+    expect(isExternal('ipc://localhost/app_info', 'tauri://localhost')).toBe(false);
+    // Everything else leaves the app.
+    expect(isExternal('https://api.anthropic.com/v1/messages', windows)).toBe(true);
+    expect(isExternal('http://localhost:11434/v1/models', windows)).toBe(true);
+    expect(isExternal('http://127.0.0.1:1234/v1/models', 'tauri://localhost')).toBe(true);
   });
 });
 
