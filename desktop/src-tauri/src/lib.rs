@@ -178,7 +178,12 @@ fn image_chat_ids(state: State<Shared>) -> Vec<String> {
 
 #[tauri::command(async)]
 fn overlay_show(app: AppHandle, state: State<Shared>, focus: bool) -> Res<()> {
-    wm::show_overlay(&app, &state.overlay, focus).map_err(err)
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    FIRST.call_once(|| diag::note("overlay_show: first"));
+    wm::show_overlay(&app, &state.overlay, focus).map_err(|e| {
+        diag::note(&format!("overlay_show failed: {e}"));
+        err(e)
+    })
 }
 
 #[tauri::command(async)]
@@ -396,7 +401,8 @@ struct AppInfo {
 }
 
 #[tauri::command(async)]
-fn app_info(app: AppHandle, state: State<Shared>) -> AppInfo {
+fn app_info(app: AppHandle, window: WebviewWindow, state: State<Shared>) -> AppInfo {
+    diag::note(&format!("{}: app_info", window.label()));
     AppInfo {
         version: app.package_info().version.to_string(),
         shortcut: state.shortcut.lock().unwrap().clone(),

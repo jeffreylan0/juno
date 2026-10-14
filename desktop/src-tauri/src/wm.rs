@@ -174,7 +174,10 @@ pub fn overlay(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 /// Puts the overlay on the display under the pointer and shows it; `focus`
 /// also gives it the keyboard (Escape and Enter while selecting).
 pub fn show_overlay(app: &AppHandle, state: &SharedOverlay, focus: bool) -> tauri::Result<()> {
-    let Some((display, scale)) = display_under_pointer(app) else { return Ok(()) };
+    let Some((display, scale)) = display_under_pointer(app) else {
+        crate::diag::note("overlay: no display to show on");
+        return Ok(());
+    };
     unhide(app);
     let window = overlay(app)?;
     let moved = state.lock().unwrap().display.as_ref() != Some(&display);

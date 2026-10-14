@@ -1,7 +1,9 @@
 # Opens the built app on Windows the way a student does (not --hidden) and
 # says what came of it: the app's log, its windows, and what changed on the
-# screen, with a small picture of the screen. Fails if the app quit, never
-# finished starting, or showed nothing. For CI (.github/workflows/desktop.yml).
+# screen, with a small picture of the screen, and (smoke-probe.mjs, through
+# WebView2's DevTools port) what its pages ran and threw. Fails if the app
+# quit, never finished starting, or showed none of its windows. For CI
+# (.github/workflows/desktop.yml).
 param(
   [Parameter(Mandatory = $true)] [string] $Exe,
   [int] $Wait = 25,
@@ -29,6 +31,7 @@ public static class Smoke {
   [DllImport("user32.dll")] static extern bool GetWindowDisplayAffinity(IntPtr h, out uint a);
   [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
 
+  /// The app's own windows (Tao's class) on screen.
   public static int Visible;
 
   /// The process's top-level windows, one line each.
@@ -48,7 +51,7 @@ public static class Smoke {
       uint a;
       GetWindowDisplayAffinity(h, out a);
       bool v = IsWindowVisible(h);
-      if (v) Visible++;
+      if (v && c.ToString() == "Tauri Window") Visible++;
       found.Add(String.Format("'{0}' [{1}] visible={2} at {3},{4} size {5}x{6} exstyle=0x{7:X} affinity={8}",
         t, c, v, r.L, r.T, r.R - r.L, r.B - r.T, GetWindowLongPtr(h, -20).ToInt64(), a));
       return true;
@@ -93,6 +96,8 @@ Write-Host "Screen: $([System.Windows.Forms.Screen]::PrimaryScreen.Bounds)"
 $before = $null
 try { $before = Shot } catch { Write-Host "No screenshot before: $_" }
 
+# Only for this run: the pages can be looked into (smoke-probe.mjs).
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
 $app = Start-Process -FilePath $Exe -PassThru
 Start-Sleep -Seconds $Wait
 $app.Refresh()
@@ -103,7 +108,8 @@ $alive = -not $app.HasExited
 $windows = if ($alive) { [Smoke]::Windows($app.Id) } else { @() }
 
 Write-Host "`n== juno.log"
-if (Test-Path $log) { Get-Content $log | ForEach-Object { Write-Host $_ } } else { Write-Host "(none at $log)" }
+$logLines = 0
+if (Test-Path $log) { $lines = @(Get-Content $log); $logLines = $lines.Count; $lines | ForEach-Object { Write-Host $_ } } else { Write-Host "(none at $log)" }
 Write-Host "`n== The app"
 Write-Host ($(if ($alive) { "running (pid $($app.Id))" } else { "exited with $($app.ExitCode)" }))
 Write-Host "`n== Its windows"
@@ -125,10 +131,16 @@ if ($before -and $after) {
   Write-Host '-- end of picture'
 }
 
-if ($alive) { Stop-Process -Id $app.Id -Force }
+if ($alive) {
+  Write-Host "`n== Inside the pages"
+  node (Join-Path $PSScriptRoot 'smoke-probe.mjs') 9222 2>&1 | ForEach-Object { Write-Host $_ }
+  Write-Host "`n== juno.log since"
+  if (Test-Path $log) { Get-Content $log | Select-Object -Skip $logLines | ForEach-Object { Write-Host $_ } }
+  Stop-Process -Id $app.Id -Force
+}
 
 $started = (Test-Path $log) -and (Select-String -Path $log -Pattern 'setup: done' -Quiet)
 if (-not $alive) { throw 'The app quit.' }
 if (-not $started) { throw "The app never finished starting (juno.log has no 'setup: done')." }
-if ([Smoke]::Visible -eq 0) { throw 'The app showed no window.' }
-Write-Host "`nThe app started and showed $([Smoke]::Visible) window(s)."
+if ([Smoke]::Visible -eq 0) { throw 'The app showed none of its windows (the bar never came up).' }
+Write-Host "`nThe app started and showed $([Smoke]::Visible) of its windows."
