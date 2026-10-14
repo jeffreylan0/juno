@@ -4,8 +4,8 @@
 //! - macOS: ScreenCaptureKit's screenshot API (macOS 14+), filtering out
 //!   every window of this app, so the bar never has to step aside. Needs
 //!   Screen Recording permission.
-//! - Windows: GDI; the app's windows are kept out of every capture by the
-//!   system (display affinity, set when they are made). No permission.
+//! - Windows: GDI, with the app's windows left out of that one capture by
+//!   the system (display affinity, set just for it). No permission.
 //! - Linux (a development and test target only): X11. Nothing can be left
 //!   out of an X11 capture, so the overlay is hidden for the shot (wm.rs).
 
@@ -27,9 +27,8 @@ use linux as platform;
 use macos as platform;
 #[cfg(windows)]
 use windows as platform;
-
-/// Whether captures leave this app's windows out by themselves.
-pub const EXCLUDES_OWN_WINDOWS: bool = cfg!(any(target_os = "macos", windows));
+#[cfg(windows)]
+pub use windows::without_windows;
 
 /// The app (and window title) a selection was made over.
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]

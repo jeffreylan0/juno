@@ -20,7 +20,7 @@
  * extension knows a tab, the app knows the window a selection was made over,
  * from the native core, at capture time.
  */
-import { browser, transport } from '../platform/install';
+import { browser, note, transport } from '../platform/install';
 import { WINDOW_ID, type Port } from '../platform/browser';
 import { appFetch } from '../platform/net';
 import { getChat } from '@/lib/chats';
@@ -82,7 +82,7 @@ async function summon(): Promise<void> {
   const mode = await lastKindItem.getValue();
   const ghost = !!(await getCurrent(W))?.temporary;
   // Focused, so Escape (and Enter on a drawn box) reach it while selecting.
-  await transport.invoke('overlay_show', { focus: true });
+  await transport.invoke('overlay_show', { focus: true }).catch((err) => note(`overlay_show failed: ${String(err)}`));
   barUp = true;
   let notice: OverlayNotice | null = null;
   if (blocked) notice = screenAsked ? 'screen-restart' : 'screen-permission';
@@ -306,8 +306,7 @@ void transport
   .invoke<{ hidden: boolean; shortcut: { error: string | null } }>('app_info')
   .then(async (info) => {
     shortcutUntold = !!info.shortcut.error;
+    note(info.hidden ? 'ready (hidden)' : 'ready');
     if (!info.hidden) await summon();
   })
-  .catch((err) => console.warn('[selection-ai] start', err));
-
-void browser.ready.then(() => console.info('[selection-ai] core ready'));
+  .catch((err) => note(`start failed: ${String(err)}`));

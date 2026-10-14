@@ -6,7 +6,7 @@
  * (notices.ts).
  */
 import { invoke } from '@tauri-apps/api/core';
-import { browser, transport } from '../platform/install';
+import { browser, note, transport } from '../platform/install';
 import type { BarControlMsg } from '@/lib/messages';
 import { SelectionController } from '@/lib/selection-controller';
 import type { OverlayNotice } from '../core/tips';
@@ -23,8 +23,15 @@ const controller = new SelectionController({
 
 const announce = () => void browser.runtime.sendMessage({ type: 'overlay:ready' });
 
+/** The first bar of a run, for the app's log: what the overlay window looked like then. */
+let barNoted = false;
+
 browser.runtime.onMessage.addListener((raw) => {
   const msg = raw as { type?: string; notice?: OverlayNotice | null };
+  if (msg?.type === 'bar:show' && !barNoted) {
+    barNoted = true;
+    note(`first bar, page ${innerWidth}x${innerHeight} at ${devicePixelRatio}x, ${document.visibilityState}`);
+  }
   if (msg?.type?.startsWith('bar:')) controller.handle(raw as BarControlMsg);
   else if (msg?.type === 'overlay:notice') controller.notice(msg.notice ? noticeFor(msg.notice, () => controller.notice(null)) : null);
   else if (msg?.type === 'overlay:ping') announce();

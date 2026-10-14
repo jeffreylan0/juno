@@ -9,6 +9,7 @@
 
 mod capture;
 mod crop;
+mod diag;
 mod geometry;
 mod store;
 #[cfg(feature = "test-hook")]
@@ -16,8 +17,6 @@ mod testhook;
 mod wm;
 
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -289,19 +288,34 @@ fn overlay_display(state: &Shared) -> Result<Display, CaptureFailure> {
 /// A screenshot of `display` without the app's own windows.
 fn shoot(app: &AppHandle, display: &Display) -> Result<image::RgbaImage, CaptureError> {
     let frame = display.global_frame(Space::native());
-    if capture::EXCLUDES_OWN_WINDOWS {
-        return capture::capture_display(frame, display.scale);
-    }
+    let take = || capture::capture_display(frame, display.scale);
+    // macOS: ScreenCaptureKit leaves the app's windows out by itself.
+    #[cfg(target_os = "macos")]
+    let shot = {
+        let _ = app;
+        take()
+    };
+    // Windows: the app's windows are left out of this one capture only
+    // (capture/windows.rs), so recordings and screen sharing still show them.
+    #[cfg(windows)]
+    let shot = {
+        let ours: Vec<isize> = app.webview_windows().values().filter_map(|w| w.hwnd().ok()).map(|h| h.0 as isize).collect();
+        capture::without_windows(&ours, take)
+    };
     // X11 cannot leave a window out of a capture: the overlay steps aside for it.
-    let overlay = app.get_webview_window(wm::OVERLAY);
-    if let Some(w) = &overlay {
-        let _ = w.hide();
-    }
-    thread::sleep(Duration::from_millis(180));
-    let shot = capture::capture_display(frame, display.scale);
-    if let Some(w) = &overlay {
-        let _ = w.show();
-    }
+    #[cfg(target_os = "linux")]
+    let shot = {
+        let overlay = app.get_webview_window(wm::OVERLAY);
+        if let Some(w) = &overlay {
+            let _ = w.hide();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(180));
+        let shot = take();
+        if let Some(w) = &overlay {
+            let _ = w.show();
+        }
+        shot
+    };
     shot
 }
 
@@ -390,6 +404,13 @@ fn app_info(app: AppHandle, state: State<Shared>) -> AppInfo {
     }
 }
 
+/// A page's own step or error, for the log (diag.rs): the app's windows say
+/// when they are up and what failed, never what the student asked.
+#[tauri::command(async)]
+fn diag_note(window: WebviewWindow, text: String) {
+    diag::note(&format!("{}: {text}", window.label()));
+}
+
 #[tauri::command]
 fn quit(app: AppHandle) {
     app.exit(0);
@@ -467,10 +488,13 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Juno", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&select, &settings, &PredefinedMenuItem::separator(app)?, &quit])?;
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?;
+    // macOS tints a black template icon to suit the menu bar; a Windows
+    // taskbar is often dark, where black would vanish, so it gets the app's
+    // own (blue) icon.
+    let icon = if cfg!(target_os = "macos") { &include_bytes!("../icons/tray.png")[..] } else { &include_bytes!("../icons/32x32.png")[..] };
     TrayIconBuilder::with_id("main")
-        .icon(icon)
-        .icon_as_template(true)
+        .icon(tauri::image::Image::from_bytes(icon)?)
+        .icon_as_template(cfg!(target_os = "macos"))
         .tooltip(if cfg!(target_os = "macos") { "Juno: click to select (⌥⇧S)" } else { "Juno: click to select (Alt+Shift+S)" })
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -492,6 +516,7 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn run() {
+    diag::start();
     let builder = tauri::Builder::default();
     // A second copy was started: this one stays, and brings the bar up, as
     // opening the app does; or, on Windows and Linux, the app's link was
@@ -533,9 +558,11 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             let store = Store::open(&dir, store::system_secrets(&dir))?;
             let images = Images::open(&dir.join("images"))?;
+            diag::note("setup: storage open");
             let overlay: SharedOverlay = Arc::new(Mutex::new(OverlayState { main_scale: 1.0, ..Default::default() }));
             let label = if cfg!(target_os = "macos") { "⌥⇧S" } else { "Alt+Shift+S" };
             let error = app.global_shortcut().register(shortcut()).err().map(|e| e.to_string());
+            diag::note(&format!("setup: shortcut {}", error.as_deref().unwrap_or("registered")));
             app.manage(Shared { store, images, overlay: overlay.clone(), shortcut: Mutex::new(ShortcutStatus { shortcut: label.into(), error }) });
 
             let handle = app.handle().clone();
@@ -544,7 +571,9 @@ pub fn run() {
             // the panel before the first selection, so neither is waited for.
             wm::overlay(&handle)?;
             wm::make_panel(&handle)?;
+            diag::note("setup: windows made");
             tray(&handle)?;
+            diag::note("setup: tray icon made");
             {
                 // macOS hands the link to the running app (its Info.plist names
                 // the scheme, from tauri.conf.json); Windows and Linux learn it here.
@@ -556,10 +585,19 @@ pub fn run() {
                     }
                 });
                 #[cfg(all(any(windows, target_os = "linux"), not(feature = "test-hook")))]
-                let _ = app.deep_link().register_all();
+                if let Err(e) = app.deep_link().register_all() {
+                    diag::note(&format!("setup: link not registered: {e}"));
+                }
             }
             wm::start_passthrough(handle.clone(), overlay);
+            diag::note("setup: done");
             Ok(())
+        })
+        // Whether each window's page loads at all, for juno.log.
+        .on_page_load(|webview, payload| {
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                diag::note(&format!("{}: page loaded", webview.label()));
+            }
         })
         .on_window_event(|window, event| match event {
             // The overlay and the core live as long as the app; the system's
@@ -606,9 +644,10 @@ pub fn run() {
             quit,
             login_item,
             login_item_set,
+            diag_note,
         ])
         .build(tauri::generate_context!())
-        .expect("building the app");
+        .unwrap_or_else(|e| diag::fatal(&e.to_string()));
 
     app.run(|_app, event| match event {
         // Closing the last visible window is not quitting: the app lives in
