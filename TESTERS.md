@@ -34,7 +34,7 @@ The release lists `SHA256SUMS`, the fingerprint of each file. On a Mac, `shasum 
 ## Install on Windows
 
 1. Run the `-setup.exe`. If Windows says *Windows protected your PC*, click **More info → Run anyway**.
-2. It installs for your account only, so no administrator password is needed. Leave *Run Juno* ticked at the end. Its icon is in the system tray; click **^** next to the clock if it's hidden.
+2. It installs for your account only, so no administrator password is needed. Leave *Run Juno* ticked at the end. The bar comes up at the bottom of the screen, and Juno's blue icon is in the system tray; click **^** next to the clock if it's hidden.
 
 Windows asks for no permissions.
 
@@ -81,6 +81,8 @@ Email info@humanbn.com, or open an issue at [github.com/jeffreylan0/selectionai/
 - **A picture:** a screenshot or screen recording if you can. Use Shift-Command-5 on a Mac, or Windows+Shift+S on Windows.
 
 Keep your API key out of screenshots.
+
+If the app doesn't start or shows nothing, also attach its log, which holds only the app's own steps and errors: on a Mac `~/Library/Logs/Juno/juno.log` (in Finder: Go → Go to Folder…), on Windows `%LOCALAPPDATA%\com.humanbn.juno\juno.log` (paste that into the File Explorer address bar).
 
 ## Update or uninstall
 

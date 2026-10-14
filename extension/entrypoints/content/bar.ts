@@ -9,6 +9,12 @@
  * has a small tooltip that comes up after a moment. Warnings about the page
  * go to the top of the page instead (lib/tooltip.ts).
  *
+ * The app's bar (`compact`) is only as wide as its controls, the modes in its
+ * middle, with a chats button that opens the panel on its list of chats; its
+ * instruction shows above the row only when it adds something (a selection
+ * to adjust, a warning), the cursor tooltip saying the rest. While the panel
+ * shows, the ghost, settings and chats are the panel's, and leave the bar.
+ *
  * The bar is built once and stays up for as long as it is on the page: while
  * selecting, while a selection is sent, and between selections, when nothing
  * is armed, the page works normally, and a chip starts the next selection.
@@ -84,6 +90,29 @@ export const BAR_STYLE = `
 .bar :focus-visible { outline: 2px solid var(--sai-accent, #d97757); outline-offset: 1px; }
 /* Taken out of the screenshot when the selection runs under it; back right after. */
 .bar.out-of-shot { visibility: hidden; }
+
+/* The app's compact bar: ✕ | the modes, centred | chats, ghost, gear. Equal
+   outer columns keep the modes in the middle. What could be wide (the
+   instruction, a note, the settings) never sets the width (width 0, at
+   least the bar's); a note or the settings widen the bar while open. */
+.bar.compact { width: auto; max-width: calc(100vw - 32px); }
+.bar.compact.wide { width: min(460px, calc(100vw - 32px)); }
+.bar.compact .row { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; padding: 8px; }
+.bar.compact .start { justify-self: start; display: flex; }
+.bar.compact .end { justify-self: end; display: flex; align-items: center; gap: 2px; }
+.bar.compact .chips { margin-right: 0; }
+.bar.compact .say, .bar.compact .note, .bar.compact .settings { width: 0; min-width: 100%; box-sizing: border-box; }
+.bar.compact .say { display: none; flex: none; padding: 10px 14px 0; font-size: 13px; text-align: center; }
+.bar.compact .say.loud:not(.gone) { display: block; }
+.chats {
+  display: flex; align-items: center; justify-content: center; flex: none;
+  width: 32px; height: 32px; padding: 0; border: 0; border-radius: 9px; cursor: pointer;
+  background: transparent; color: var(--sai-bar-muted, #a6a39b);
+}
+.chats:hover { color: var(--sai-bar-fg, #f5f4ef); background: rgba(255, 255, 255, 0.08); }
+.chats svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+/* The panel is open: these are on it. */
+.bar.panel-open .chats, .bar.panel-open .ghost, .bar.panel-open .gear { display: none; }
 
 /* Something the student should know or do (a permission, say), attached under the row. */
 .note { display: none; align-items: center; gap: 14px; padding: 12px 12px 12px 18px; border-top: 1px solid var(--sai-bar-line, rgba(222, 220, 209, 0.14)); }
@@ -185,6 +214,13 @@ export interface BarHandlers {
   onModeChange: (kind: SelectionKind) => void;
   /** The ghost, pressed. */
   onGhost: () => void;
+  /** The chats button (the app's bar has one): the panel, open on its list of chats. */
+  onChats?: () => void;
+}
+
+export interface BarOptions {
+  /** The app's bar (see the top of this file). */
+  compact?: boolean;
 }
 
 export class Bar {
@@ -207,10 +243,15 @@ export class Bar {
   private hintTimer: ReturnType<typeof setTimeout> | undefined;
   private hintFor: HTMLElement | null = null;
   private hintGoneAt = 0;
+  private compact: boolean;
 
-  constructor(private handlers: BarHandlers) {
+  constructor(
+    private handlers: BarHandlers,
+    options: BarOptions = {},
+  ) {
+    this.compact = !!options.compact;
     this.el = document.createElement('div');
-    this.el.className = 'bar';
+    this.el.className = this.compact ? 'bar compact' : 'bar';
     this.el.setAttribute(UI_ATTR, 'bar');
 
     this.hintEl = document.createElement('div');
@@ -249,18 +290,42 @@ export class Bar {
     this.gear.setAttribute('aria-expanded', 'false');
     this.gear.addEventListener('click', () => void this.toggleSettings());
 
-    row.append(close, this.say, this.buildChips(), this.ghost, this.gear, this.ask);
+    if (this.compact) {
+      const start = document.createElement('div');
+      start.className = 'start';
+      start.append(close);
+      const end = document.createElement('div');
+      end.className = 'end';
+      if (handlers.onChats) {
+        const chats = this.button('chats', 'Chats', 'Your chats', svgIcon(ICON_PATHS.menu));
+        chats.addEventListener('click', () => handlers.onChats?.());
+        end.append(chats);
+      }
+      end.append(this.ghost, this.gear, this.ask);
+      row.append(start, this.buildChips(), end);
+      // The instruction above the row, when it shows (it is "loud").
+      this.el.append(this.say, row, this.note, this.settings);
+    } else {
+      row.append(close, this.say, this.buildChips(), this.ghost, this.gear, this.ask);
+      // Row, then the note and the settings: the bar is anchored at its
+      // bottom, so either one opening grows it upwards.
+      this.el.append(row, this.note, this.settings);
+    }
+  }
 
-    // Row, then the note and the settings: the bar is anchored at its
-    // bottom, so either one opening grows it upwards.
-    this.el.append(row, this.note, this.settings);
+  /** The panel is open (the app): the ghost, settings and chats are on it, not here. */
+  setPanelOpen(open: boolean): void {
+    this.el.classList.toggle('panel-open', open);
+    if (!open) return;
+    this.closeSettings();
+    if (this.hintFor && this.hintFor.offsetParent === null) this.hideHint();
   }
 
   /** Which mode is being selected in; null while the bar waits. */
   setKind(kind: SelectionKind | null): void {
     this.kind = kind;
     for (const [k, chip] of this.chips) chip.setAttribute('aria-pressed', String(k === kind));
-    this.say.textContent = this.hint();
+    this.resetInstruction();
   }
 
   /** Whether the next selection goes into a temporary chat. */
@@ -283,7 +348,7 @@ export class Bar {
   /** A selection is drawn and waiting: say how to adjust and send it. */
   setAdjusting(adjusting: boolean): void {
     this.adjusting = adjusting;
-    this.say.textContent = this.hint();
+    this.resetInstruction();
   }
 
   /** Send's look (see SubmitState). */
@@ -297,6 +362,7 @@ export class Bar {
   setNotice(notice: BarNotice | null): void {
     this.note.replaceChildren();
     this.note.classList.toggle('on', !!notice);
+    this.widen();
     if (!notice) {
       this.note.removeAttribute('data-id');
       return;
@@ -341,10 +407,18 @@ export class Bar {
   setInstruction(text: string): void {
     this.say.textContent = text;
     this.say.classList.toggle('gone', this.drawing && !text);
+    this.say.classList.toggle('loud', !!text);
   }
 
   resetInstruction(): void {
     this.say.textContent = this.hint();
+    // What to do next the cursor tooltip says; adjusting is worth saying here.
+    this.say.classList.toggle('loud', this.adjusting);
+  }
+
+  /** The compact bar widens while a note or the settings need the room. */
+  private widen(): void {
+    this.el.classList.toggle('wide', this.compact && (this.note.classList.contains('on') || this.settings.classList.contains('open')));
   }
 
   /** A quiet icon button with a short tooltip (`hint`) and a fuller name for screen readers. */
@@ -428,6 +502,7 @@ export class Bar {
   private closeSettings(): void {
     this.settings.classList.remove('open');
     this.gear.setAttribute('aria-expanded', 'false');
+    this.widen();
   }
 
   private async toggleSettings(): Promise<void> {
@@ -442,6 +517,7 @@ export class Bar {
     }
     this.settings.classList.add('open');
     this.gear.setAttribute('aria-expanded', 'true');
+    this.widen();
   }
 
   /**

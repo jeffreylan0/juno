@@ -276,12 +276,28 @@ describe('Google sign-in in the app', () => {
 });
 
 describe('a selection’s title in the app', () => {
-  it('is the window, then the app, unless the window already names it', () => {
-    expect(pageTitle({ app: 'Preview', title: 'Chapter 3.pdf' })).toBe('Chapter 3.pdf · Preview');
-    expect(pageTitle({ app: 'WINWORD', title: 'Lab report - Word' })).toBe('Lab report - Word · WINWORD');
+  it('is the name of what the window shows, without the app’s name', () => {
+    expect(pageTitle({ app: 'Preview', title: 'Chapter 3.pdf' })).toBe('Chapter 3.pdf');
+    expect(pageTitle({ app: 'WINWORD', title: 'Lab report - Word' })).toBe('Lab report');
+    expect(pageTitle({ app: 'Safari', title: 'Kinematics — Safari' })).toBe('Kinematics');
+    expect(pageTitle({ app: 'firefox', title: 'Quiz 2.1 - Assignments | Stemble — Mozilla Firefox' })).toBe('Quiz 2.1 - Assignments | Stemble');
+    expect(pageTitle({ app: 'msedge', title: 'Kinematics and 3 more pages - Microsoft\u200b Edge' })).toBe('Kinematics');
     expect(pageTitle({ app: 'Notability', title: '' })).toBe('Notability');
-    expect(pageTitle({ app: 'Safari', title: 'Kinematics — Safari' })).toBe('Kinematics — Safari');
     expect(pageTitle({ app: '', title: '  Notes   1 ' })).toBe('Notes 1');
+    // A last part that is not the app stays.
+    expect(pageTitle({ app: 'Firefox', title: 'Lecture 4 - Physics 7C' })).toBe('Lecture 4 - Physics 7C');
+    expect(pageTitle({ app: 'Google Chrome', title: 'Essay - Google Docs' })).toBe('Essay - Google Docs');
+  });
+
+  it('leaves out counters that change from one step to the next', () => {
+    const quiz = 'Quiz 2.1 - Assignments - Chem 1LD F26 | Stemble';
+    expect(pageTitle({ app: 'Firefox', title: `Task 10 of 13 - ${quiz}` })).toBe(quiz);
+    expect(pageTitle({ app: 'Firefox', title: `Task 1 of 13 - ${quiz}` })).toBe(quiz);
+    expect(pageTitle({ app: 'chrome', title: 'Question 3/20 | Practice exam - Google Chrome' })).toBe('Practice exam');
+    expect(pageTitle({ app: 'Firefox', title: '(4) Inbox' })).toBe('Inbox');
+    expect(pageTitle({ app: 'Firefox', title: 'Inbox (12) - me@school.edu - Mail' })).toBe('Inbox - me@school.edu - Mail');
+    // Nothing left but the counter: the app's name.
+    expect(pageTitle({ app: 'Keynote', title: 'Slide 4 of 30' })).toBe('Keynote');
   });
 });
 

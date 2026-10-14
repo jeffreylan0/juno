@@ -139,6 +139,13 @@ button.chat-title:hover { background: var(--hover); }
 .notice-action:disabled { opacity: .7; cursor: default; }
 .notice-dismiss { color: var(--warn-fg); margin: -3px -4px -3px 0; }
 .notice-dismiss:hover { background: color-mix(in srgb, var(--warn-strong) 12%, transparent); color: var(--warn-fg); }
+/* A notice that goes by itself (Notices.tsx `lasts`): the ring round its ✕
+   runs down with its time; pointing at the notice holds it. */
+.notice-dismiss.timed { position: relative; }
+.notice-dismiss .notice-timer { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
+.notice-timer circle { fill: none; stroke: var(--warn-strong); stroke-width: 1.6; stroke-linecap: round; stroke-dasharray: 100; animation: notice-time linear forwards; }
+.notice:hover .notice-timer circle, .notice:focus-within .notice-timer circle { animation-play-state: paused; }
+@keyframes notice-time { to { stroke-dashoffset: 100; } }
 kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font: inherit; font-size: 11px; }
 
 /* A selection sits straight on the panel's background: no card, no frame,

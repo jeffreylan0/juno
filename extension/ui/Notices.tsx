@@ -8,7 +8,13 @@
  * Placeholder and no-key are known here at once. The rest come from the
  * background's check (lib/status.ts), shown only when it was made for the
  * choice currently picked.
+ *
+ * With `lasts` (the app), each notice goes by itself after that long: a ring
+ * round its ✕ runs down meanwhile, and pointing at the notice holds it. Gone,
+ * it stays gone while it says the same thing (the panel brings notices back
+ * with each new chat).
  */
+import { useState } from 'react';
 import { ASSISTANT } from '@/lib/router';
 import type { AiStatus } from '@/lib/status';
 import { answerChoiceOf, type Keys, type Settings } from '@/lib/storage';
@@ -35,6 +41,7 @@ const openSettings = () => void browser.runtime.openOptionsPage();
 const openAccount = () => void browser.tabs.create({ url: browser.runtime.getURL('/options.html#account') });
 
 export function Notices({
+  lasts = null,
   settings,
   keys,
   status,
@@ -43,6 +50,8 @@ export function Notices({
   dropped,
   onDismissDropped,
 }: {
+  /** How long each notice stays, or null: until dealt with. */
+  lasts?: number | null;
   settings: Settings | null;
   keys: Keys | null;
   status: AiStatus | null;
@@ -51,7 +60,8 @@ export function Notices({
   dropped: string[] | null;
   onDismissDropped: () => void;
 }) {
-  const notices: Notice[] = [];
+  const [gone, setGone] = useState<ReadonlySet<string>>(new Set());
+  let notices: Notice[] = [];
   const connection = settings && connectionNotice(settings, keys, status, checking, onRecheck);
   if (connection) notices.push(connection);
   if (dropped?.length && settings) {
@@ -67,11 +77,17 @@ export function Notices({
       onDismiss: onDismissDropped,
     });
   }
+  const said = (n: Notice) => `${n.kind}:${n.title ?? ''}:${n.text}`;
+  const dismiss = (n: Notice) => {
+    if (lasts) setGone((g) => new Set(g).add(said(n)));
+    n.onDismiss?.();
+  };
+  if (lasts) notices = notices.filter((n) => !gone.has(said(n)));
   if (!notices.length) return null;
   return (
     <div className="notices" role="status">
       {notices.map((n) => (
-        <div key={n.kind} className="notice" data-testid="notice" data-kind={n.kind}>
+        <div key={said(n)} className="notice" data-testid="notice" data-kind={n.kind}>
           <Icon name={n.icon} className="notice-icon" />
           <div className="notice-body">
             <span className="notice-text">
@@ -88,8 +104,13 @@ export function Notices({
               </span>
             )}
           </div>
-          {n.onDismiss && (
-            <button type="button" className="icon notice-dismiss" aria-label="Dismiss" title="Dismiss" onClick={n.onDismiss}>
+          {(lasts || n.onDismiss) && (
+            <button type="button" className={`icon notice-dismiss${lasts ? ' timed' : ''}`} aria-label="Dismiss" title="Dismiss" onClick={() => dismiss(n)}>
+              {lasts && (
+                <svg className="notice-timer" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10.5" pathLength={100} style={{ animationDuration: `${lasts}ms` }} onAnimationEnd={() => dismiss(n)} />
+                </svg>
+              )}
               <Icon name="close" />
             </button>
           )}

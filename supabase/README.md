@@ -96,7 +96,7 @@ npx wrangler deploy
 
 It prints `https://juno.<account>.workers.dev`. Better, give it your own address: Cloudflare → Workers → juno → **Settings → Domains & Routes → Add custom domain** (`api.humanbn.com`). That address is the apps' `WXT_GATEWAY_URL` (step 7) and Stripe's webhook (step 6).
 
-Optional: an **AI Gateway** named `juno` (Cloudflare → AI → AI Gateway) gives rate limits and spend analytics; put your Cloudflare account id in `AI_GATEWAY_ID` in `wrangler.toml` and deploy again. Logging is switched off on every request.
+Optional: an **AI Gateway** named `juno` (Cloudflare → AI → AI Gateway) gives rate limits and spend analytics; put your Cloudflare account id in `AI_GATEWAY_ID` in `wrangler.toml` and deploy again. Logging and the response cache are switched off on every request; leave *Cache responses* off in the gateway's settings as well (SECURITY.md, *Prompt caching*).
 
 ## 6. Stripe
 

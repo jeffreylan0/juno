@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { verifySession } from '../../worker/src/auth';
 import { readBody } from '../../worker/src/body';
 import { checkout, form, prices, webhook } from '../../worker/src/billing';
-import { LIMITS, anthropicToOpenAI, parseAsk, toAnthropic } from '../../worker/src/models';
+import { LIMITS, anthropicToOpenAI, cacheScope, parseAsk, scoped, toAnthropic } from '../../worker/src/models';
 import type { Env } from '../../worker/src/index';
 
 const SUPABASE_URL = 'https://proj.supabase.co';
@@ -162,6 +162,29 @@ describe('what may be asked', () => {
       });
     expect((await readBody(chunked(5000), 5000)).length).toBe(5000);
     await expect(readBody(chunked(5001), 5000)).rejects.toMatchObject({ status: 413 });
+  });
+});
+
+describe('prompt caches, one per chat', () => {
+  const OTHER = '00000000-0000-4000-8000-000000000002';
+  const shot = (data: string) => ({ role: 'user' as const, content: [{ type: 'image_url' as const, image_url: { url: `data:image/png;base64,${data}` } }, { type: 'text' as const, text: 'Explain' }] });
+
+  it('keeps a chat in one scope from turn to turn, and apart from other chats and other students', async () => {
+    const first = [{ role: 'system' as const, content: 'Be brief.' }, shot('QUJD')];
+    const later = [...first, { role: 'assistant' as const, content: 'It is…' }, { role: 'user' as const, content: 'Why?' }];
+    const scope = await cacheScope(USER, first);
+    expect(scope).toMatch(/^[0-9a-f]{24}$/);
+    expect(await cacheScope(USER, later)).toBe(scope);
+    // The same screenshot from another student, or in another chat of this one's.
+    expect(await cacheScope(OTHER, first)).not.toBe(scope);
+    expect(await cacheScope(USER, [first[0]!, shot('REVG')])).not.toBe(scope);
+  });
+
+  it('starts the prompt with the scope, so a cached prefix is the chat’s own', async () => {
+    const scope = await cacheScope(USER, [shot('QUJD')]);
+    const messages = scoped([{ role: 'system', content: 'Be brief.' }, shot('QUJD')], scope);
+    expect(messages[0]).toEqual({ role: 'system', content: `Chat ${scope}.` });
+    expect(toAnthropic(messages).system).toBe(`Chat ${scope}.\n\nBe brief.`);
   });
 });
 

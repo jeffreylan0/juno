@@ -7,11 +7,12 @@
  * new chat.
  *
  * Layout, top to bottom:
- *  - the top bar: chat menu (left), the chat's name (click to rename), the
- *    temporary-chat ghost and settings (right);
+ *  - the top bar: chat menu (left; in the app, after ✕), the chat's name
+ *    (click to rename), the temporary-chat ghost and settings (right);
  *  - the chat: selections as they arrive, questions and answers;
  *  - notices (no key, disconnected, …), then the answer macros, and the
- *    question box, with who answers beside Send, as in Claude.
+ *    question box, with who answers beside Send, as in Claude. In the app
+ *    the notices float over the end of the chat and go by themselves.
  *
  * Every question carries the selections made since the last one. The box
  * starts empty (or with the student's own default prompt); Enter or Send asks
@@ -126,6 +127,17 @@ export function Panel() {
     [chatId],
   );
 
+  // The app's bar has a chats button: the panel opens on the list of chats.
+  // A new chat, or a selection on its way, closes it again.
+  useEffect(() => {
+    const onMessage = (raw: unknown) => {
+      if ((raw as { type?: string })?.type === 'panel:chats') setMenuOpen(true);
+    };
+    browser.runtime.onMessage.addListener(onMessage);
+    return () => browser.runtime.onMessage.removeListener(onMessage);
+  }, []);
+  useEffect(() => setMenuOpen(false), [chatId]);
+
   // A new selection: the default prompt goes in the box (empty unless the
   // student set one) and the cursor goes after it. Sending straight away,
   // when settings ask for it, is the background's job.
@@ -161,6 +173,7 @@ export function Panel() {
       if (msg?.type !== 'selection:incoming') return;
       if (msg.windowId !== undefined && windowId !== null && msg.windowId !== windowId) return;
       setIncoming({ kind: msg.kind ?? 'box', at: msg.at ?? Date.now() });
+      setMenuOpen(false);
     };
     browser.runtime.onMessage.addListener(onMessage);
     return () => browser.runtime.onMessage.removeListener(onMessage);
@@ -218,6 +231,11 @@ export function Panel() {
   return (
     <div className="panel" data-temporary={temporary ? 'true' : 'false'} data-chat={chatId ?? ''}>
       <header className="topbar">
+        {SURFACE.ownWindow && (
+          <button type="button" className="icon" title="Close (finishes the chat)" aria-label="Close" data-testid="close" onClick={() => window.close()}>
+            <Icon name="close" />
+          </button>
+        )}
         <button type="button" className="icon" aria-label="Chats" title="Chats" data-testid="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
           <Icon name="menu" />
         </button>
@@ -236,11 +254,6 @@ export function Panel() {
         <button type="button" className="icon" title="Settings" aria-label="Settings" data-testid="settings" onClick={() => void browser.runtime.openOptionsPage()}>
           <Icon name="gear" />
         </button>
-        {SURFACE.ownWindow && (
-          <button type="button" className="icon" title="Close (finishes the chat)" aria-label="Close" data-testid="close" onClick={() => window.close()}>
-            <Icon name="close" />
-          </button>
-        )}
       </header>
 
       {menuOpen && (
@@ -297,6 +310,9 @@ export function Panel() {
 
       <div className="ask">
         <Notices
+          // A new chat brings back notices that went by themselves.
+          key={chatId ?? ''}
+          lasts={SURFACE.noticeMs}
           settings={settings}
           keys={keys}
           status={status}
