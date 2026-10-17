@@ -22,6 +22,10 @@ export const ICON_PATHS = {
   // A plug pulled apart: disconnected.
   unplugged: [['path', {d:"m19 5 3-3"}], ['path', {d:"m2 22 3-3"}], ['path', {d:"M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4z"}], ['path', {d:"M7.5 13.5 10 11"}], ['path', {d:"M10.5 16.5 13 14"}], ['path', {d:"m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0z"}]],
   info: [['circle', {cx:"12",cy:"12",r:"9"}], ['path', {d:"M12 11v5"}], ['path', {d:"M12 8h.01"}]],
+  copy: [['rect', {x:"9",y:"9",width:"11",height:"11",rx:"2.5"}], ['path', {d:"M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"}]],
+  // Round arrow: ask again.
+  retry: [['path', {d:"M4 12a8 8 0 1 0 2.6-5.9L4 8.5"}], ['path', {d:"M4 4v4.5h4.5"}]],
+  check: [['path', {d:"m5 12.5 4.5 4.5L19 7.5"}]],
 } satisfies Record<string, Shapes>;
 
 export type IconName = keyof typeof ICON_PATHS;

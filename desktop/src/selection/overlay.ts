@@ -1,24 +1,20 @@
 /**
- * Shadow-DOM overlay: the control bar, and while a selection is being made,
- * the surface it is drawn on and the cursor tooltip. The bar comes up once
- * (opening from its middle) and stays for as long as it is on the page — through the
- * selection, the screenshot and the wait for the next one — until it is
- * dismissed (closing into its middle). Only the selection's own drawing is taken off the
- * page for the screenshot, and the bar too if the selection runs under it.
+ * What the overlay window draws, in a shadow root: the bar, and while a
+ * selection is being made, the surface it is drawn on and the cursor
+ * tooltip. The bar comes up once (opening from its middle) and stays through
+ * the selection, the screenshot and the wait for the next one, until it is
+ * dismissed (closing into its middle). The app's windows are left out of the
+ * screenshot (capture/), so the dim fades out after a selection; the bar
+ * steps aside only if the selection runs under it.
  *
- * Three rules keep it out of the way. The drag surface is a sibling of the
- * bar, not its parent, so clicks on our own controls can never start a box.
- * It forwards the wheel to whatever is scrollable under the pointer, because
- * a full-screen surface otherwise freezes the page. And it never takes
- * keyboard focus, so arrows and space still scroll — Escape is caught on the
- * document in capture, which never needed focus in the first place.
+ * The drag surface is a sibling of the bar, not its parent, so clicks on our
+ * own controls can never start a box. A wheel while armed goes to the app
+ * beneath (`scrollThrough`: wm.rs lets the pointer through until it moves).
  */
 import type { Rect, SelectionKind } from '@shared/payload';
-import { fromUser, privateShadow } from '@/lib/page-trust';
-import { Bar, BAR_STYLE, type BarNotice } from './bar';
+import { Bar, BAR_STYLE, UI_ATTR, type BarNotice, type Place } from './bar';
 import { BoxSelector, HANDLES } from './select-box';
 import { LassoSelector, type Lasso } from './select-freeform';
-import { UI_ATTR, applyWheel, scrollTargetAt } from './scroll';
 
 const STYLE = `
 :host { all: initial; }
@@ -116,26 +112,10 @@ export interface OverlayHandlers {
   onEscapeWhileWaiting: () => void;
   /** The ghost on the bar was pressed. */
   onGhost: () => void;
-  /** The bar's chats button (the app's bar has one). */
-  onChats?: () => void;
-}
-
-export interface OverlayOptions {
-  /**
-   * The screenshot never sees the overlay (the app), so after a selection the
-   * dim fades out rather than vanishing before the shot. On a page it must be
-   * gone before the tab is captured.
-   */
-  fadeAfterShot?: boolean;
-  /**
-   * The page beneath is not this document's to scroll (the app: the overlay
-   * is a window of its own over other apps). A wheel while a selection is
-   * armed calls this instead, and the window lets the pointer through to
-   * whatever is beneath until the pointer moves to select.
-   */
-  scrollThrough?: () => void;
-  /** The app's compact bar (bar.ts). */
-  compactBar?: boolean;
+  /** The bar's chats button. */
+  onChats: () => void;
+  /** A wheel while a selection is armed: it goes to the app beneath. */
+  onScrollThrough: () => void;
 }
 
 /** How long the dim takes to fade when a selection ends. */
@@ -153,14 +133,6 @@ export interface BoxOptions {
  * is made and its screenshot is being taken.
  */
 type OverlayState = 'ready' | 'armed' | 'drawing' | 'adjusting' | 'sending';
-
-/**
- * Just enough of WXT's ContentScriptContext to tear down cleanly. The reader is
- * an extension page and has no such context.
- */
-export interface OverlayHost {
-  onInvalidated(cb: () => void): void;
-}
 
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -182,8 +154,10 @@ export class Overlay {
   private leaving: Animation | null = null;
   private ghost = false;
   private notice: BarNotice | null = null;
-  /** The answer panel is open (the app): see Bar.setPanelOpen. */
+  /** The panel is open: see Bar.setPanelOpen. */
   private panelOpen = false;
+  /** Where the bar sits (the setting). */
+  private place: Place = 'bottom-center';
   /** The mode being selected in, or null while the bar waits. */
   private kind: SelectionKind | null = null;
   /** The selection being made waits for Send (the setting) rather than going when drawn. */
@@ -194,26 +168,12 @@ export class Overlay {
   /** The surface just taken away had the screen dimmed (see beginSelection). */
   private wasDimmed = false;
 
-  constructor(
-    private handlers: OverlayHandlers,
-    private options: OverlayOptions = {},
-  ) {}
-
-  /** Whether the bar is on the page (and not on its way out). */
-  get active(): boolean {
-    return !!this.host?.isConnected && this.leaving === null;
-  }
-
-  /** Our bar was taken off the page by someone else: a newer copy of this script. */
-  get replaced(): boolean {
-    return this.host !== null && !this.host.isConnected;
-  }
+  constructor(private handlers: OverlayHandlers) {}
 
   /**
-   * Just the bar, waiting between selections. The page underneath works as
-   * usual. Escape here hides it — but only an Escape the page did not want
-   * for itself: typing in a field, or a page closing its own dialog
-   * (preventDefault), is left alone.
+   * Just the bar, waiting between selections; the app beneath works as
+   * usual. Escape here (when the bar has the keyboard) hides it, unless it
+   * is meant for a field of the bar's own settings.
    */
   ready(): void {
     this.abort();
@@ -226,14 +186,10 @@ export class Overlay {
     this.backInShot();
     if (this.waitingKeys) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!fromUser(e) || e.key !== 'Escape' || e.repeat || e.defaultPrevented) return;
-      // The real target, inside any web component, not its shadow host.
+      if (e.key !== 'Escape' || e.repeat || e.defaultPrevented) return;
       if (isEditable(e.composedPath()[0] ?? e.target)) return;
-      // A page dialog open: this Escape is closing it.
-      if (document.querySelector('dialog[open], [aria-modal="true"]')) return;
       this.handlers.onEscapeWhileWaiting();
     };
-    // Bubble phase, on window: the page gets the key first.
     addEventListener('keydown', onKey);
     this.waitingKeys = () => removeEventListener('keydown', onKey);
   }
@@ -260,11 +216,6 @@ export class Overlay {
     );
   }
 
-  /** Gone for good (the extension was updated, or a newer copy of this script took over). */
-  destroy(): void {
-    this.hide(false);
-  }
-
   /** Whether the next selection starts a temporary chat. */
   setGhost(on: boolean): void {
     this.ghost = on;
@@ -277,10 +228,20 @@ export class Overlay {
     this.bar?.setNotice(notice);
   }
 
-  /** Whether the answer panel is open (the app), so the bar leaves it what is on it. */
+  /**
+   * Whether the panel is open, so the bar leaves it what is on it. Not on a
+   * bar on its way out: it would flash its chats, ghost and gear back as it
+   * goes (the panel and the bar close together).
+   */
   setPanelOpen(open: boolean): void {
     this.panelOpen = open;
-    this.bar?.setPanelOpen(open);
+    if (!this.leaving) this.bar?.setPanelOpen(open);
+  }
+
+  /** Where the bar sits (the setting). */
+  setPlace(place: Place): void {
+    this.place = place;
+    this.bar?.setPlace(place);
   }
 
   /** Puts the bar up if it is not already, opening from its middle; a bar on its way out comes back. */
@@ -291,11 +252,8 @@ export class Overlay {
       this.host?.removeAttribute('data-leaving');
     }
     if (this.host) return;
-    // A bar left by an earlier copy of this script (one the extension's update orphaned).
-    document.querySelectorAll('selection-ai-overlay').forEach((el) => el.remove());
     const host = document.createElement('selection-ai-overlay');
-    // Closed, and deaf to events the page makes up (lib/page-trust.ts).
-    const shadow = privateShadow(host);
+    const shadow = host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
     style.textContent = STYLE;
 
@@ -306,22 +264,20 @@ export class Overlay {
     tip.className = 'tip';
     tip.setAttribute(UI_ATTR, 'tip');
 
-    const bar = new Bar(
-      {
-        onClose: () => {
-          this.abort();
-          this.handlers.onClose();
-        },
-        onConfirm: () => this.confirmCurrent?.(),
-        onModeChange: (next) => this.handlers.onModeChange(next),
-        onGhost: () => this.handlers.onGhost(),
-        onChats: this.handlers.onChats,
+    const bar = new Bar({
+      onClose: () => {
+        this.abort();
+        this.handlers.onClose();
       },
-      { compact: this.options.compactBar },
-    );
+      onConfirm: () => this.confirmCurrent?.(),
+      onModeChange: (next) => this.handlers.onModeChange(next),
+      onGhost: () => this.handlers.onGhost(),
+      onChats: () => this.handlers.onChats(),
+    });
     bar.setGhost(this.ghost);
     bar.setNotice(this.notice);
     bar.setPanelOpen(this.panelOpen);
+    bar.setPlace(this.place);
 
     root.append(tip, bar.hintEl, bar.el);
     shadow.append(style, root);
@@ -571,14 +527,13 @@ export class Overlay {
         teardown.forEach((f) => f());
         this.cancelCurrent = null;
         if (this.surface === surface) {
-          this.clearSurface(how === 'stopped' || (how === 'made' && !!this.options.fadeAfterShot));
+          this.clearSurface(how === 'stopped' || how === 'made');
           this.setState('sending');
         }
         resolve(value);
       };
 
       const onKey = (e: KeyboardEvent) => {
-        if (!fromUser(e)) return;
         if (e.key === 'Enter' && this.state === 'adjusting' && !isOurUi(e)) {
           // On our own Ask button, Enter already clicks it.
           e.preventDefault();
@@ -596,16 +551,13 @@ export class Overlay {
       document.addEventListener('keydown', onKey, true);
       window.addEventListener('keydown', onKey, true);
 
-      // Without this the drag surface eats the wheel and the page is frozen.
+      // The wheel goes to the app beneath while armed. Mid-drag, and while a
+      // drawn box waits to be adjusted, the box is pinned to the screen and
+      // cannot follow what scrolls, so the wheel does nothing then.
       const onWheel = (e: WheelEvent) => {
         if (isOurUi(e)) return;
         e.preventDefault();
-        // Mid-drag, and while a drawn box waits to be adjusted, the box is
-        // pinned to the viewport and cannot follow the page, so scrolling
-        // would hand back a crop of something the user never framed.
-        if (this.state !== 'armed') return;
-        if (this.options.scrollThrough) return this.options.scrollThrough();
-        applyWheel(scrollTargetAt(e.clientX, e.clientY, this.host), e);
+        if (this.state === 'armed') this.handlers.onScrollThrough();
       };
       surface?.addEventListener('wheel', onWheel, { passive: false });
 

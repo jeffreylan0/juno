@@ -1,29 +1,23 @@
 /**
- * Typed messages between the content script, the background, the reader and
- * the panel. Every message carries a `type`. The content script and the
- * reader send theirs through `send()` below, which survives the extension
- * being reloaded under the page.
+ * Typed messages between the app's pages: the bar (on the overlay), the core,
+ * the panel and the settings. Every message carries a `type`; they travel
+ * over the platform shim (platform/browser.ts).
  *
- * Chats do not travel over messages at all: the background writes them to
- * storage (chats.ts) and the panel renders from storage change events.
- * Messages here are commands only. The panel also holds a port open to the
- * background (PanelPortMsg), which is how the background knows a panel is
- * open and when it closes.
+ * Chats do not travel over messages at all: the core writes them to storage
+ * (chats.ts) and the panel renders from storage change events. Messages here
+ * are commands only. The panel also holds a port open to the core
+ * (PanelPortMsg), which is how the core knows it is there.
  */
 import type { Point, Rect, SelectionKind } from '@shared/payload';
 
-/**
- * Content → background, the instant a selection is committed and before any
- * capture work. Chrome opens the side panel from a content-script gesture only
- * while that activation is live, so this is the one chance to catch it.
- */
+/** Bar → core, the instant a selection is committed and before any capture work: the panel opens at once. */
 export interface SelectionCommittedMsg {
   type: 'selection:committed';
   kind: SelectionKind;
 }
 
 /**
- * Content → background: the user finished a selection. The reply comes as
+ * Bar → core: the user finished a selection. The reply comes as
  * soon as the screenshot is taken, so the page can change again.
  */
 export interface SelectionDoneMsg {
@@ -39,7 +33,7 @@ export interface SelectionDoneMsg {
 }
 
 /**
- * Content → background: Escape stopped the selection being made. The reply
+ * Bar → core: Escape stopped the selection being made. The reply
  * says whether that also hides the bar ({ end: true }: nothing had been
  * selected in this chat yet, so Escape meant "never mind").
  */
@@ -48,7 +42,7 @@ export interface SelectionCancelMsg {
 }
 
 /**
- * Content/reader → background: ✕ on the bar, or Escape while it waits. Hides
+ * Bar → core: ✕ on the bar, or Escape while it waits. Hides
  * the bar and the panel and finishes the chat; it stays in the menu.
  */
 export interface ChatFinishMsg {
@@ -56,51 +50,44 @@ export interface ChatFinishMsg {
 }
 
 /**
- * Background → content/reader. `bar:show` brings the bar up selecting in
- * `mode` (the icon was clicked); `bar:hide` takes it away (the student
- * switched tabs, or the chat was finished from the panel); `bar:ghost` says
- * whether the next selection goes into a temporary chat. The reader only
- * answers messages with its `tabId`.
+ * Core → bar. `bar:show` brings the bar up selecting in `mode` (the shortcut
+ * was pressed); `bar:hide` takes it away (the chat was finished from the
+ * panel); `bar:ghost` says whether the next selection goes into a temporary
+ * chat.
  */
-export type BarControlMsg = (
-  /** `arm: false`: the bar comes up with nothing armed (the app, before it may see the screen). */
+export type BarControlMsg =
+  /** `arm: false`: the bar comes up with nothing armed (before the app may see the screen). */
   | { type: 'bar:show'; mode: SelectionKind; ghost: boolean; arm?: boolean }
   | { type: 'bar:hide' }
-  | { type: 'bar:ghost'; on: boolean }
-) & { tabId?: number };
+  | { type: 'bar:ghost'; on: boolean };
 
-/**
- * Anything → background: the newest selection in any open chat (or from one
- * tab), with its screenshots filled back in. Tests and diagnostics use it.
- */
-export interface PlanGetMsg {
-  type: 'plan:get';
-  tabId?: number;
-}
-
-/** Panel → background: ask a question in a chat. It carries every selection not yet asked about. */
+/** Panel → core: ask a question in a chat. It carries every selection not yet asked about. */
 export interface ChatSendMsg {
   type: 'chat:send';
   chatId: string;
   question: string;
 }
 
-/** Panel → background: ask the last failed question again. */
+/**
+ * Panel → core: ask the latest question again, in place of it and its
+ * answer: as it was (retry), or reworded (`question`: edit).
+ */
 export interface ChatRetryMsg {
   type: 'chat:retry';
   chatId: string;
+  question?: string;
 }
 
-/** Panel → background: stop the answer streaming in a chat. */
+/** Panel → core: stop the answer streaming in a chat. */
 export interface ChatStopMsg {
   type: 'chat:stop';
   chatId: string;
 }
 
 /**
- * Panel or bar → background: the ghost. On: the next selection goes into a
- * temporary chat. Off: leave the temporary chat (it is deleted). The bar
- * leaves out `windowId`; its tab says which window. Replies with the Current.
+ * Panel or bar → core: the ghost. On: the next selection goes into a
+ * temporary chat. Off: leave the temporary chat (it is deleted). Replies with
+ * the Current.
  */
 export interface ChatTemporaryMsg {
   type: 'chat:temporary';
@@ -108,7 +95,7 @@ export interface ChatTemporaryMsg {
   on: boolean;
 }
 
-/** Panel → background: show a chat from the menu in this window. */
+/** Panel → core: show a chat from the menu in this window. */
 export interface ChatOpenMsg {
   type: 'chat:open';
   windowId: number;
@@ -126,26 +113,26 @@ export interface ChatDeleteMsg {
   chatId: string;
 }
 
-/** Options → background: delete every saved chat and its screenshots. */
+/** Options → core: delete every saved chat and its screenshots. */
 export interface ChatsDeleteAllMsg {
   type: 'chats:delete-all';
 }
 
-/** Panel → background: take back a selection no question has carried yet. */
+/** Panel → core: take back a selection no question has carried yet. */
 export interface ChatDropSelectionMsg {
   type: 'chat:drop-selection';
   chatId: string;
   itemId: string;
 }
 
-/** Panel → background: check (or re-check) that the chosen AI is reachable. Replies with an AiStatus. */
+/** Panel → core: check (or re-check) that the chosen AI is reachable. Replies with an AiStatus. */
 export interface AiCheckMsg {
   type: 'ai:check';
   force?: boolean;
 }
 
 /**
- * Options → background: check an API key by listing the vendor's models. It
+ * Options → core: check an API key by listing the vendor's models. It
  * costs nothing, proves the key works, and returns the models to pick from.
  */
 export interface KeysTestMsg {
@@ -154,22 +141,8 @@ export interface KeysTestMsg {
   key: string;
 }
 
-/** Content (the tooltip's Show it) → background: open the answer panel from a real user gesture. */
-export interface PanelOpenMsg {
-  type: 'panel:open';
-}
-
 /**
- * Background → panel: close yourself. For browsers without sidePanel.close()
- * (Chrome before 141), a side panel document may close its own window.
- */
-export interface PanelCloseMsg {
-  type: 'panel:close';
-  windowId?: number;
-}
-
-/**
- * Background → panel: a selection was just made and is on its way (the
+ * Core → panel: a selection was just made and is on its way (the
  * screenshot and crop take a moment). The panel shows a placeholder for it,
  * so it never opens on nothing.
  */
@@ -181,48 +154,14 @@ export interface SelectionIncomingMsg {
   windowId?: number;
 }
 
-/** The port a panel keeps open to the background, named this. */
+/** The port the panel keeps open to the core, named this. */
 export const PANEL_PORT = 'panel';
 
 /**
- * Panel → background over the port. `hello` says which window the panel is
- * in; after the worker restarts, the panel says hello again and `claim`s the
- * chat it is showing. `ping` keeps the worker awake while a panel is open, so
- * that closing the panel is always noticed.
+ * Panel → core over the port: which window the panel is in. After the core
+ * reloads, the panel says hello again and `claim`s the chat it is showing.
  */
-export type PanelPortMsg =
-  | { type: 'hello'; windowId: number; claim?: { chatId: string; temporary: boolean } }
-  | { type: 'ping' };
-
-/**
- * Reader → background on load. Registers the tab as one that runs the
- * selection flow itself, and the reply tells the reader its own tab id — an
- * extension page cannot learn either without the "tabs" permission.
- */
-export interface ReaderHelloMsg {
-  type: 'reader:hello';
-}
-
-/**
- * Bar → background: open this tab's PDF in the reader. The background
- * navigates the tab itself, so no web page can open or frame the reader
- * (it is not web-accessible).
- */
-export interface ReaderOpenMsg {
-  type: 'reader:open';
-  url: string;
-}
-
-/** Background → content/reader: offer a click that can open the answer panel. */
-export interface PanelNeedsClickMsg {
-  type: 'panel:needs-click';
-  tabId?: number;
-}
-
-/** Notice popup → background: the student is pinning the icon; confirm when it is done. */
-export interface PinWatchMsg {
-  type: 'pin:watch';
-}
+export type PanelPortMsg = { type: 'hello'; windowId: number; claim?: { chatId: string; temporary: boolean } };
 
 /** Copy chats to and from the cloud now (a panel or the settings page opened). */
 export interface SyncNowMsg {
@@ -234,7 +173,7 @@ export interface AccountDeleteMsg {
   type: 'account:delete';
 }
 
-/** Content/reader → background: open the full settings page. */
+/** Bar → core: open the settings window. */
 export interface OptionsOpenMsg {
   type: 'options:open';
 }
@@ -245,7 +184,6 @@ export type RuntimeMessage =
   | SelectionCancelMsg
   | ChatFinishMsg
   | BarControlMsg
-  | PlanGetMsg
   | ChatSendMsg
   | ChatStopMsg
   | ChatRetryMsg
@@ -257,45 +195,11 @@ export type RuntimeMessage =
   | ChatDropSelectionMsg
   | AiCheckMsg
   | KeysTestMsg
-  | PanelOpenMsg
-  | PanelCloseMsg
   | SelectionIncomingMsg
-  | PanelNeedsClickMsg
   | OptionsOpenMsg
-  | PinWatchMsg
   | SyncNowMsg
-  | AccountDeleteMsg
-  | ReaderHelloMsg
-  | ReaderOpenMsg;
+  | AccountDeleteMsg;
 
 export function isRuntimeMessage(x: unknown): x is RuntimeMessage {
   return !!x && typeof x === 'object' && typeof (x as { type?: unknown }).type === 'string';
-}
-
-/**
- * Whether this script's extension is still there. After the extension is
- * updated, reloaded or removed, a content script left on a page is orphaned:
- * `runtime.id` goes away and every extension call throws.
- */
-export function extensionAlive(): boolean {
-  try {
-    return !!browser.runtime?.id;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * runtime.sendMessage that never throws and never rejects: null when nobody
- * answered or the extension is gone. An orphaned script's sendMessage throws
- * "Extension context invalidated" synchronously, which a `.catch()` on its
- * result never sees — hence the try around the call itself.
- */
-export async function send<T = unknown>(msg: RuntimeMessage | { type: string; [k: string]: unknown }): Promise<T | null> {
-  if (!extensionAlive()) return null;
-  try {
-    return ((await browser.runtime.sendMessage(msg)) as T | undefined) ?? null;
-  } catch {
-    return null;
-  }
 }

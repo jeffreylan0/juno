@@ -46,7 +46,7 @@
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
-/* Chrome gives extension pages `body { font-size: 75% }`; the chat text size is set on :root. */
+/* The chat text size is set on :root. */
 body { background: var(--bg); color: var(--fg); font-size: 1rem; }
 
 .panel { position: relative; display: flex; flex-direction: column; height: 100%; }
@@ -196,9 +196,23 @@ a.selection-page:hover { color: var(--fg); text-decoration: underline; }
 .empty-ghost { width: 40px; height: 40px; margin-bottom: 10px; fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 
 .thread { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 14px; }
-.turn.user { align-self: flex-end; background: var(--user-bg); border-radius: 14px; padding: 8px 13px; max-width: 90%; }
-.turn.user .turn-text { white-space: pre-wrap; }
+/* A question: a rounded bubble on the right, as in Claude and ChatGPT, with
+   copy (and on the latest, edit and ask again) under it on hover. */
+.turn.user { align-self: flex-end; display: flex; flex-direction: column; align-items: flex-end; max-width: 88%; }
+.turn.user .bubble { background: var(--user-bg); border-radius: 18px; padding: 9px 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.turn.user.editing { align-self: stretch; max-width: 100%; }
+.turn.user.editing .bubble { width: 100%; box-sizing: border-box; border: 1px solid var(--line); background: var(--surface); }
+.edit-box { display: block; width: 100%; resize: none; border: 0; outline: 0; padding: 0; background: transparent; font: inherit; color: var(--fg); line-height: 1.5; }
+.edit-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.edit-actions button { font: inherit; font-size: 13px; border-radius: 9px; padding: 4px 12px; cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+.edit-actions button.primary { border-color: transparent; background: var(--fg); color: var(--bg); }
+.edit-actions button:disabled { opacity: .45; cursor: default; }
 .turn.assistant { max-width: 100%; }
+.turn-actions { display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity 120ms ease; }
+.turn:hover .turn-actions, .turn-actions:focus-within { opacity: 1; }
+.turn-actions .icon { padding: 5px; }
+.turn-actions .icon svg { width: 15px; height: 15px; }
+@media (prefers-reduced-motion: reduce) { .turn-actions { transition: none; } }
 .error { color: var(--error); background: color-mix(in srgb, var(--error) 10%, transparent); padding: 8px 10px; border-radius: 8px; line-height: 1.45; }
 .error-actions { display: flex; gap: 8px; margin-top: 8px; }
 .error-actions button { font: inherit; font-size: 12px; border: 1px solid currentColor; background: transparent; color: inherit; border-radius: 7px; padding: 3px 10px; cursor: pointer; }

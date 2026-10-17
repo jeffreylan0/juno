@@ -1,24 +1,21 @@
 /**
  * Screenshots, kept apart from the chats that show them.
  *
- * Chats are small JSON in extension storage; a screenshot can be a megabyte
- * of base64, and ten saved chats with a few each would blow through
- * storage.local's 10 MB. So images live in the extension's own IndexedDB
- * (no extra permission, not readable by web pages, not synced anywhere), and
- * a chat's image parts carry a reference, `idb:<id>`, instead of the pixels.
- * The background swaps references back for pixels just before a request;
- * the panel resolves them to show the picture.
+ * Chats are small JSON in storage.local; a screenshot can be a megabyte of
+ * base64. So images live in files of their own (platform/images.ts), and a
+ * chat's image parts carry a reference, `idb:<id>` (the name is older than
+ * the files), instead of the pixels. The core swaps references back for
+ * pixels just before a request; the panel resolves them to show the picture.
  *
  * A temporary chat's screenshots never touch the disk: they go to
  * storage.session (memory only), referenced as `mem:<id>`, and go with the
- * chat. Only if that fills up (Chrome allows 10 MB) do they fall back to
- * IndexedDB, which the chat's deletion clears just the same.
+ * chat.
  *
  * Everything stays on this computer; with cloud storage on, account/sync.ts
  * copies the screenshots to the account as well.
  *
- * jsdom has no IndexedDB, so unit tests get an in-memory store with the same
- * interface.
+ * Until a store is set (platform/install.ts; tests set their own), images
+ * are kept in memory.
  */
 import type { Part, Plan } from '@shared/payload';
 
@@ -37,73 +34,6 @@ export interface ImageStore {
   delete(ids: string[]): Promise<void>;
   deleteForChat(chatId: string): Promise<void>;
   chatIds(): Promise<Set<string>>;
-}
-
-const DB_NAME = 'selection-ai';
-const STORE = 'images';
-
-function request<T>(req: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-class IdbImageStore implements ImageStore {
-  private db: Promise<IDBDatabase> | null = null;
-
-  private open(): Promise<IDBDatabase> {
-    this.db ??= new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 1);
-      req.onupgradeneeded = () => {
-        const store = req.result.createObjectStore(STORE, { keyPath: 'id' });
-        store.createIndex('chatId', 'chatId');
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    return this.db;
-  }
-
-  private async store(mode: IDBTransactionMode): Promise<IDBObjectStore> {
-    return (await this.open()).transaction(STORE, mode).objectStore(STORE);
-  }
-
-  async put(image: StoredImage): Promise<void> {
-    await request((await this.store('readwrite')).put(image));
-  }
-
-  async get(id: string): Promise<StoredImage | undefined> {
-    return (await request((await this.store('readonly')).get(id))) as StoredImage | undefined;
-  }
-
-  async delete(ids: string[]): Promise<void> {
-    if (!ids.length) return;
-    const store = await this.store('readwrite');
-    await Promise.all(ids.map((id) => request(store.delete(id))));
-  }
-
-  async deleteForChat(chatId: string): Promise<void> {
-    const store = await this.store('readwrite');
-    const keys = await request(store.index('chatId').getAllKeys(chatId));
-    await Promise.all(keys.map((k) => request(store.delete(k))));
-  }
-
-  /** Every chat that owns at least one image, read from the index alone (no pixels loaded). */
-  async chatIds(): Promise<Set<string>> {
-    const index = (await this.store('readonly')).index('chatId');
-    return await new Promise((resolve, reject) => {
-      const ids = new Set<string>();
-      const cursor = index.openKeyCursor(null, 'nextunique');
-      cursor.onsuccess = () => {
-        const c = cursor.result;
-        if (!c) return resolve(ids);
-        ids.add(String(c.key));
-        c.continue();
-      };
-      cursor.onerror = () => reject(cursor.error);
-    });
-  }
 }
 
 export class MemoryImageStore implements ImageStore {
@@ -128,7 +58,7 @@ export class MemoryImageStore implements ImageStore {
 let current: ImageStore | null = null;
 
 export function images(): ImageStore {
-  current ??= typeof indexedDB === 'undefined' ? new MemoryImageStore() : new IdbImageStore();
+  current ??= new MemoryImageStore();
   return current;
 }
 
@@ -159,7 +89,7 @@ export async function storePlanImages(plan: Plan, chatId: string, temporary = fa
         parts.push({ ...part, dataUrl: `${MEMORY_REF}${id}` });
         continue;
       } catch {
-        // Session storage is full; IndexedDB it is, deleted with the chat all the same.
+        // Kept on disk instead, and deleted with the chat all the same.
       }
     }
     await images().put({ id, chatId, dataUrl: part.dataUrl, createdAt: Date.now() });

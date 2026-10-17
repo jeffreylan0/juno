@@ -1,36 +1,24 @@
 /**
  * Build-time edits to two libraries, taking out the only code in the bundle
- * that evaluates strings, imports a computed URL, or writes HTML strings into
- * a live page. Each path is dead in this extension, so removing it changes
- * nothing a student can see, and it leaves the shipped code free of what
- * browser stores' reviewers rightly flag. If any of it were ever reached, it
- * now fails loudly instead.
+ * that writes HTML strings into a live page. Each path is dead in the app, so
+ * removing it changes nothing a student can see; if either were ever
+ * reached, it now fails loudly instead.
  *
- * React (the panel and settings page):
- *  - `dangerouslySetInnerHTML`. Nothing here uses it — answers are sanitized
- *    by DOMPurify and inserted as nodes (lib/render.ts) — so React's two
+ * React (the panel and settings):
+ *  - `dangerouslySetInnerHTML`. Nothing here uses it (answers are sanitized
+ *    by DOMPurify and inserted as nodes, lib/render.ts), so React's two
  *    `innerHTML` writes for it now throw.
  *
  * DOMPurify (the answer sanitizer):
  *  - its parser fallback, which writes the raw input into a detached
  *    document when DOMParser fails or a non-HTML namespace is configured.
- *    Neither happens here (DOMParser is in every browser; the namespace is
- *    HTML). It now parses nothing, so it fails safe: an empty answer.
+ *    Neither happens here (the namespace is HTML). It now parses nothing, so
+ *    it fails safe: an empty answer.
  *
- * pdf.js (the PDF reader's renderer):
- *  - `Function('return this')()`: core-js's fallback for finding the global
- *    object in engines without `globalThis`. Every browser we support has it.
- *  - The "fake worker", which imports `workerSrc` on the main thread when no
- *    worker is given. The reader always hands pdf.js its own worker.
- *  - The cross-origin worker wrapper, which builds a script from a string.
- *    Our worker is same-origin (and given directly).
- *  - The image decoders' JavaScript fallback, imported only when WebAssembly
- *    is unavailable. The manifest allows WebAssembly ('wasm-unsafe-eval').
- *
- * Every edit must match, or the build fails: a pdf.js upgrade that moves the
- * code is caught here, not shipped half-patched.
+ * Every edit must match, or the build fails: an upgrade that moves the code
+ * is caught here, not shipped half-patched.
  */
-/** The part of a Vite plugin used here (Vite itself is WXT's dependency, not ours). */
+/** The part of a Vite plugin used here. */
 interface Plugin {
   name: string;
   enforce: 'pre';
@@ -54,28 +42,8 @@ const EDITS: Edit[] = [
   {
     file: /react-dom\/cjs\/react-dom-client\.production\.js$/,
     find: /\(domElement\.innerHTML = key\);/g,
-    replace: '(() => { throw Error("dangerouslySetInnerHTML is not used in this extension"); })();',
+    replace: '(() => { throw Error("dangerouslySetInnerHTML is not used in this app"); })();',
     count: 2,
-  },
-  {
-    file: /pdfjs-dist\/legacy\/build\/pdf(\.worker)?\.mjs$/,
-    find: /\(function \(\) \{ return this; \}\)\(\) \|\| Function\('return this'\)\(\);/,
-    replace: 'globalThis;',
-  },
-  {
-    file: /pdfjs-dist\/legacy\/build\/pdf\.mjs$/,
-    find: /const worker = await import\(\s*\/\*webpackIgnore: true\*\/\s*\/\*@vite-ignore\*\/\s*this\.workerSrc\);\s*return worker\.WorkerMessageHandler;/,
-    replace: 'throw new Error("The PDF reader runs pdf.js in its own worker.");',
-  },
-  {
-    file: /pdfjs-dist\/legacy\/build\/pdf\.mjs$/,
-    find: /const wrapper = `await import\("\$\{url\}"\);`;\s*return URL\.createObjectURL\(new Blob\(\[wrapper\], \{\s*type: "text\/javascript"\s*\}\)\);/,
-    replace: 'throw new Error("The PDF reader loads no cross-origin worker.");',
-  },
-  {
-    file: /pdfjs-dist\/legacy\/build\/pdf\.worker\.mjs$/,
-    find: /const mod = await import\(\s*\/\*webpackIgnore: true\*\/\s*\/\*@vite-ignore\*\/\s*`\$\{WasmImage\.#wasmUrl\}\$\{this\._noWasmFilename\}`\);\s*instance = mod\.default\(\);/,
-    replace: 'throw new Error("No JavaScript fallback for the WebAssembly image decoders is shipped.");',
   },
 ];
 

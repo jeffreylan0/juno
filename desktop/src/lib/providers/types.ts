@@ -7,7 +7,7 @@ export interface ProviderContext {
   settings: { localBaseUrl: string; localModel: string; gatewayUrl: string };
   /**
    * Answers recorded by request hash, so a rerun replays for free. The eval
-   * uses one; the extension does not, so no answer outlives its chat.
+   * uses one; the app does not, so no answer outlives its chat.
    */
   cache?: CacheStore;
   /**

@@ -1,6 +1,6 @@
 /*
- * What the app's pages need beyond the extension's stylesheets: the panel
- * and settings are cards (card.ts), like the bar. Marked with an attribute,
+ * What the panel and settings windows share beyond their own stylesheets
+ * (ui/panel.css, settings/options.css): both are cards (card.ts), like the bar. Marked with an attribute,
  * not a class: the pages have classes of their own (settings' `.card`).
  */
 html, body, #root { height: 100%; }
@@ -28,7 +28,7 @@ html[data-card] .topbar { cursor: default; user-select: none; -webkit-user-selec
 /*
  * The panel's text at the system's own sizes (panel/main.tsx sets
  * data-system): macOS body text is 13 px, its small text 11 px; Windows 11's
- * is 14 px and 12 px. The extension's larger sizes suit a browser side panel.
+ * is 14 px and 12 px.
  */
 html[data-system] { --body: 13px; --callout: 12px; --small: 11px; font-size: var(--body); }
 html[data-system='windows'], html[data-system='linux'] { --body: 14px; --callout: 13px; --small: 12px; }

@@ -1,5 +1,5 @@
 /**
- * Who is asking: the Supabase access token the extension sends as a bearer
+ * Who is asking: the Supabase access token the app sends as a bearer
  * token, checked on every request.
  *
  * Projects on asymmetric signing keys (the default for new ones) publish

@@ -1,6 +1,6 @@
 /**
  * SHA-256 payload hash → stored response, so an eval rerun replays for free
- * (eval/lib.ts keeps them as JSON files). The extension keeps none: no answer
+ * (eval/lib.ts keeps them as JSON files). The app keeps none: no answer
  * outlives its chat.
  */
 import { canonicalizeRequest, stableStringify, type AskRequest, type ModelRef, type Usage } from '@shared/payload';

@@ -1,7 +1,7 @@
 /**
  * Asks OpenAI or Anthropic with the service's own keys (Worker secrets, never
  * sent anywhere else) and streams the answer back in the OpenAI chat-chunk
- * shape the extension already reads (openai-compat.ts), so it has one parser.
+ * shape the app already reads (openai-compat.ts), so it has one parser.
  *
  * What may be asked is checked before anything is spent: only the models the
  * apps choose themselves, only text and screenshots, and no more of either

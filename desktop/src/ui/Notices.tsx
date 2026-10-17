@@ -2,8 +2,7 @@
  * Notices, just above the macros: anything that would make the next answer
  * fail or be fake, said before the student asks rather than after. Placeholder
  * answers, no key, a rejected key, and the chosen AI being unreachable
- * ("Disconnected"); also the chat limit dropping an old chat. Warnings
- * about the page itself go on the page, as a tooltip (lib/tooltip.ts).
+ * ("Disconnected"); also the chat limit dropping an old chat.
  *
  * Placeholder and no-key are known here at once. The rest come from the
  * background's check (lib/status.ts), shown only when it was made for the
@@ -38,7 +37,7 @@ interface Notice {
 
 const openSettings = () => void browser.runtime.openOptionsPage();
 /** Settings, at the Account section. */
-const openAccount = () => void browser.tabs.create({ url: browser.runtime.getURL('/options.html#account') });
+const openAccount = () => void browser.runtime.openOptionsPage('account');
 
 export function Notices({
   lasts = null,

@@ -37,7 +37,7 @@
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; scroll-padding-top: 72px; }
-/* Chrome gives extension pages `body { font-size: 75% }`; the size is set on :root. */
+/* The text size is set on :root. */
 body { margin: 0; background: var(--bg); color: var(--fg); font-size: 1rem; }
 
 /* A sticky header: the name, the sections, and "Saved". */
@@ -141,3 +141,29 @@ label.check input { margin: 0; padding: 0; }
 .usage { display: flex; flex-direction: column; gap: 4px; }
 .usage meter { width: 100%; max-width: 320px; height: 8px; accent-color: var(--accent); }
 .upgrade { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; background: var(--accent-bg); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 12px; }
+
+/* Where the bar and the panel go (PlacePicker.tsx): a little screen in 3×3 parts. */
+.places { display: flex; gap: 28px; flex-wrap: wrap; }
+.place-picker { display: flex; flex-direction: column; gap: 6px; }
+.place-label { font-size: 13px; color: var(--muted); }
+.place-screen {
+  display: grid; grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(3, 26px); gap: 3px;
+  padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+}
+.place-cell {
+  display: flex; padding: 4px; border: 0; border-radius: 5px; cursor: pointer;
+  background: var(--hover); color: var(--muted);
+}
+.place-cell:hover { color: var(--fg); }
+.place-cell[aria-checked='true'] { background: var(--accent-bg); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.place-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The mark at the part's outer edge: a bar is wide and low, the panel tall. */
+.place-cell[data-place$='-left'] { justify-content: flex-start; }
+.place-cell[data-place$='-center'] { justify-content: center; }
+.place-cell[data-place$='-right'] { justify-content: flex-end; }
+.place-cell[data-place^='top-'] { align-items: flex-start; }
+.place-cell[data-place^='middle-'] { align-items: center; }
+.place-cell[data-place^='bottom-'] { align-items: flex-end; }
+.place-mark { width: 16px; height: 4px; border-radius: 2px; background: currentColor; opacity: 0.45; }
+.place-picker.panel .place-mark { width: 7px; height: 14px; }
+.place-cell[aria-checked='true'] .place-mark { opacity: 1; }

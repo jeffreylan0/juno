@@ -224,7 +224,7 @@ describe('callModel', () => {
     expect(calls).toBe(1);
   });
 
-  it('records nothing without a cache (the extension) or for a temporary chat', async () => {
+  it('records nothing without a cache (the app) or for a temporary chat', async () => {
     let calls = 0;
     const fetchMock = (async () => {
       calls++;

@@ -1,11 +1,10 @@
-//! Cropping a captured display down to the selection, the way the extension's
-//! `lib/capture.ts` does it in the browser: the CSS-pixel rectangle is scaled
-//! to device pixels, clamped to the image, downscaled to at most 1568 px on
-//! the long edge (what the models read without resampling it themselves), and
-//! for a freeform shape everything outside the outline is painted white —
-//! white rather than transparent, since some models read transparency as
-//! black. Same rules as the canvas: the outline fills by the non-zero
-//! winding rule, tested at pixel centres.
+//! Cropping a captured display down to the selection: the CSS-pixel rectangle
+//! is scaled to device pixels, clamped to the image, downscaled to at most
+//! 1568 px on the long edge (what the models read without resampling it
+//! themselves), and for a freeform shape everything outside the outline is
+//! painted white (white rather than transparent, since some models read
+//! transparency as black). The outline fills by the non-zero winding rule,
+//! tested at pixel centres, as a canvas would fill it.
 //!
 //! The scale is taken from the image itself (its width over the overlay's
 //! CSS width), so a capture that came back at another resolution still lines
@@ -17,7 +16,7 @@ use image::imageops::{self, FilterType};
 use image::{ImageEncoder, RgbImage, RgbaImage};
 use serde::Deserialize;
 
-/// Longest edge sent to a model; larger crops are downscaled (as in capture.ts).
+/// Longest edge sent to a model; larger crops are downscaled.
 pub const MAX_EDGE: u32 = 1568;
 
 /// What to cut out, in the overlay's CSS pixels.

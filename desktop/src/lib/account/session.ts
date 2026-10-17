@@ -2,24 +2,22 @@
  * Signing in, staying signed in, and signing out, against Supabase Auth's
  * REST API directly (no SDK: a few calls, and nothing to bundle).
  *
- *  - Google: the PKCE flow through browser.identity.launchWebAuthFlow. The
- *    browser opens Google in its own window and hands back the redirect, so
- *    the code never passes through a web page we do not own.
+ *  - Google: the PKCE flow through browser.identity.launchWebAuthFlow, which
+ *    the app opens in the student's browser and hears back through its link
+ *    (platform/browser.ts).
  *  - Email: a one-time code (6–10 digits) sent by Supabase, typed back here.
  *
- * The session (access and refresh tokens) is kept in storage.local, like the
- * API keys, sealed (lib/sealed.ts): content scripts can read storage.local,
- * but only the extension's own pages and background can unseal it. It is
- * never put on a web page or in the selection bar.
+ * The session (access and refresh tokens) is kept like the API keys, in the
+ * native core's private secrets file (store.rs). It is never put in the
+ * selection bar.
  *
- * Any extension context can call currentSession(); refreshes are one at a
- * time per context, and Supabase accepts a refresh token reused within ten
- * seconds, so the background and an open settings page refreshing together
- * do not sign the student out.
+ * Any window can call currentSession(); refreshes are one at a time per
+ * window, and Supabase accepts a refresh token reused within ten seconds, so
+ * the core and an open settings window refreshing together do not sign the
+ * student out.
  */
 import { storage } from '@wxt-dev/storage';
 import { ACCOUNTS, SUPABASE_KEY, SUPABASE_URL } from './config';
-import { sealedItem } from '../sealed';
 
 export interface AccountUser {
   id: string;
@@ -66,8 +64,7 @@ export interface Billing {
   cancelAtPeriodEnd: boolean;
 }
 
-/** Sealed at rest in the extension (lib/sealed.ts), like the API keys. */
-export const sessionItem = sealedItem<AccountSession | null>('local:account', null);
+export const sessionItem = storage.defineItem<AccountSession | null>('local:account', { fallback: null });
 export const entitlementItem = storage.defineItem<Entitlement | null>('local:entitlement', { fallback: null });
 
 /** How the cloud copy of the chats is doing (account/sync.ts writes it). */
@@ -224,7 +221,7 @@ export async function currentSession(force = false): Promise<AccountSession | nu
 }
 
 async function refresh(s: AccountSession, force: boolean): Promise<AccountSession | null> {
-  // Another page (or the background) may have refreshed it meanwhile.
+  // Another window may have refreshed it meanwhile.
   const latest = await sessionItem.getValue();
   if (!latest) return null;
   if (latest.refreshToken !== s.refreshToken && (!force || latest.accessToken !== s.accessToken)) return latest;

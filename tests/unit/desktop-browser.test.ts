@@ -1,7 +1,6 @@
 /**
- * The desktop app's `browser` (desktop/src/platform/browser.ts): several
- * windows over one in-memory "native core", the way the extension's code is
- * tested against fakeBrowser. What the shared code relies on: storage that
+ * The app's `browser` (desktop/src/platform/browser.ts): several windows
+ * over one in-memory "native core". What the rest of the code relies on: storage that
  * every window sees change, messages the core answers, and a port that
  * closes when its window goes.
  */
@@ -118,7 +117,7 @@ describe('storage', () => {
     expect(await w.core!.storage.local.get(null)).toEqual({ b: 2 });
   });
 
-  it('drops undefined values as the extension would', async () => {
+  it('drops undefined values, as JSON does', async () => {
     const w = await windows('core');
     await w.core!.storage.local.set({ s: { a: 1, gone: undefined } });
     expect(w.hub.areas.local.get('s')).toEqual({ a: 1 });
@@ -240,21 +239,12 @@ describe('the rest of the browser', () => {
   it('has one window, the settings page for options, and the app shortcut as the toolbar one', async () => {
     const w = await windows('panel');
     expect(await w.panel!.windows.getCurrent()).toMatchObject({ id: WINDOW_ID });
-    expect(w.panel!.runtime.getURL('/options.html#account')).toBe('tauri://localhost/web/settings.html#account');
     expect(await w.panel!.commands.getAll()).toEqual([expect.objectContaining({ name: '_execute_action', shortcut: '⌥⇧S' })]);
 
-    await w.panel!.tabs.create({ url: w.panel!.runtime.getURL('/options.html#account') });
+    await w.panel!.runtime.openOptionsPage('account');
     expect(w.hub.invoked).toContainEqual(['panel', 'settings_open', { hash: 'account' }]);
     await w.panel!.runtime.openOptionsPage();
     expect(w.hub.invoked).toContainEqual(['panel', 'settings_open', { hash: null }]);
-  });
-
-  it('opens other links in the browser', async () => {
-    const core = fakeCore();
-    const openUrl = vi.fn();
-    const b = createBrowser(core.transport('panel'), { openUrl, origin: 'tauri://localhost' });
-    await b.tabs.create({ url: 'https://console.anthropic.com/settings/keys' });
-    expect(openUrl).toHaveBeenCalledWith('https://console.anthropic.com/settings/keys');
   });
 });
 
@@ -320,9 +310,9 @@ describe('a selection’s title in the app', () => {
 });
 
 describe('which parts of the overlay take the pointer', () => {
-  function overlay(state: string | null, opts: { leaving?: boolean; tip?: boolean } = {}) {
+  function overlay(state: string | null, opts: { leaving?: boolean } = {}) {
     document.body.replaceChildren();
-    document.querySelectorAll('selection-ai-overlay, selection-ai-tooltip').forEach((e) => e.remove());
+    document.querySelectorAll('selection-ai-overlay').forEach((e) => e.remove());
     if (state !== null) {
       const host = document.createElement('selection-ai-overlay');
       host.setAttribute('data-state', state);
@@ -333,36 +323,19 @@ describe('which parts of the overlay take the pointer', () => {
       host.attachShadow({ mode: 'open' }).append(bar);
       document.documentElement.append(host);
     }
-    if (opts.tip) {
-      const host = document.createElement('selection-ai-tooltip');
-      const tip = document.createElement('div');
-      tip.className = 'sai-tip';
-      tip.getBoundingClientRect = () => ({ left: 400, top: 12, width: 480, height: 40, right: 0, bottom: 0, x: 0, y: 0, toJSON() {} });
-      host.attachShadow({ mode: 'open' }).append(tip);
-      document.documentElement.append(host);
-    }
   }
 
-  it('all of it while selecting; the bar and tooltips while waiting; nothing when nothing shows', () => {
+  it('all of it while selecting; the bar while waiting; nothing when nothing shows', () => {
     overlay('armed');
     expect(readPointerState()).toEqual({ interactive: true, regions: [{ x: 365, y: 731, width: 550, height: 45 }], idle: false });
     overlay('drawing');
     expect(readPointerState().interactive).toBe(true);
-    overlay('ready', { tip: true });
-    expect(readPointerState()).toEqual({
-      interactive: false,
-      regions: [
-        { x: 365, y: 731, width: 550, height: 45 },
-        { x: 400, y: 12, width: 480, height: 40 },
-      ],
-      idle: false,
-    });
+    overlay('ready');
+    expect(readPointerState()).toEqual({ interactive: false, regions: [{ x: 365, y: 731, width: 550, height: 45 }], idle: false });
     overlay('sending');
     expect(readPointerState().interactive).toBe(false);
     overlay('ready', { leaving: true });
     expect(readPointerState().regions).toEqual([]);
-    overlay(null, { tip: true });
-    expect(readPointerState()).toMatchObject({ interactive: false, idle: false });
     overlay(null);
     expect(readPointerState()).toEqual({ interactive: false, regions: [], idle: true });
   });

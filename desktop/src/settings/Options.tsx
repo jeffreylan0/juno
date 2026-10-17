@@ -26,25 +26,30 @@ import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import { listChats } from '@/lib/chats';
 import { COMPANY, MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
-import { SURFACE } from '@/lib/surface';
 import type { KeyModel, KeyTestResult } from '@/lib/providers/byok';
 import {
   CHAT_LIMITS,
   getKeys,
   getSettings,
   keysItem,
+  panelSizeItem,
   sanitizeMacros,
   settingsItem,
-  siteOf,
   type Keys,
   type Macro,
+  type PanelSize,
   type SendBehavior,
   type Settings,
 } from '@/lib/storage';
 import type { AiStatus } from '@/lib/status';
 import { Icon } from '@/ui/icons';
 import { hasHosted, useAccount, type AccountState } from '@/ui/useAccount';
-import { formatShortcut, openShortcutSettings, useShortcut } from '@/ui/useShortcut';
+import { formatShortcut, useShortcut } from '@/ui/useShortcut';
+import { MAC } from '../os';
+import { AppSection } from './AppSection';
+import { Permissions } from './Permissions';
+import { PlacePicker } from './PlacePicker';
+import { ShortcutField } from './ShortcutField';
 import { AccountSection } from './Account';
 
 type Vendor = 'anthropic' | 'openai';
@@ -70,12 +75,16 @@ const SEND: { id: SendBehavior; label: string; help: string }[] = [
   { id: 'auto', label: 'Ask right away', help: 'Asks the default prompt, or the first macro. Each selection costs a question.' },
 ];
 
+/** Where API keys are kept (store.rs), as a sentence. */
+const KEYS_KEPT = 'Your keys stay in a private file on this computer that only your account can read.';
+
 const SECTIONS = [
   { id: 'answers', title: 'Answers' },
   { id: 'asking', title: 'Asking' },
   { id: 'selecting', title: 'Selecting' },
   { id: 'privacy', title: 'Chats & privacy' },
-  ...SURFACE.sections.map(({ id, title }) => ({ id, title })),
+  ...(MAC ? [{ id: 'permissions', title: 'Permissions' }] : []),
+  { id: 'app', title: BRAND.name },
   ...(ACCOUNTS ? [{ id: 'account', title: 'Account' }] : []),
 ];
 
@@ -205,11 +214,9 @@ export function Options() {
           <span className={`saved${saved ? ' on' : ''}`} data-testid="saved" aria-live="polite">
             {saved ? 'Saved' : ''}
           </span>
-          {SURFACE.ownWindow && (
-            <button type="button" className="close" title="Close" aria-label="Close" data-testid="close" onClick={() => window.close()}>
-              <Icon name="close" />
-            </button>
-          )}
+          <button type="button" className="close" title="Close" aria-label="Close" data-testid="close" onClick={() => window.close()}>
+            <Icon name="close" />
+          </button>
         </div>
       </header>
 
@@ -234,13 +241,16 @@ export function Options() {
           rememberModels={rememberModels}
         />
         <AskingSection settings={settings} save={save} />
-        <SelectingSection settings={settings} save={save} shortcut={shortcut} />
+        <SelectingSection settings={settings} save={save} />
         <PrivacySection settings={settings} save={save} account={account} />
-        {SURFACE.sections.map(({ id, title, render }) => (
-          <Section key={id} id={id} title={title}>
-            {render()}
+        {MAC && (
+          <Section id="permissions" title="Permissions">
+            <Permissions />
           </Section>
-        ))}
+        )}
+        <Section id="app" title={BRAND.name}>
+          <AppSection />
+        </Section>
         <AccountSection account={account} settings={settings} save={save} />
       </main>
     </div>
@@ -454,7 +464,7 @@ function KeyAndModel({
         </span>
         <KeyStatus check={check} hasKey={!!savedKey} />
         <p className="help">
-          {SURFACE.keysKept} It only ever goes to {COMPANY[vendor]}. Clear the field to remove it. Tip: set a monthly spend
+          {KEYS_KEPT} It only ever goes to {COMPANY[vendor]}. Clear the field to remove it. Tip: set a monthly spend
           limit in {COMPANY[vendor]}'s console.
         </p>
       </div>
@@ -663,25 +673,10 @@ function AskingSection({ settings, save }: { settings: Settings; save: (patch: P
 
 // ── 3. Selecting ─────────────────────────────────────────────────────────
 
-function SelectingSection({ settings, save, shortcut }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void>; shortcut: string }) {
+function SelectingSection({ settings, save }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void> }) {
   return (
     <Section id="selecting" title="Selecting">
-      {SURFACE.shortcutField ? (
-        SURFACE.shortcutField()
-      ) : (
-        <div className="field" data-testid="shortcuts">
-          <span className="field-label">Keyboard shortcut</span>
-          <span className="key-row shortcut-row">
-            <span>
-              Start selecting: <kbd>{shortcut || 'not set'}</kbd>
-            </span>
-            <button type="button" className="secondary" onClick={openShortcutSettings}>
-              Change…
-            </button>
-          </span>
-          <small className="help">Same as clicking {BRAND.iconName}. It's changed on the browser's shortcuts page.</small>
-        </div>
-      )}
+      <ShortcutField />
 
       <div className="field">
         <span className="field-label">After drawing a selection</span>
@@ -701,13 +696,34 @@ function SelectingSection({ settings, save, shortcut }: { settings: Settings; sa
         <small className="help">Also in the gear on the selection bar.</small>
       </div>
 
-      {SURFACE.pdfViewer && (
-        <p className="help">
-          In the browser's PDF viewer the page can't scroll while you select. {BRAND.name} can reopen the PDF in its own reader,
-          where it can.
-        </p>
-      )}
+      <div className="field" data-testid="places">
+        <span className="field-label">Where the bar and the panel go</span>
+        <div className="places">
+          <PlacePicker label="Bar" value={settings.barPlace} onChange={(v) => void save({ barPlace: v })} />
+          <PlacePicker label="Panel" value={settings.panelPlace} onChange={(v) => void save({ panelPlace: v })} />
+        </div>
+        <small className="help">Pick a part of the screen: each goes to its outer edge, out of the way of the middle.</small>
+        <PanelSizeNote />
+      </div>
     </Section>
+  );
+}
+
+/** The size the student gave the panel by hand (panel/fit.ts), which it opens at; it can be forgotten here. */
+function PanelSizeNote() {
+  const [size, setSize] = useState<PanelSize | null>(null);
+  useEffect(() => {
+    void panelSizeItem.getValue().then(setSize, () => {});
+    return panelSizeItem.watch(setSize);
+  }, []);
+  if (!size) return null;
+  return (
+    <small className="help" data-testid="panel-size">
+      The panel opens at the size you gave it ({Math.round(size.width)} × {Math.round(size.height)}).{' '}
+      <button type="button" className="link" onClick={() => void panelSizeItem.setValue(null)}>
+        Let it grow with the chat again
+      </button>
+    </small>
   );
 }
 
@@ -722,15 +738,6 @@ function PrivacySection({
   save: (patch: Partial<Settings>) => Promise<void>;
   account: AccountState;
 }) {
-  const [blocked, setBlocked] = useState(settings.blockedSites.join('\n'));
-  const saveBlocked = useDebounced((v: string) =>
-    void save({
-      blockedSites: v
-        .split(/\n|,/)
-        .map(siteOf)
-        .filter(Boolean),
-    }),
-  );
   // Chats go to the cloud only for an account that has cloud storage and turned it on.
   const cloud = !!account.user && !!account.entitlement?.cloud && settings.cloudSync;
 
@@ -738,28 +745,11 @@ function PrivacySection({
     <Section id="privacy" title="Chats & privacy">
       <ChatsField limit={settings.chatLimit} cloud={cloud} save={save} />
 
-      {SURFACE.blockedSites && (
-        <label className="field">
-          <span className="field-label">Blocked sites</span>
-          <textarea
-            rows={3}
-            value={blocked}
-            placeholder="exam.example.edu"
-            data-testid="blocked-sites"
-            onChange={(e) => {
-              setBlocked(e.target.value);
-              saveBlocked(e.target.value);
-            }}
-          />
-          <small className="help">One site per line, like exam sites. {BRAND.name} stays off on them.</small>
-        </label>
-      )}
-
       <div className="field" data-testid="what-is-sent">
         <span className="field-label">What's sent and kept</span>
         <p className="help">
-          Only what you select (a screenshot) and the {SURFACE.source}'s title go to the AI you picked.{' '}
-          {SURFACE.keysKept} Your chats stay on this computer{cloud ? ' and in your account' : ''}.
+          Only what you select (a screenshot) and the window's title go to the AI you picked. {KEYS_KEPT} Your chats stay on this
+          computer{cloud ? ' and in your account' : ''}.
         </p>
         <ul className="help facts">
           <li>
@@ -838,7 +828,7 @@ function ChatsField({ limit, cloud, save }: { limit: number; cloud: boolean; sav
             </option>
           ))}
         </select>
-        <span>most recent chats</span>
+        <span>{(confirming?.kind === 'limit' ? confirming.to : limit) === 1 ? 'most recent chat' : 'most recent chats'}</span>
       </label>
       {confirming?.kind === 'limit' ? (
         <div className="confirm-row">

@@ -14,10 +14,10 @@
  *    each in the cloud as well.
  *  - temporary chats: storage.session (memory only). Never listed, and
  *    deleted when the panel closes.
- *  - screenshots: IndexedDB (images.ts), referenced from the chat; a
- *    temporary chat's stay in memory.
+ *  - screenshots: files (images.ts), referenced from the chat; a temporary
+ *    chat's stay in memory.
  *
- * The background is the only writer. The panel renders whatever is stored and
+ * The core is the only writer. The panel renders whatever is stored and
  * hears about changes through storage events.
  */
 import type { Attachment, ChatTurn, ModelRef, Plan, Usage } from '@shared/payload';
@@ -31,8 +31,6 @@ export interface SelectionItem {
   plan: Plan;
   /** Why this selection cannot be used (the screenshot failed). */
   notice?: string;
-  /** The tab it came from, for diagnostics; tabs come and go, so nothing depends on it. */
-  tabId?: number;
 }
 
 export interface UserItem {
@@ -264,8 +262,8 @@ export async function discardChat(id: string): Promise<void> {
 }
 
 /**
- * Screenshots nobody points at any more — a temporary chat whose panel closed
- * while the worker was asleep, a crash mid-delete — are swept on start-up.
+ * Screenshots nobody points at any more (a temporary chat left behind by a
+ * crash, a crash mid-delete) are swept on start-up.
  */
 export async function sweepImages(keep: Iterable<string> = []): Promise<void> {
   const live = new Set([...(await listChats()).map((c) => c.id), ...keep]);
@@ -275,7 +273,7 @@ export async function sweepImages(keep: Iterable<string> = []): Promise<void> {
 }
 
 /**
- * Answers left "streaming" by a worker that was stopped mid-answer. Run on
+ * Answers left "streaming" by an app that quit mid-answer. Run on
  * start-up, when nothing can be streaming, so no chat shows a spinner (and a
  * Stop button) forever. What arrived is kept.
  */

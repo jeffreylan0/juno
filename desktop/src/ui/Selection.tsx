@@ -8,8 +8,8 @@
  * no fill, so nothing around a selection looks like part of it. A thin
  * hairline marks the edge of a rectangular shot. A freeform shape shows only
  * what was inside its outline, with the outline drawn on; the model itself
- * gets that area with the outside painted white (capture.ts), since models
- * read transparency inconsistently.
+ * gets that area with the outside painted white (src-tauri/src/crop.rs),
+ * since models read transparency inconsistently.
  *
  * No token counts or routing details here.
  */
@@ -68,7 +68,7 @@ export function SelectionCard({ item, onRemove, showPage = true }: { item: Selec
   );
 }
 
-/** Where the selection came from: the page's title, opening the page in a new tab. */
+/** Where the selection came from: its window's title (a link, in older chats that name a web page). */
 function PageLink({ url, title }: { url: string; title: string }) {
   let host = '';
   let safe = false;

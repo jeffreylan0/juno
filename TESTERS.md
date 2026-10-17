@@ -12,7 +12,6 @@ From **Assets** at the bottom of the release page, download the one for your com
 | --- | --- |
 | Mac with macOS 14 (Sonoma) or later, Apple Silicon or Intel | `Juno-…-mac.dmg` |
 | Windows 10 or 11, 64-bit | `Juno-…-windows-setup.exe` |
-| Chrome, Edge, Brave or Arc (optional: the browser extension) | `Juno-…-chrome-extension.zip` |
 
 ## Check your download (optional)
 
@@ -52,17 +51,18 @@ Your key stays on your computer, in a file only your user account can read. It i
 
 1. Press **Option+Shift+S** on a Mac or **Alt+Shift+S** on Windows, or click the menu bar or tray icon. The screen dims a little and the bar comes up.
 2. **Box**: drag a rectangle. **Freeform**: draw around anything, in any shape.
-3. A panel opens at the top right with your selection. Press **Explain**, **Hint** or **Check**, or type your own question.
+3. A panel opens at the top right with your selection. Press **Explain**, **Hint**, **Check** or **Answer** (the answer first, then the explanation), or type your own question.
 
 **Esc** cancels. You can still scroll the page underneath while the bar is waiting.
 
-## The browser extension (optional)
+In the panel:
 
-1. Unzip the `.zip` into a folder you'll keep. Chrome loads the extension from that folder.
-2. Go to `chrome://extensions`, turn on **Developer mode** (top right), click **Load unpacked** and choose the folder.
-3. Pin it from the puzzle-piece menu. Click it on any page, or press **Alt+Shift+S**.
+- Your questions show in rounded bubbles. Point at one to **copy** it; the latest one can also be **edited** (ask it again, reworded) or **retried** (asked again as it was). Answers have a copy button too.
+- **⌘⇧O** on a Mac or **Ctrl+Shift+O** on Windows starts a new chat: the current one is finished (and kept in the chat menu), and the bar comes up for the next selection.
+- Scroll up while an answer is coming in and the panel stays where you are; scroll back to the bottom and it follows the answer again.
+- Resize the panel by its edges and it keeps that size from then on. Settings → **Selecting** shows the saved size, with a link to let it grow with the chat again.
 
-Its settings are separate from the app's, so choose who answers there too.
+Settings → **Selecting** → *Where the bar and the panel go* picks a part of the screen for each: click one of the nine squares. The bar sits at that part's outer edge (the bottom of the screen to start), and the panel in its corner or side (top right to start).
 
 ## What to look for
 

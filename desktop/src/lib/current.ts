@@ -1,25 +1,21 @@
 /**
- * Which chat each window is on, and when a chat begins and ends.
+ * Which chat the app is on, and when a chat begins and ends.
  *
  * The rules:
  *
- *  - Clicking the shortcut icon (or pressing the shortcut) brings up the
- *    selection bar on that tab. Leaving the tab takes the bar away; the icon
- *    brings it back wherever the student is. Nothing about it is remembered.
+ *  - The shortcut (or the menu bar icon) brings up the selection bar.
  *  - The panel opens with the first selection, and that selection starts a
- *    chat; every later one joins it, whichever tab it comes from. The panel
- *    stays open from tab to tab.
+ *    chat; every later one joins it, whichever app it comes from.
  *  - The ghost (on the bar or the panel) makes the next selection start a
  *    temporary chat, which is never saved.
  *  - ✕ on the bar, ✕ on the side panel, or Escape while the bar is waiting
  *    hides both and finishes the chat: a saved chat stays in the menu, a
- *    temporary one is deleted. The next click on the icon starts a new chat.
+ *    temporary one is deleted. The next selection starts a new chat.
  *
- * State lives in storage.session so it survives the service worker being torn
- * down: `current:<windowId>` names the chat, and `bar:<windowId>` the one tab
- * the bar is on, so switching away can take it off. The background calls these
- * one at a time (it serialises every chat write), so none of them has to worry
- * about another running halfway.
+ * State lives in storage.session, under `current:<windowId>` (the app has one
+ * window id, core/main.ts). The core calls these one at a time (it serialises
+ * every chat write), so none of them has to worry about another running
+ * halfway.
  */
 import type { Plan } from '@shared/payload';
 import { discardChat, getChat, newChat, saveChat, withSelection, type Chat, type ChatSummary, type SelectionItem } from './chats';
@@ -76,26 +72,12 @@ async function leave(current: Current | null): Promise<void> {
   await discardChat(current.chatId);
 }
 
-// ── The bar ──────────────────────────────────────────────────────────────
-
-const barKey = (windowId: number) => `bar:${windowId}`;
-
-/** The tab the window's bar is on, if it is up. */
-export async function getBarTab(windowId: number): Promise<number | undefined> {
-  return (await session().get(barKey(windowId)))[barKey(windowId)] as number | undefined;
-}
-
-export async function setBarTab(windowId: number, tabId: number | null): Promise<void> {
-  if (tabId === null) await session().remove(barKey(windowId));
-  else await session().set({ [barKey(windowId)]: tabId });
-}
-
 // ── The chat's life ──────────────────────────────────────────────────────
 
 /**
  * A panel connected. It shows the chat in progress, or starts one (a panel
  * opened by hand, before any selection). `claim` is set when a panel that was
- * already open reconnects after the worker restarted, and names its chat.
+ * already open reconnects after the core reloaded, and names its chat.
  */
 export async function panelOpened(windowId: number, claim?: Current): Promise<Current> {
   const current = (await getCurrent(windowId)) ?? claim ?? fresh();
@@ -107,7 +89,6 @@ export async function panelOpened(windowId: number, claim?: Current): Promise<Cu
 export async function endChat(windowId: number): Promise<void> {
   await leave(await getCurrent(windowId));
   await setCurrent(windowId, null);
-  await setBarTab(windowId, null);
 }
 
 /** Leaves the chat in progress for a new, empty one. */
@@ -157,7 +138,7 @@ export async function replaceGone(ids: Iterable<string>): Promise<void> {
 }
 
 /**
- * A selection arrived from a tab in this window: it joins the chat in
+ * A selection arrived in this window: it joins the chat in
  * progress, or starts one. `into` is the chat it was made for, fixed when it
  * was committed: if the student moved on while it was being captured (✕, the
  * ghost, another chat from the menu), it still goes there — unless that chat
@@ -166,7 +147,7 @@ export async function replaceGone(ids: Iterable<string>): Promise<void> {
  */
 export async function addSelection(
   windowId: number,
-  { plan, notice, tabId, into }: { plan: Plan; notice?: string; tabId?: number; into?: Current },
+  { plan, notice, into }: { plan: Plan; notice?: string; into?: Current },
 ): Promise<{ chat: Chat; item: SelectionItem; dropped: ChatSummary[] } | null> {
   const now = into ? await getCurrent(windowId) : await ensureCurrent(windowId);
   const target = into ?? now!;
@@ -180,14 +161,13 @@ export async function addSelection(
     at: Date.now(),
     plan: await storePlanImages(plan, base.id, !!base.temporary),
     ...(notice ? { notice } : {}),
-    ...(tabId !== undefined ? { tabId } : {}),
   };
   const { chat, dropped } = await saveChat(withSelection(base, item));
   if (dropped.length) await replaceGone(dropped.map((c) => c.id));
   return { chat, item, dropped };
 }
 
-/** Temporary chats no window is on any more (a crash, a worker stopped mid-cleanup). */
+/** Temporary chats no window is on any more (a crash, the app quit mid-cleanup). */
 export async function discardOrphans(): Promise<void> {
   const live = new Set((await allCurrent()).map(([, c]) => c.chatId));
   const all = await session().get(null);

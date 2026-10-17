@@ -1,28 +1,29 @@
 /**
- * The panel: the chat the selection bar is filling. The shortcut icon brings
- * the bar up on a tab; the first selection opens the panel, which then stays
- * open from tab to tab while every selection lands here. ✕ on either (or
- * Escape on a waiting bar) hides both and finishes the chat — it stays in the
- * chat menu, or is deleted if temporary. The next click on the icon starts a
- * new chat.
+ * The panel: the chat the bar is filling. The shortcut brings the bar up;
+ * the first selection opens the panel, and every selection after lands here
+ * too. ✕ on either (or Escape on a waiting bar) hides both and finishes the
+ * chat: it stays in the chat menu, or is deleted if temporary. The next
+ * selection starts a new chat; so does the new-chat key (⌘⇧O, Ctrl+Shift+O),
+ * which keeps the panel up.
  *
  * Layout, top to bottom:
- *  - the top bar: chat menu (left; in the app, after ✕), the chat's name
- *    (click to rename), the temporary-chat ghost and settings (right);
- *  - the chat: selections as they arrive, questions and answers;
- *  - notices (no key, disconnected, …), then the answer macros, and the
- *    question box, with who answers beside Send, as in Claude. In the app
- *    the notices float over the end of the chat and go by themselves.
+ *  - the top bar: ✕, the chat menu, the chat's name (click to rename), the
+ *    temporary-chat ghost and settings;
+ *  - the chat: selections as they arrive, questions in rounded bubbles (copy,
+ *    and on the latest, edit and ask again), answers paced as they stream
+ *    (copy);
+ *  - notices (no key, disconnected, …) floating over the end of the chat
+ *    and going by themselves, then the answer macros, and the question box,
+ *    with who answers beside Send, as in Claude.
  *
  * Every question carries the selections made since the last one. The box
  * starts empty (or with the student's own default prompt); Enter or Send asks
- * what is typed; a macro fills the box with its prompt and sends it.
+ * what is typed; a macro fills the box with its prompt and sends it. The
+ * chat follows an answer as it streams, unless the student scrolled up to
+ * read.
  *
- * The panel never writes a chat. It sends commands to the background, which
- * owns every chat, and renders whatever is stored.
- *
- * Runs in the Chrome/Edge side panel, the Firefox sidebar and the app's panel
- * window. (Safari has no docked panel; showing it in the page is still to do.)
+ * The panel never writes a chat. It sends commands to the core, which owns
+ * every chat, and renders whatever is stored.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { SelectionKind } from '@shared/payload';
@@ -30,8 +31,8 @@ import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import { autoTitle, hasUsableSelection, isRemovable, pendingSelections, type AssistantItem, type Chat } from '@/lib/chats';
 import { isTransient, needsSettings } from '@/lib/providers/errors';
-import { SURFACE } from '@/lib/surface';
 import { getKeys, getSettings, keysItem, settingsItem, type Keys, type Macro, type Settings } from '@/lib/storage';
+import { splitWhatIRead } from '@shared/prompts';
 import { Answer } from './Answer';
 import { ChatMenu, TitleInput } from './ChatMenu';
 import { Icon } from './icons';
@@ -40,7 +41,15 @@ import { Notices } from './Notices';
 import { IncomingSelection, SelectionCard } from './Selection';
 import { useAccount } from './useAccount';
 import { useAiStatus, useChat, useChatList, usePanelSession } from './useChat';
+import { MAC } from '../os';
 import { formatShortcut, useShortcut } from './useShortcut';
+
+/** How long a notice stays before it goes by itself (Notices.tsx). */
+const NOTICE_MS = 9000;
+/** Within this of the bottom, the chat counts as followed: new text keeps it at the bottom. */
+const FOLLOW_SLACK_PX = 48;
+/** The new-chat key, as people say it. */
+const NEW_CHAT_KEY = MAC ? '⌘⇧O' : 'Ctrl+Shift+O';
 
 /** How long a macro's prompt shows in the box before it is sent. */
 const MACRO_FILL_MS = 140;
@@ -91,7 +100,7 @@ export function Panel() {
 
   // Chats from the student's other computers (cloud storage): caught up when
   // the panel opens, comes back into view, opens the chat menu, and every few
-  // minutes while it stays open. The background does nothing if not signed in.
+  // minutes while it stays open. The core does nothing if not signed in.
   useEffect(() => {
     if (!ACCOUNTS) return;
     const catchUp = () => document.visibilityState === 'visible' && void send({ type: 'sync:now' });
@@ -107,18 +116,16 @@ export function Panel() {
     if (ACCOUNTS && menuOpen) void send({ type: 'sync:now' });
   }, [menuOpen]);
 
-  // The bar's X closes everything. Chrome 141+ closes us with
-  // sidePanel.close(); older browsers need the document to close itself.
+  // The new-chat key: this chat is finished; the bar comes up for the next (core/main.ts).
   useEffect(() => {
-    const onMessage = (raw: unknown) => {
-      const msg = raw as { type?: string; windowId?: number };
-      if (msg?.type !== 'panel:close') return;
-      if (msg.windowId !== undefined && windowId !== null && msg.windowId !== windowId) return;
-      window.close();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== 'o' || !e.shiftKey || !(MAC ? e.metaKey : e.ctrlKey) || e.altKey) return;
+      e.preventDefault();
+      void send({ type: 'chat:new' });
     };
-    browser.runtime.onMessage.addListener(onMessage);
-    return () => browser.runtime.onMessage.removeListener(onMessage);
-  }, [windowId]);
+    addEventListener('keydown', onKey);
+    return () => removeEventListener('keydown', onKey);
+  }, []);
 
   const setDraft = useCallback(
     (text: string) => {
@@ -144,7 +151,7 @@ export function Panel() {
 
   // A new selection: the default prompt goes in the box (empty unless the
   // student set one) and the cursor goes after it. Sending straight away,
-  // when settings ask for it, is the background's job.
+  // when settings ask for it, is the core's job.
   useEffect(() => {
     if (!newest || !settings || greeted.current.has(newest)) return;
     greeted.current.add(newest);
@@ -189,14 +196,31 @@ export function Panel() {
     return () => clearTimeout(timer);
   }, [incoming, landed]);
 
+  // The chat follows what comes in (an answer streaming, a new selection),
+  // unless the student scrolled up to read: then it stays where they are
+  // until they scroll back down. A new chat, or a question they ask, follows again.
   const last = items.at(-1);
+  const following = useRef(true);
+  const followBottom = useCallback(() => {
+    const thread = threadRef.current;
+    if (thread && following.current) thread.scrollTo({ top: thread.scrollHeight });
+  }, []);
   useEffect(() => {
-    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
-  }, [chatId, items.length, last?.kind === 'assistant' ? last.text : '', !!incoming]);
+    const thread = threadRef.current;
+    if (!thread) return;
+    const onScroll = () => (following.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < FOLLOW_SLACK_PX);
+    thread.addEventListener('scroll', onScroll, { passive: true });
+    return () => thread.removeEventListener('scroll', onScroll);
+  }, []);
+  useEffect(() => {
+    following.current = true;
+  }, [chatId]);
+  useEffect(followBottom, [followBottom, chatId, items.length, last?.kind === 'assistant' ? last.text : '', !!incoming]);
 
   const ask = useCallback(
     (question: string) => {
       if (!askable || !chatId || busy) return;
+      following.current = true;
       void send({ type: 'chat:send', chatId, question });
       setDraft('');
     },
@@ -214,7 +238,14 @@ export function Panel() {
   );
 
   const stop = () => chatId && void send({ type: 'chat:stop', chatId });
-  const retry = () => chatId && void send({ type: 'chat:retry', chatId });
+  /** Asks the latest question again: as it was, or as edited. */
+  const retry = (question?: string) => {
+    if (!chatId) return;
+    following.current = true;
+    void send({ type: 'chat:retry', chatId, ...(question !== undefined ? { question } : {}) });
+  };
+  // The latest question can be edited or asked again while nothing but its answer follows it (engine.ts).
+  const redoable = !busy && last?.kind === 'assistant' && items.at(-2)?.kind === 'user' ? items.at(-2)!.id : null;
   const toggleTemporary = () => {
     if (windowId !== null) void send({ type: 'chat:temporary', windowId, on: !temporary });
   };
@@ -235,11 +266,9 @@ export function Panel() {
   return (
     <div className="panel" data-temporary={temporary ? 'true' : 'false'} data-chat={chatId ?? ''}>
       <header className="topbar">
-        {SURFACE.ownWindow && (
-          <button type="button" className="icon" title="Close (finishes the chat)" aria-label="Close" data-testid="close" onClick={() => window.close()}>
-            <Icon name="close" />
-          </button>
-        )}
+        <button type="button" className="icon" title="Close (finishes the chat)" aria-label="Close" data-testid="close" onClick={() => window.close()}>
+          <Icon name="close" />
+        </button>
         <button type="button" className="icon" aria-label="Chats" title="Chats" data-testid="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
           <Icon name="menu" />
         </button>
@@ -292,18 +321,21 @@ export function Panel() {
                   />
                 );
               case 'user':
-                return (
-                  <div key={item.id} className="turn user">
-                    <div className="turn-text">{item.text}</div>
-                  </div>
-                );
+                return <Question key={item.id} text={item.text} redo={item.id === redoable ? retry : undefined} />;
               case 'assistant':
                 return (
                   <div key={item.id} className="turn assistant" data-streaming={item.streaming ? 'true' : 'false'}>
                     {item.error ? (
-                      <ErrorTurn item={item} last={item === last} onRetry={retry} />
+                      <ErrorTurn item={item} last={item === last} onRetry={() => retry()} />
                     ) : (
-                      <Answer text={item.text} streaming={!!item.streaming} />
+                      <>
+                        <Answer text={item.text} streaming={!!item.streaming} onPaced={followBottom} />
+                        {!item.streaming && item.text.trim() && (
+                          <div className="turn-actions">
+                            <CopyButton text={splitWhatIRead(item.text).body} what="answer" />
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 );
@@ -316,7 +348,7 @@ export function Panel() {
         <Notices
           // A new chat, or the panel shown again, brings back notices that went by themselves.
           key={`${chatId ?? ''}:${shown}`}
-          lasts={SURFACE.noticeMs}
+          lasts={NOTICE_MS}
           settings={settings}
           keys={keys}
           status={status}
@@ -359,7 +391,7 @@ export function Panel() {
             disabled={!askable}
           />
           <div className="composer-row">
-            <span className="composer-hint">Shift + Enter for a new line</span>
+            <span className="composer-hint">Shift + Enter for a new line · {NEW_CHAT_KEY} new chat</span>
             {settings && <ModelPicker settings={settings} keys={keys} />}
             {busy ? (
               <button type="button" className="send stop" aria-label="Stop" title="Stop" onClick={stop}>
@@ -375,6 +407,133 @@ export function Panel() {
       </div>
     </div>
   );
+}
+
+/**
+ * A question, in a rounded bubble, with what can be done with it under it:
+ * copy, and on the latest question (`redo`), edit it or ask it again, which
+ * replaces it and its answer.
+ */
+function Question({ text, redo }: { text: string; redo?: (question?: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(text);
+  const box = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    if (!editing || !box.current) return;
+    box.current.style.height = 'auto';
+    box.current.style.height = `${box.current.scrollHeight}px`;
+  }, [editing, draft]);
+  useEffect(() => {
+    if (!editing) return;
+    const el = box.current;
+    el?.focus();
+    el?.setSelectionRange(el.value.length, el.value.length);
+  }, [editing]);
+  if (editing && redo) {
+    const done = () => {
+      setEditing(false);
+      if (draft.trim() && draft.trim() !== text.trim()) redo(draft.trim());
+    };
+    return (
+      <div className="turn user editing" data-testid="question">
+        <div className="bubble">
+          <textarea
+            ref={box}
+            className="edit-box"
+            value={draft}
+            rows={1}
+            aria-label="Edit your question"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                setEditing(false);
+              } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                done();
+              }
+            }}
+          />
+          <div className="edit-actions">
+            <button type="button" className="secondary" onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+            <button type="button" className="primary" disabled={!draft.trim()} onClick={done} data-testid="edit-send">
+              Send
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="turn user" data-testid="question">
+      <div className="bubble turn-text">{text}</div>
+      <div className="turn-actions">
+        <CopyButton text={text} what="question" />
+        {redo && (
+          <>
+            <button
+              type="button"
+              className="icon"
+              title="Edit"
+              aria-label="Edit question"
+              data-testid="edit"
+              onClick={() => {
+                setDraft(text);
+                setEditing(true);
+              }}
+            >
+              <Icon name="pencil" />
+            </button>
+            <button type="button" className="icon" title="Ask again" aria-label="Ask again" data-testid="retry" onClick={() => redo()}>
+              <Icon name="retry" />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Copies `text`, saying so for a moment. */
+function CopyButton({ text, what }: { text: string; what: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  return (
+    <button
+      type="button"
+      className="icon"
+      title={copied ? 'Copied' : 'Copy'}
+      aria-label={copied ? 'Copied' : `Copy ${what}`}
+      data-testid={`copy-${what}`}
+      onClick={() => void copyText(text).then(setCopied)}
+    >
+      <Icon name={copied ? 'check' : 'copy'} />
+    </button>
+  );
+}
+
+/** Puts text on the clipboard; the older way where a webview offers no Clipboard API (macOS's custom scheme). */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok;
+  }
 }
 
 /** The chat's name in the top bar. A saved chat's name can be clicked to rename it. */
@@ -444,7 +603,7 @@ function Empty({ temporary, shortcut, provider }: { temporary: boolean; shortcut
   return (
     <div className="empty" data-testid="empty">
       <p>{how}</p>
-      <p>Selections from {SURFACE.anywhere} go into this chat. Press ✕ or Escape when you're done.</p>
+      <p>Selections from any app go into this chat. Press ✕ or Escape when you're done, or {NEW_CHAT_KEY} for a new chat.</p>
     </div>
   );
 }

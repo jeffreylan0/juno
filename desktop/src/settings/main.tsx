@@ -1,4 +1,4 @@
-/** The settings window: the extension's settings page, with the app's own sections (surface.tsx), as a card (card.ts). */
+/** The settings window (Options.tsx), as a card (card.ts). */
 import '../platform/install';
 import React from 'react';
 import ReactDOM from 'react-dom/client';

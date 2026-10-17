@@ -1,11 +1,11 @@
 # Accounts, cloud storage and subscriptions: setup
 
-Everything on the coding side is built: sign-in (Google, or a code sent by email), the cloud copy of chats, hosted answers, plans and Stripe billing, the account dashboard in Settings, in the extension and the app alike. What remains is setting up the services below, in this order. Builds made without these settings have no accounts at all: no Account section, no `identity` permission, nothing sent anywhere but the AI the student picks.
+Everything on the coding side is built: sign-in (Google, or a code sent by email), the cloud copy of chats, hosted answers, plans and Stripe billing, the account dashboard in the app's Settings. What remains is setting up the services below, in this order. Builds made without these settings have no accounts at all: no Account section, nothing sent anywhere but the AI the student picks.
 
 ## How it fits together
 
 ```
- extension / app ──sign in──────────────▶ Supabase Auth ──▶ session token (kept on the computer)
+ app ──sign in──────────────────────────▶ Supabase Auth ──▶ session token (kept on the computer)
         │  ─────my_account, chats, screenshots (row level security)──▶ Supabase database + storage
         │
         └──── token ───▶ Cloudflare Worker ──▶ Anthropic / OpenAI   (hosted answers, counted per plan)
@@ -71,14 +71,11 @@ Supabase only sends a sign-in back to addresses on its list. **Authentication �
 
 | Where | Redirect URL |
 | --- | --- |
-| Chrome and Edge (unpacked builds, fixed id `bipacelfiohnnmfkhfhkjblblkediabm`) | `https://bipacelfiohnnmfkhfhkjblblkediabm.chromiumapp.org/**` |
-| Firefox (add-on id `juno@humanbn.com`) | `https://94f56b42902e79bb2dd5fcdeaf698dd23c1b05b6.extensions.allizom.org/**` |
-| Chrome Web Store (once listed) | `https://<store id>.chromiumapp.org/**` |
 | The app (macOS, Windows) | `com.humanbn.juno://auth/callback` |
 
-Use these exact addresses, not a wildcard such as `https://*.chromiumapp.org/**`: a wildcard lets any extension receive your students' sign-in codes. (The app's link is safe to list: sign-in uses PKCE, so a code that reached another program would be useless without the secret the app kept.) To double-check the Firefox one, open `about:debugging` → *Inspect* on the add-on and run `browser.identity.getRedirectURL()`.
+Use this exact address, not a wildcard. It is safe to list: sign-in uses PKCE, so a code that reached another program would be useless without the secret the app kept. If the list still has the retired browser extension's addresses (`…chromiumapp.org/**`, `…extensions.allizom.org/**`), remove them.
 
-In the app, *Continue with Google* opens Google in the student's browser; at the end the browser asks to open Juno, and the app finishes signing in. macOS learns the `com.humanbn.juno://` link from the app bundle (`pnpm desktop:app` or a release build, not `desktop:dev`); Windows registers it when the app first runs.
+In the app, *Continue with Google* opens Google in the student's browser; at the end the browser asks to open Juno, and the app finishes signing in. macOS learns the `com.humanbn.juno://` link from the app bundle (`pnpm app` or a release build, not `pnpm dev`); Windows registers it when the app first runs.
 
 Safari has no `identity` API: there, email codes are the way in.
 
@@ -127,9 +124,9 @@ What happens when:
 - **You refund** a pass in full (Payments → Refund): it ends at once. A subscription refunded in the dashboard is not cancelled by the refund: cancel it there too.
 - **A student deletes their account**: the Worker deletes their Stripe customer first, which ends any subscription at once (no refund), then the account and its cloud copy go. Stripe keeps its own records of past payments, as the law requires.
 
-## 7. Build the apps with accounts
+## 7. Build the app with accounts
 
-Create `extension/.env.local` (gitignored); the app reads the same file:
+Create `.env.local` at the root of the repository (gitignored):
 
 ```bash
 WXT_SUPABASE_URL=https://<ref>.supabase.co
@@ -137,9 +134,7 @@ WXT_SUPABASE_KEY=sb_publishable_...
 WXT_GATEWAY_URL=https://api.<your domain>      # the Worker (step 5)
 ```
 
-Then build as usual (`pnpm --filter extension zip`, `zip:firefox`, `pnpm desktop:build`). The publishable key is public by design; row level security protects each account's data.
-
-Builds with accounts carry the manifest `key` in `extension/brand.ts`, which fixes the Chrome id so Google can send people back. That changes the id once for anyone who loaded an earlier unpacked build: Chrome treats it as a new extension, with empty settings and no chats. Chrome Web Store builds leave the key out (`STORE=1`); the store assigns its own id, whose redirect URL goes on the list in step 4.
+Then build as usual (`pnpm build`). The publishable key is public by design; row level security protects each account's data.
 
 ## 8. Giving an account a plan by hand
 
@@ -168,7 +163,7 @@ Cloud storage copies saved chats and their screenshots both ways; temporary chat
 
 ## 10. Before launch
 
-- **Legal**: privacy policy (what is stored, where, for how long; who processes it: Supabase, Cloudflare, Stripe, Anthropic, OpenAI), terms of service with the refund policy, and 13+ in the terms (COPPA); a data agreement path if schools buy (FERPA). The Chrome Web Store and AMO data disclosures must match.
+- **Legal**: privacy policy (what is stored, where, for how long; who processes it: Supabase, Cloudflare, Stripe, Anthropic, OpenAI), terms of service with the refund policy, and 13+ in the terms (COPPA); a data agreement path if schools buy (FERPA). Any app store's data disclosures must match.
 - **Abuse**: free accounts are one email away. Before giving `free` any hosted answers, turn on **Authentication → Attack Protection → CAPTCHA** (Cloudflare Turnstile) in Supabase (the apps' sign-in will need to pass the token: a small change, not built yet) and rate limits in the AI Gateway. The Worker already limits each account to 10 hosted answers a minute and refuses requests bigger than a long chat (`worker/src/models.ts`); the database caps what one account may keep in the cloud (`cloud_limits()` in the migration: 5,000 chats, 20,000 screenshots).
 - **Database**: **Project Settings → Database → SSL Configuration**: *Enforce SSL* on. **Network Restrictions**: the apps and the Worker use only the Data API, so allow direct Postgres connections from nowhere (or only your own address while you work). **Advisors → Security Advisor**: run it after every migration; it should flag nothing but the functions signed-in students are meant to call (`my_account`, `push_chats`, `delete_all_chats`, `delete_me`, `has_cloud`, `screenshot_room`), which check `auth.uid()` themselves.
 - **Money**: a monthly spend limit on the Anthropic and OpenAI workspaces the Worker uses; Stripe Radar's default rules on.

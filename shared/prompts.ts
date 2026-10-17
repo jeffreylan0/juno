@@ -94,6 +94,7 @@ export const DEFAULT_MACROS: Macro[] = [
   { id: 'explain', name: 'Explain', prompt: 'Explain this step by step.' },
   { id: 'hint', name: 'Hint', prompt: 'Give me a hint for the next step, not the answer.' },
   { id: 'check', name: 'Check', prompt: 'Check my work and point to the first mistake.' },
+  { id: 'answer', name: 'Answer', prompt: 'Provide the answer first and the explanation after.' },
 ];
 
 /** Default question when the student just selects and asks with an empty box. */

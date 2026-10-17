@@ -1,11 +1,12 @@
 /**
- * Settings and keys. Uses browser.storage.local via WXT's `storage` helper.
+ * Settings and keys, in storage.local through WXT's `storage` helper (the
+ * native core keeps the keys in a private file of their own: store.rs).
  * Chats are not here: see lib/chats.ts (and lib/images.ts for screenshots).
  */
 import { storage } from '@wxt-dev/storage';
 import { DEFAULT_MACROS, DEFAULT_PROMPT, DEFAULT_PROMPTS, type Macro } from '@shared/prompts';
-import type { ModelRef, Provider, SelectionKind } from '@shared/payload';
-import { sealedItem } from './sealed';
+import type { ModelRef, Provider } from '@shared/payload';
+import type { Place } from '@/selection/bar';
 
 export type { Macro } from '@shared/prompts';
 
@@ -18,11 +19,11 @@ export type { Macro } from '@shared/prompts';
 export type SendBehavior = 'prefill' | 'auto';
 
 /** How many saved chats this computer keeps; the oldest goes first. */
-export const CHAT_LIMITS = [10, 25, 50, 100] as const;
+export const CHAT_LIMITS = [1, 5, 10, 25, 50, 100] as const;
 export const DEFAULT_CHAT_LIMIT = 10;
 
 /** Bumped when a default changes in a way stored settings must pick up. */
-export const SETTINGS_VERSION = 4;
+export const SETTINGS_VERSION = 5;
 
 /**
  * Where hosted plans are served from. A build setting, not a student one: it
@@ -49,8 +50,10 @@ export interface Settings {
   adjustBox: boolean;
   /** Saved chats kept on this computer, one of CHAT_LIMITS. */
   chatLimit: number;
-  /** Hostnames where the shortcut does nothing (exams, private portals). */
-  blockedSites: string[];
+  /** Where the bar sits: the outer edge of a cell of a 3×3 grid of the screen. */
+  barPlace: Place;
+  /** Where the panel opens, the same way. */
+  panelPlace: Place;
   /**
    * Copy saved chats to the signed-in account (account/sync.ts). Only does
    * anything for accounts given cloud storage; off until the student turns it on.
@@ -70,7 +73,8 @@ export const DEFAULT_SETTINGS: Settings = {
   sendBehavior: 'prefill',
   adjustBox: false,
   chatLimit: DEFAULT_CHAT_LIMIT,
-  blockedSites: [],
+  barPlace: 'bottom-center',
+  panelPlace: 'top-right',
   cloudSync: false,
   localBaseUrl: 'http://localhost:11434/v1',
   localModel: 'qwen2.5vl:7b',
@@ -91,14 +95,17 @@ export const settingsItem = storage.defineItem<Settings>('local:settings', {
 });
 
 /**
- * The selection mode last picked from the bar's chips. Not a setting: the
- * shortcut icon simply starts where the student left off, the way screenshot
- * tools remember their last mode. Box until a chip says otherwise.
+ * The size the student last gave the panel by hand (panel/fit.ts), which it
+ * opens at from then on (core/main.ts), instead of growing with its chat.
+ * Not a setting; settings can forget it.
  */
-export const lastKindItem = storage.defineItem<SelectionKind>('local:lastSelectionKind', { fallback: 'box' });
+export interface PanelSize {
+  width: number;
+  height: number;
+}
+export const panelSizeItem = storage.defineItem<PanelSize | null>('local:panelSize', { fallback: null });
 
-/** Sealed at rest in the extension (lib/sealed.ts): content scripts can read storage.local. */
-export const keysItem = sealedItem<Keys>('local:keys', { anthropic: '', openai: '', session: '' });
+export const keysItem = storage.defineItem<Keys>('local:keys', { fallback: { anthropic: '', openai: '', session: '' } });
 
 export async function getSettings(): Promise<Settings> {
   return migrateSettings(await settingsItem.getValue());
@@ -117,6 +124,7 @@ export async function getSettings(): Promise<Settings> {
  * being a setting.
  * v4: every selection is a screenshot, so "ask right away, screenshots only"
  * is simply "ask right away".
+ * v5: an Answer macro joins the defaults, added to macros that lack one.
  */
 export function migrateSettings(stored: unknown): Settings {
   const s = (stored && typeof stored === 'object' ? stored : {}) as Partial<Settings> & {
@@ -137,17 +145,27 @@ export function migrateSettings(stored: unknown): Settings {
   if ((s.version ?? 1) < 3) {
     if (s.defaultPrompt === undefined || s.defaultPrompt === V2_DEFAULT_PROMPT) merged.defaultPrompt = '';
   }
+  if ((s.version ?? 1) < 5 && Array.isArray(s.macros)) {
+    const answer = DEFAULT_MACROS.find((m) => m.id === 'answer')!;
+    const has = (m: Macro) => m.id === answer.id || m.name.trim().toLowerCase() === 'answer' || m.prompt.trim() === answer.prompt;
+    if (!s.macros.some(has)) merged.macros = [...s.macros, { ...answer }];
+  }
   if ((merged.sendBehavior as string) === 'auto-box') merged.sendBehavior = 'auto';
+  if (!isPlace(merged.barPlace)) merged.barPlace = DEFAULT_SETTINGS.barPlace;
+  if (!isPlace(merged.panelPlace)) merged.panelPlace = DEFAULT_SETTINGS.panelPlace;
   merged.macros = sanitizeMacros(merged.macros);
   if (!(CHAT_LIMITS as readonly number[]).includes(merged.chatLimit)) merged.chatLimit = DEFAULT_CHAT_LIMIT;
   merged.version = SETTINGS_VERSION;
-  // Settings that no longer exist: the bar remembers the last mode used
-  // (lastKindItem); the panel always opens with the first selection; usage
-  // lines were never offered.
+  // Settings that no longer exist: the panel always opens with the first
+  // selection; usage lines were never offered; blocked sites were for web
+  // pages.
   const loose = merged as unknown as Record<string, unknown>;
-  for (const gone of ['prompts', 'defaultMode', 'gatewayUrl', 'defaultSelectionKind', 'panelOpen', 'showUsage']) delete loose[gone];
+  for (const gone of ['prompts', 'defaultMode', 'gatewayUrl', 'defaultSelectionKind', 'panelOpen', 'showUsage', 'blockedSites']) delete loose[gone];
   return merged;
 }
+
+const PLACES = new Set(['top', 'middle', 'bottom'].flatMap((row) => ['left', 'center', 'right'].map((col) => `${row}-${col}`)));
+export const isPlace = (v: unknown): v is Place => typeof v === 'string' && PLACES.has(v);
 
 /** What the box used to be prefilled with; replaced only if left unchanged. */
 const V2_DEFAULT_PROMPT = 'Explain this step by step.';
@@ -215,25 +233,3 @@ export function shouldAutoSend(settings: Settings): boolean {
   return settings.sendBehavior === 'auto';
 }
 
-/**
- * A blocked-sites entry as a hostname, whatever was typed: a pasted URL, a
- * leading "*." or "www.", capitals, a trailing dot. Empty if there is none.
- */
-export function siteOf(entry: string): string {
-  let host = entry.trim().toLowerCase();
-  try {
-    if (/^[a-z][a-z0-9+.-]*:\/\//.test(host)) host = new URL(host).hostname;
-  } catch {
-    // Not a URL after all: read as a name.
-  }
-  return host.split('/')[0]!.replace(/^\*\./, '').replace(/^www\./, '').replace(/\.$/, '');
-}
-
-/** Whether a page's host is a blocked site: the site itself or anything under it (exam.example.edu blocks a.exam.example.edu). */
-export function isBlockedHost(host: string, blocked: readonly string[]): boolean {
-  const h = host.toLowerCase().replace(/\.$/, '');
-  return blocked.some((entry) => {
-    const site = siteOf(entry);
-    return !!site && (h === site || h.endsWith(`.${site}`));
-  });
-}

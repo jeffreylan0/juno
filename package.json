@@ -2,6 +2,7 @@
   "name": "selection-ai",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "description": "Juno: a desktop app to draw a box or any shape around something on screen and ask Claude or ChatGPT about exactly that.",
   "packageManager": "pnpm@10.28.0",
   "engines": {

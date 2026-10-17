@@ -5,7 +5,7 @@
  * be fake: placeholder answers, no key, a key the vendor rejects, or a vendor
  * (or local server) that cannot be reached — "disconnected". Checking costs
  * nothing: the vendors' model lists are free, and a local server answers
- * /models. The background runs the check (it holds the keys and makes every
+ * /models. The core runs the check (it holds the keys and makes every
  * network call), keeps the result in storage.session for a minute, and
  * updates it from real answers too: an answer that arrives proves the
  * connection, one that fails to connect disproves it.

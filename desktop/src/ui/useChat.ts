@@ -1,7 +1,7 @@
 /**
  * The panel's view of chats: which one this window shows, its contents, the
  * menu's list, and the AI's status — all read from storage and kept live by
- * storage change events. The background is the only writer.
+ * storage change events. The core is the only writer.
  */
 import { useEffect, useRef, useState } from 'react';
 import { INDEX_KEY, chatKey, getChat, listChats, type Chat, type ChatSummary } from '@/lib/chats';
@@ -12,13 +12,10 @@ import { STATUS_KEY, type AiStatus } from '@/lib/status';
 
 type Changes = Record<string, { newValue?: unknown }>;
 
-/** A worker left alone for 30 s is stopped; a message on the port keeps it up. */
-const PING_MS = 20_000;
-
 /**
  * The panel's session: which window it is in, and the chat that window
- * shows. Holding the port open is what tells the background a panel is open;
- * its closing (the panel's X, the browser's, the bar's) is what ends the chat.
+ * shows. Holding the port open is what tells the core the panel is there;
+ * its closing (the page crashed or reloaded) ends the chat.
  */
 export function usePanelSession(): { windowId: number | null; current: Current | null } {
   const [windowId, setWindowId] = useState<number | null>(null);
@@ -38,15 +35,11 @@ export function usePanelSession(): { windowId: number | null; current: Current |
     const connect = () => {
       if (!alive || wid === undefined) return;
       const reconnecting = latest.current;
-      try {
-        port = browser.runtime.connect({ name: PANEL_PORT }) as unknown as chrome.runtime.Port;
-      } catch {
-        return; // the extension was reloaded; this page is on its way out
-      }
+      port = browser.runtime.connect({ name: PANEL_PORT }) as unknown as chrome.runtime.Port;
       port.onMessage.addListener((msg: { type?: string }) => {
         if (msg?.type === 'ready' && wid !== undefined) void getCurrent(wid).then(update);
       });
-      // The worker was stopped or restarted: say hello again, keeping this chat.
+      // The core reloaded: say hello again, keeping this chat.
       port.onDisconnect.addListener(() => {
         if (alive) setTimeout(connect, 150);
       });
@@ -68,13 +61,6 @@ export function usePanelSession(): { windowId: number | null; current: Current |
         connect();
       });
     }, 0);
-    const ping = setInterval(() => {
-      try {
-        port?.postMessage({ type: 'ping' } satisfies PanelPortMsg);
-      } catch {
-        /* reconnecting */
-      }
-    }, PING_MS);
 
     const onChanged = (changes: Changes, area: string) => {
       if (area !== 'session' || wid === undefined || !(currentKey(wid) in changes)) return;
@@ -84,7 +70,6 @@ export function usePanelSession(): { windowId: number | null; current: Current |
     return () => {
       alive = false;
       clearTimeout(start);
-      clearInterval(ping);
       browser.storage.onChanged.removeListener(onChanged);
       port?.disconnect();
     };

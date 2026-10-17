@@ -1,6 +1,6 @@
 /**
  * Cloud copies of saved chats, for accounts with cloud storage that turned it
- * on (Settings.cloudSync). Runs in the background, which is the only writer.
+ * on (Settings.cloudSync). Runs in the core, which is the only writer.
  *
  * This computer comes first: chats are read and written here as always, and
  * copied up and down behind the scenes.
@@ -77,7 +77,7 @@ const RETRY_MS = 60_000;
 const ENTITLEMENT_TTL_MS = 10 * 60_000;
 
 export interface SyncHooks {
-  /** The background's queue for chat writes, so a download never lands mid-answer. */
+  /** The core's queue for chat writes, so a download never lands mid-answer. */
   serial<T>(fn: () => Promise<T>): Promise<T>;
   /** Chats removed here by the sync (deleted elsewhere, or past the limit): windows showing them move on. */
   gone(ids: string[]): Promise<void>;
@@ -249,7 +249,7 @@ export class ChatSync {
 
   private lastStatus = '';
   private async status(status: SyncStatus): Promise<void> {
-    // Every wake of the worker runs once; an unchanged "off" is not worth a write.
+    // Every start runs once; an unchanged "off" is not worth a write.
     const key = JSON.stringify(status);
     if (key === this.lastStatus) return;
     this.lastStatus = key;

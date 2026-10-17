@@ -1,7 +1,7 @@
 /**
  * Bring-your-own-key provider: direct calls to Anthropic (Messages API, with the
  * direct-browser-access header) and OpenAI (chat.completions) using the key the
- * student typed into Options. The key never leaves the background script.
+ * student typed into settings. The key never leaves the core window.
  *
  * Neither vendor trains on API traffic by default. What each keeps, and what
  * a temporary chat changes, is noted at each call below.
@@ -39,7 +39,7 @@ export function anthropicHeaders(key: string): Record<string, string> {
   return {
     'x-api-key': key,
     'anthropic-version': ANTHROPIC_VERSION,
-    // Required for calls made from a browser extension; the key is the user's own.
+    // Required for calls made from a web page (the app's windows are); the key is the user's own.
     'anthropic-dangerous-direct-browser-access': 'true',
   };
 }

@@ -1,18 +1,17 @@
-//! What the extension keeps in `browser.storage` and IndexedDB, kept by the
-//! app instead, in one place every window shares:
+//! What the web code keeps in `browser.storage` (desktop/src/platform), and
+//! the screenshots, in one place every window shares:
 //!
 //! - `local`: one JSON file per key under `<store>/local/`, read into
 //!   memory at start. Except the API keys and the account session (`keys`,
 //!   `account`), which go together into one file only this user can read,
-//!   `<store>/secrets.json` — the protection the browser gives the
-//!   extension's own storage.
+//!   `<store>/secrets.json`.
 //!
 //!   Not the system keychain: macOS ties a keychain item to the exact build
 //!   that made it, so every new build (and every development build) had to
 //!   ask for the keychain password, and once refused, asked again at every
 //!   read. Signed with a Developer ID, the app could go back to it.
 //! - `session`: memory only, gone when the app quits — temporary chats and
-//!   their screenshots never touch the disk, as in the extension.
+//!   their screenshots never touch the disk.
 //! - screenshots of saved chats: files under `<store>/images/<chat id>/`.
 //!
 //! `<store>` is `store/` in the app's data folder (on Linux WebKitGTK keeps

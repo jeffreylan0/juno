@@ -105,8 +105,8 @@ describe('signing in', () => {
     expect((await sessionItem.getValue())?.accessToken).toBe(s.accessToken);
   });
 
-  it('signs in with Google through the browser’s own window (PKCE), back on the extension’s redirect URL', async () => {
-    const redirect = 'https://bipacelfiohnnmfkhfhkjblblkediabm.chromiumapp.org/';
+  it('signs in with Google in the browser (PKCE), back on the app’s link', async () => {
+    const redirect = 'com.humanbn.juno://auth/callback';
     const identity = {
       getRedirectURL: () => redirect,
       launchWebAuthFlow: vi.fn(async ({ url, interactive }: { url: string; interactive: boolean }) => {

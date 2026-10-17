@@ -1,7 +1,7 @@
 /**
  * Freeform (lasso) selection: draw any closed shape around what you want to
  * ask about. The AI gets the shape's bounding box with everything outside
- * the outline blanked (see capture.ts), so a neighbouring diagram or an
+ * the outline blanked (see src-tauri/src/crop.rs), so a neighbouring diagram or an
  * answer key beside the problem cannot leak into the question.
  *
  * With adjusting on (the same setting as a box's), letting go keeps the

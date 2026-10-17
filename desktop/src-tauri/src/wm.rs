@@ -1,16 +1,16 @@
 //! The app's four windows.
 //!
 //! - `core`: hidden, made at start and kept for the app's life. It runs the
-//!   extension's background logic (desktop/src/core): the chat queue, answers
-//!   and the cloud copy.
+//!   chats (desktop/src/core): the write queue, answers and the cloud copy.
 //! - `overlay`: transparent, over the whole display under the pointer, above
 //!   everything (full-screen apps included). It draws the bar and the
 //!   selection. While a selection is being made it takes every click; while
 //!   the bar waits, clicks go through to the app beneath except on the bar
 //!   and its tooltips (`passthrough`).
-//! - `panel`: the answer panel, a floating card at the top right of the
-//!   display the selection was made on, most of the screen tall and growing
-//!   with its chat. Made hidden at start and kept: a selection only has to
+//! - `panel`: the answer panel, a floating card at the edge of the display
+//!   the selection was made on that the student picked (top right unless
+//!   they say otherwise), most of the screen tall and growing with its chat,
+//!   smoothly; or as big as they last made it. Made hidden at start and kept: a selection only has to
 //!   show it, never wait for it to load. Closing it hides it and finishes
 //!   the chat, as ✕ on Chrome's side panel does.
 //! - `settings`: the settings page, a card in the middle of the screen. It
@@ -22,6 +22,7 @@
 //! hidden, so the system rounds them and draws their shadow; on Windows
 //! windows without one, which Windows 11 rounds.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -29,7 +30,7 @@ use std::time::Duration;
 use tauri::utils::config::BackgroundThrottlingPolicy;
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-use crate::geometry::{self, Display, Placement, Rect, Space};
+use crate::geometry::{self, Display, Place, Placement, Rect, Row, Space};
 
 pub const CORE: &str = "core";
 pub const OVERLAY: &str = "overlay";
@@ -59,6 +60,8 @@ pub struct OverlayState {
     /// The pointer when the student scrolled over an armed selection: the
     /// scroll goes to the app beneath until the pointer moves from here.
     pub scroll_anchor: Option<(f64, f64)>,
+    /// Where the panel was last opened (the setting), which way it grows.
+    pub panel_place: Place,
 }
 
 pub type SharedOverlay = Arc<Mutex<OverlayState>>;
@@ -187,9 +190,11 @@ pub fn show_overlay(app: &AppHandle, state: &SharedOverlay, focus: bool) -> taur
     {
         let mut s = state.lock().unwrap();
         s.visible = true;
-        s.display = Some(display);
+        s.display = Some(display.clone());
         s.main_scale = scale;
     }
+    // Where the menu bar, Dock or taskbar are, so the bar stays inside them.
+    let _ = app.emit_to(OVERLAY, "overlay:insets", display.insets(Space::native()));
     window.show()?;
     if focus {
         window.set_focus()?;
@@ -286,16 +291,23 @@ pub fn make_panel(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 }
 
 /// Shows the panel, or brings it forward. Coming back from hidden, it goes
-/// to the top right of the display the selection is on (the overlay's, or
-/// the pointer's), most of that display tall. `focus` gives it the keyboard,
-/// so the student can type a question straight away.
-pub fn open_panel(app: &AppHandle, state: &SharedOverlay, focus: bool) -> tauri::Result<()> {
-    let display = state.lock().unwrap().display.clone().or_else(|| display_under_pointer(app).map(|(d, _)| d));
+/// to `at` (the setting) on the display the selection is on (the overlay's,
+/// or the pointer's): `size` if the student gave it one, else most of that
+/// display tall. `focus` gives it the keyboard, so the student can type a
+/// question straight away.
+pub fn open_panel(app: &AppHandle, state: &SharedOverlay, focus: bool, at: Place, size: Option<(f64, f64)>) -> tauri::Result<()> {
+    let display = {
+        let mut s = state.lock().unwrap();
+        s.panel_place = at;
+        s.display.clone()
+    }
+    .or_else(|| display_under_pointer(app).map(|(d, _)| d));
     unhide(app);
     let window = make_panel(app)?;
     if !window.is_visible().unwrap_or(false) {
         if let Some(d) = &display {
-            place(&window, d.panel_placement(Space::native(), PANEL_WIDTH, d.panel_height()))?;
+            let (w, h) = size.unwrap_or((PANEL_WIDTH, d.panel_height()));
+            place(&window, d.panel_placement(Space::native(), w, h, at))?;
         }
     }
     window.show()?;
@@ -305,27 +317,68 @@ pub fn open_panel(app: &AppHandle, state: &SharedOverlay, focus: bool) -> tauri:
     Ok(())
 }
 
+/// Bumped by every panel resize, so an animation a newer one replaced stops.
+static PANEL_TURN: AtomicU64 = AtomicU64::new(0);
+/// How long the panel takes to grow or shrink to a new height.
+const PANEL_ANIMATION: Duration = Duration::from_millis(180);
+const PANEL_STEPS: u32 = 12;
+
 /// The panel's page asks for the height its chat needs (CSS pixels): it
-/// grows, or shrinks, downwards from where its top is, never past the
+/// grows, or shrinks, away from the edge it was placed at (down from the
+/// top, up from the bottom, both ways from the middle), never past the
 /// usable area of its display less the margin, nor below its starting
-/// height. Says the height it got.
-pub fn fit_panel(app: &AppHandle, height: f64) -> tauri::Result<f64> {
+/// height. Smoothly unless `animate` is off (reduced motion). Says the
+/// height it will have.
+pub fn fit_panel(app: &AppHandle, state: &SharedOverlay, height: f64, animate: bool) -> tauri::Result<f64> {
     let Some(window) = app.get_webview_window(PANEL) else { return Ok(height) };
+    let Some(monitor) = window.current_monitor()? else { return Ok(height) };
     let scale = window.scale_factor()?;
     let size = window.inner_size()?.to_logical::<f64>(scale);
-    let top = window.outer_position()?.to_logical::<f64>(scale).y;
-    let (limit, least) = match window.current_monitor()? {
-        Some(m) => {
-            let (k, work) = (m.scale_factor(), m.work_area());
-            let bottom = (work.position.y as f64 + work.size.height as f64) / k - geometry::CARD_MARGIN;
-            (bottom - top, work.size.height as f64 / k * geometry::PANEL_SHARE)
-        }
-        None => (height, PANEL_HEIGHT),
+    let pos = window.outer_position()?.to_logical::<f64>(scale);
+    let (k, area) = (monitor.scale_factor(), monitor.work_area());
+    let work = Rect::new(area.position.x as f64 / k, area.position.y as f64 / k, area.size.width as f64 / k, area.size.height as f64 / k);
+    let m = geometry::CARD_MARGIN;
+    let (lo, hi) = (work.y + m, work.y + work.height - m);
+    let row = state.lock().unwrap().panel_place.row;
+    // How far it may reach, keeping the edge it hangs from where it is.
+    let limit = match row {
+        Row::Top => hi - pos.y,
+        Row::Bottom => pos.y + size.height - lo,
+        Row::Middle => hi - lo,
     };
-    let h = height.max(least).min(limit).round();
-    if (h - size.height).abs() >= 1.0 {
-        window.set_size(LogicalSize::new(size.width, h))?;
+    let h = height.max(work.height * geometry::PANEL_SHARE).min(limit).max(1.0).round();
+    if (h - size.height).abs() < 1.0 {
+        return Ok(h);
     }
+    let y = match row {
+        Row::Top => pos.y,
+        Row::Bottom => pos.y + size.height - h,
+        Row::Middle => (pos.y + size.height / 2.0 - h / 2.0).clamp(lo, (hi - h).max(lo)),
+    };
+    let turn = PANEL_TURN.fetch_add(1, Ordering::SeqCst) + 1;
+    let (x, width, from) = (pos.x, size.width, (pos.y, size.height));
+    let step = move |t: f64| {
+        // Ease out: quick to start, settling gently.
+        let e = 1.0 - (1.0 - t).powi(3);
+        let (sy, sh) = (from.0 + (y - from.0) * e, from.1 + (h - from.1) * e);
+        if (y - from.0).abs() >= 1.0 {
+            let _ = window.set_position(LogicalPosition::new(x, sy));
+        }
+        let _ = window.set_size(LogicalSize::new(width, sh));
+    };
+    if !animate {
+        step(1.0);
+        return Ok(h);
+    }
+    thread::spawn(move || {
+        for i in 1..=PANEL_STEPS {
+            if PANEL_TURN.load(Ordering::SeqCst) != turn {
+                return;
+            }
+            step(f64::from(i) / f64::from(PANEL_STEPS));
+            thread::sleep(PANEL_ANIMATION / PANEL_STEPS);
+        }
+    });
     Ok(h)
 }
 

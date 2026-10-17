@@ -204,6 +204,7 @@ export interface Chat {
   title: string;
   temporary?: boolean;
   items: Array<{
+    id: string;
     kind: string;
     text?: string;
     error?: string;

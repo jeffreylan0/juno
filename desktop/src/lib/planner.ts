@@ -1,13 +1,13 @@
 /**
  * Builds a Plan from a selection: exactly what the student selected, nothing
- * the extension read off the page on its own.
+ * the app read off the screen on its own.
  *
  *   box      → the screenshot crop, and only the crop. Reading it (text,
  *              maths, tables) is the model's job: every model we use reads
  *              images well, and page text scraped from under a box came out
  *              garbled on real layouts.
  *   freeform → the crop of the shape's bounding box, with everything outside
- *              the outline blanked before it leaves the browser (capture.ts).
+ *              the outline blanked before it leaves the app (src-tauri/src/crop.rs).
  *
  * This departs from the plan's "cheapest exact form" planner, by the product
  * owner's call. The eval keeps a `planner` route (eval/lib.ts) so the
@@ -28,7 +28,7 @@ export interface PlanInput {
   selection: SelectionDoneMsg;
   mode: Mode;
   question?: string;
-  /** Crop of the selection, when the background captured one. */
+  /** Crop of the selection, when the core captured one. */
   capture?: CaptureResult;
 }
 

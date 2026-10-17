@@ -2,7 +2,7 @@
  * Plans and payment, through the Worker (worker/src/billing.ts): what is on
  * offer, Stripe Checkout to buy, Stripe's customer portal to change the card,
  * see invoices or cancel. Payment pages open in the student's browser; no
- * card details ever pass through the extension or the app.
+ * card details ever pass through the app.
  *
  * What the account then gets arrives the usual way: Stripe tells the Worker,
  * the Worker the database, and refreshEntitlement() reads it.

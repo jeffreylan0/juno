@@ -25,8 +25,6 @@ import type { AccountState } from '@/ui/useAccount';
 
 type Save = (patch: Partial<Settings>) => Promise<void>;
 
-/** Google sign-in needs the identity API, which Safari does not have. */
-const GOOGLE = typeof browser !== 'undefined' && !!(browser as { identity?: { launchWebAuthFlow?: unknown } }).identity?.launchWebAuthFlow;
 
 export function AccountSection({ account, settings, save }: { account: AccountState; settings: Settings; save: Save }) {
   if (!ACCOUNTS || !account.ready) return null;
@@ -80,11 +78,9 @@ function SignIn() {
       <p className="help">Optional. Sign in for a plan with hosted answers (no key needed) and your chats in the cloud.</p>
       {!sentTo ? (
         <>
-          {GOOGLE && (
-            <button type="button" className="secondary" disabled={!!busy} onClick={google} data-testid="google-sign-in">
-              {busy === 'google' ? 'Waiting for Google…' : 'Continue with Google'}
-            </button>
-          )}
+          <button type="button" className="secondary" disabled={!!busy} onClick={google} data-testid="google-sign-in">
+            {busy === 'google' ? 'Waiting for Google…' : 'Continue with Google'}
+          </button>
           <form className="key-row" onSubmit={onSend}>
             <input
               type="email"

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 
 /**
- * The key that starts a selection, as the browser reports it ("⌥⇧S" on a Mac,
- * "Alt+Shift+S" elsewhere) — read live, because students can rebind it and a
- * clash with another extension leaves it unassigned. Empty when unassigned.
+ * The key that starts a selection, as the app registered it ("⌥⇧S" on a Mac,
+ * "Alt+Shift+S" elsewhere): read live, because students can change it and a
+ * clash with another app leaves it unassigned. Empty when unassigned.
  */
 export function useShortcut(name = '_execute_action'): string {
   const [shortcut, setShortcut] = useState('');
@@ -25,8 +25,8 @@ export function useShortcut(name = '_execute_action'): string {
 const MAC_KEYS: Record<string, string> = { '⌘': 'Command', '⌥': 'Option', '⇧': 'Shift', '⌃': 'Control' };
 
 /**
- * A shortcut the way people say it: "Alt + Shift + S", or on a Mac (where the
- * browser reports "⌥⇧S") "Option + Shift + S", after the keys' own labels.
+ * A shortcut the way people say it: "Alt + Shift + S", or on a Mac (where it
+ * is written "⌥⇧S") "Option + Shift + S", after the keys' own labels.
  */
 export function formatShortcut(shortcut: string): string {
   if (!shortcut) return '';
@@ -39,15 +39,4 @@ export function formatShortcut(shortcut: string): string {
   }
   if (rest) keys.push(rest);
   return keys.join(' + ');
-}
-
-/** Opens the browser's own page for changing extension shortcuts. */
-export function openShortcutSettings(): void {
-  const firefox = (browser as unknown as { commands?: { openShortcutSettings?: () => Promise<void> } }).commands;
-  if (import.meta.env.FIREFOX && firefox?.openShortcutSettings) {
-    void firefox.openShortcutSettings();
-    return;
-  }
-  const url = import.meta.env.EDGE ? 'edge://extensions/shortcuts' : 'chrome://extensions/shortcuts';
-  void browser.tabs.create({ url });
 }

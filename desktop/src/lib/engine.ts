@@ -1,12 +1,11 @@
 /**
- * The chat engine: the part of the background that does not care where it
- * runs. The extension's service worker and the desktop app's hidden core
- * window each own one, and both are the only writer of chats in their world.
+ * The chat engine, owned by the app's hidden core window (core/main.ts), the
+ * only writer of chats.
  *
  * It keeps the one-write-at-a-time queue (`serial`), the answers streaming
- * (one per chat), the cloud copy, and the AI's connection status. What a
- * selection is and how it was captured, which tab or display it came from,
- * and how the bar and the panel are shown are the host's business.
+ * (one per chat), the cloud copy, and the AI's connection status. How a
+ * selection was captured, which display it came from, and how the bar and
+ * the panel are shown are the core's business.
  */
 import type { AskRequest, Attachment, ChatTurn } from '@shared/payload';
 import { deleteAccount } from './account/cloud';
@@ -39,7 +38,7 @@ import {
   type UserItem,
 } from './chats';
 import { addSelection, allCurrent, discardOrphans, onTemporaryDiscarded, replaceGone, type Current } from './current';
-import { deletePartImages, hydrateParts, hydratePlan } from './images';
+import { deletePartImages, hydrateParts } from './images';
 import type { RuntimeMessage, SelectionDoneMsg } from './messages';
 import { buildPlan, type CaptureResult } from './planner';
 import { callModel, type ProviderContext } from './providers';
@@ -75,9 +74,8 @@ export function reply(work: Promise<unknown>, sendResponse: (value: unknown) => 
   return true;
 }
 
-/** The messages the extension's background and the app's core answer alike (ChatEngine.handle). */
+/** The messages the core leaves to the engine (ChatEngine.handle). */
 const SHARED: ReadonlySet<string> = new Set([
-  'plan:get',
   'chat:send',
   'chat:retry',
   'chat:stop',
@@ -112,15 +110,14 @@ export interface KeepInput {
   into: Promise<Current>;
   /** The crop, or undefined for text. A throw becomes the selection's notice. */
   capture: () => Promise<KeptCapture | undefined>;
-  tabId?: number;
 }
 
 const sharedSession = () => (browser.storage as unknown as { session: chrome.storage.StorageArea }).session;
 
 export class ChatEngine {
   /**
-   * Settings, cached, for whatever must be answered before any await (the
-   * extension's toolbar click). Kept fresh by start().
+   * Settings, cached, for whatever must be answered before any await. Kept
+   * fresh by start().
    */
   settings: Settings = DEFAULT_SETTINGS;
   /** Cloud copies of saved chats, for accounts that have them (account/sync.ts). */
@@ -134,8 +131,8 @@ export class ChatEngine {
 
   /**
    * Starts watching settings, keys and the account, tidies what a stopped
-   * run left behind, and starts the cloud copy. Call once, from the host's
-   * main (never at module level: WXT evaluates entrypoints at build time).
+   * run left behind, and starts the cloud copy. Call once, from the core's
+   * main.
    */
   start(): this {
     void getSettings().then((s) => (this.settings = s));
@@ -146,7 +143,7 @@ export class ChatEngine {
         // Picking another model: check the new choice right away.
         if (this.host.panelsOpen() && before !== `${answerChoiceOf(s)} ${s.localBaseUrl}`) void this.aiStatus(true);
         // Keeping fewer chats (the settings page asked first): the oldest go
-        // now. Checked on every change, since a worker that was asleep cannot
+        // now. Checked on every change, since a core that just started cannot
         // tell a lowered limit from the one it just read.
         void this.serial(async () => {
           const dropped = await pruneChats();
@@ -210,21 +207,18 @@ export class ChatEngine {
   }
 
   /**
-   * Answers the messages the extension and the app share: chats, the AI's
-   * status and key checks, the cloud copy, the account. Returns what an
+   * Answers the chat messages: chats, the AI's status and key checks, the
+   * cloud copy, the account. Returns what an
    * onMessage listener returns (true: the reply comes later).
    */
   handle(msg: RuntimeMessage, sendResponse: (value: unknown) => void): true | undefined {
     const serial = <T>(task: () => Promise<T>) => this.serial(task);
     switch (msg.type) {
-      case 'plan:get':
-        void this.planFor(msg.tabId).then(sendResponse);
-        return true;
       case 'chat:send':
         void this.sendChat(msg.chatId, msg.question);
         return;
       case 'chat:retry':
-        void this.retryChat(msg.chatId);
+        void this.retryChat(msg.chatId, msg.question);
         return;
       case 'chat:stop':
         this.abortStream(msg.chatId);
@@ -298,11 +292,10 @@ export class ChatEngine {
    * A selection arrived and its screenshot is (being) taken: it is cropped,
    * joins the chat it was made for, and is asked about at once if settings say
    * so. Resolves with that chat, or null if the chat was finished or deleted
-   * meanwhile. Asking waits for the host's `beforeAsk` (the extension offers a
-   * click to open its panel there).
+   * meanwhile.
    */
-  async keepSelection(input: KeepInput, beforeAsk?: () => Promise<void>): Promise<Chat | null> {
-    const { selection: msg, windowId, tabId } = input;
+  async keepSelection(input: KeepInput): Promise<Chat | null> {
+    const { selection: msg, windowId } = input;
     const current = await getSettings();
     let capture: KeptCapture | undefined;
     let notice: string | undefined;
@@ -321,7 +314,7 @@ export class ChatEngine {
     let added: Awaited<ReturnType<typeof addSelection>>;
     try {
       const target = await input.into;
-      added = await this.serial(() => addSelection(windowId, { plan, notice, tabId, into: target }));
+      added = await this.serial(() => addSelection(windowId, { plan, notice, into: target }));
     } catch (err) {
       console.warn('[selection-ai] could not keep the selection', err);
       return null;
@@ -330,24 +323,10 @@ export class ChatEngine {
     const { chat, dropped } = added;
     await this.noteDropped(dropped);
 
-    await beforeAsk?.();
     const usable = !notice && plan.parts.length > 0;
     // Auto-send waits its turn: an answer already streaming is not cut off.
     if (usable && shouldAutoSend(current) && !this.streams.has(chat.id)) void this.sendChat(chat.id, fallbackQuestion(current));
     return chat;
-  }
-
-  /**
-   * The newest selection in the chats open right now — from one tab when a tab
-   * is given — with its screenshots filled back in. For tests and diagnostics.
-   */
-  async planFor(tabId: number | undefined) {
-    const chats = await Promise.all((await allCurrent()).map(([, c]) => getChat(c.chatId)));
-    const newest = chats
-      .flatMap((c) => c?.items ?? [])
-      .filter((i): i is SelectionItem => i.kind === 'selection' && (tabId === undefined || i.tabId === tabId))
-      .sort((a, b) => b.at - a.at)[0];
-    return newest ? await hydratePlan(newest.plan) : null;
   }
 
   /**
@@ -457,21 +436,22 @@ export class ChatEngine {
   }
 
   /**
-   * Try again after a failed answer: the failed question and its error are
-   * dropped and the question is asked afresh — with the same selections, since
-   * they were never answered.
+   * Asks the latest question again (retry), or reworded (`question`: edit):
+   * it and its answer are dropped, and it is asked afresh with the same
+   * selections, which nothing else has answered. Only the latest, and only
+   * while nothing but its answer came after it: nothing else is lost.
    */
-  async retryChat(chatId: string): Promise<void> {
+  async retryChat(chatId: string, question?: string): Promise<void> {
     if (this.streams.has(chatId)) return;
-    const question = await this.serial(async () => {
+    const ask = await this.serial(async () => {
       const chat = await getChat(chatId);
       const answer = chat?.items.at(-1);
       const asked = chat?.items.at(-2);
-      if (!chat || answer?.kind !== 'assistant' || !answer.error || asked?.kind !== 'user') return null;
+      if (!chat || answer?.kind !== 'assistant' || answer.streaming || asked?.kind !== 'user') return null;
       await saveChat({ ...chat, items: chat.items.slice(0, -2) }, { touch: false });
-      return asked.text;
+      return question?.trim() || asked.text;
     });
-    if (question !== null) await this.sendChat(chatId, question);
+    if (ask !== null) await this.sendChat(chatId, ask);
   }
 
   /** A selection taken back before any question carried it. */
@@ -532,7 +512,7 @@ export class ChatEngine {
 
 /** What a selection says when its screenshot could not be taken. */
 function captureNotice(err: unknown): string {
-  // A host can explain itself (the app: permission missing); the extension's crop errors cannot.
+  // The core can explain itself (a permission missing, say).
   const message = (err as { notice?: unknown } | null)?.notice;
   return typeof message === 'string' && message ? message : "Couldn't take a screenshot of that. Try again, or reload the page.";
 }
@@ -542,7 +522,7 @@ async function withPixels(a: Attachment): Promise<Attachment> {
 }
 
 /**
- * An answer left streaming when the worker was stopped mid-answer. It keeps
+ * An answer left streaming when the app quit mid-answer. It keeps
  * whatever text arrived, and is marked stopped so it stops showing a spinner
  * (and, if empty, drops out of the history sent to the model).
  */

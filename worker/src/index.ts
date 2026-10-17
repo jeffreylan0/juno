@@ -140,7 +140,7 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-/** Errors in OpenAI's shape, which the extension already reads. */
+/** Errors in OpenAI's shape, which the app already reads. */
 function error(status: number, message: string, code: string): Response {
   return json({ error: { message, code } }, status);
 }

@@ -34,8 +34,6 @@ import {
   replaceGone,
   setCurrent,
   setTemporary,
-  getBarTab,
-  setBarTab,
   startChat,
   switchTo,
 } from '@/lib/current';
@@ -250,22 +248,18 @@ describe('a chat’s life', () => {
   const W = 7;
 
   it('the first selection starts a chat, and every later one joins it, from any page', async () => {
-    const { chat: first } = (await addSelection(W, { plan: plan('a'), tabId: 1 }))!;
-    const { chat } = await addSelection(W, { plan: plan('b'), tabId: 2 });
+    const { chat: first } = (await addSelection(W, { plan: plan('a') }))!;
+    const { chat } = await addSelection(W, { plan: plan('b') });
     expect(chat.id).toBe(first.id);
     expect(chat.items.map((i) => (i.kind === 'selection' ? i.plan.page.title : ''))).toEqual(['Page a', 'Page b']);
     expect(chat.title).toBe('Page a');
   });
 
   it('✕ finishes the chat: it stays in the menu, and the next selection starts a new one', async () => {
-    const { chat } = await addSelection(W, { plan: plan('a'), tabId: 1 });
-    await addSelection(99, { plan: plan('z'), tabId: 3 });
-    await setBarTab(W, 1);
-    await setBarTab(99, 3);
+    const { chat } = await addSelection(W, { plan: plan('a') });
+    await addSelection(99, { plan: plan('z') });
     await endChat(W);
     expect(await getCurrent(W)).toBeNull();
-    expect(await getBarTab(W)).toBeUndefined(); // the bar is down
-    expect(await getBarTab(99)).toBe(3); // another window's is not
     expect(await getCurrent(99)).not.toBeNull(); // another window's chat is untouched
     expect((await listChats()).map((c) => c.id)).toContain(chat.id);
 
@@ -347,7 +341,7 @@ describe('a chat’s life', () => {
     expect(await memImages()).toEqual([]);
   });
 
-  it('tells the background which temporary chat is going, so its answer can stop', async () => {
+  it('tells the core which temporary chat is going, so its answer can stop', async () => {
     const gone: string[] = [];
     onTemporaryDiscarded((id) => gone.push(id));
     const temp = await setTemporary(W, true);
