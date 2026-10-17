@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyWheel, isScrollable, scrollTargetAt } from '@/entrypoints/content/scroll';
+import { applyWheel, isScrollable, scrollTargetAt } from '@/selection/scroll';
 
 // jsdom has no layout engine and so no elementFromPoint; define one per test.
 function pointsAt(el: Element | null, onCall?: () => void): void {

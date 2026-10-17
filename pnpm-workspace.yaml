@@ -1,15 +1,10 @@
 packages:
-  - extension
-  - shared
-  - eval
-  - worker
   - desktop
+  - shared
+  - worker
+  - eval
 
 # Supply chain: a version must have been public for a day before it is
 # installed (most malicious releases are found and pulled within hours).
 # Install scripts stay off except for packages allowed by name (pnpm 10).
 minimumReleaseAge: 1440
-
-# Fixed upstream but not yet taken by what depends on it (wxt → magicast).
-overrides:
-  source-map-js@<1.2.2: ^1.2.2

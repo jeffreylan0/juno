@@ -1,9 +1,16 @@
 {
-  "extends": "../extension/.wxt/tsconfig.json",
+  "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "jsx": "react-jsx",
-    "types": ["chrome"],
-    "typeRoots": ["../extension/node_modules/@types", "./node_modules/@types"]
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "types": ["chrome", "vite/client"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@shared/*": ["../shared/*"]
+    }
   },
-  "include": ["src/**/*", "../extension/.wxt/wxt.d.ts"]
+  "include": ["src/**/*", "tests/**/*", "*.ts"]
 }

@@ -5,7 +5,7 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 import { BRAND } from '@/brand';
-import type { BarNotice } from '@/entrypoints/content/bar';
+import type { BarNotice } from '@/selection/bar';
 import { formatShortcut } from '@/ui/useShortcut';
 import { browser } from '../platform/install';
 import type { OverlayNotice } from '../core/tips';

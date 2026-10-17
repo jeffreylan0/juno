@@ -4,7 +4,7 @@
  * screenshots) going up and coming down, the newer version winning.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fakeBrowser } from 'wxt/testing/fake-browser';
+import { fakeBrowser } from '@webext-core/fake-browser';
 import type { Plan } from '@shared/payload';
 import { FakeSupabase } from '../support/fake-supabase';
 import {

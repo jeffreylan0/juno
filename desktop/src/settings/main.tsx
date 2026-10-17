@@ -3,8 +3,8 @@ import '../platform/install';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BRAND } from '@/brand';
-import { Options } from '@/entrypoints/options/Options';
-import '@/entrypoints/options/options.css';
+import { Options } from '@/settings/Options';
+import '@/settings/options.css';
 import '../app.css';
 import { cardWindow } from '../card';
 
