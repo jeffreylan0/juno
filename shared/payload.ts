@@ -1,6 +1,5 @@
 /**
- * One payload schema shared by the extension, the app, the Worker and the
- * eval scripts.
+ * One payload schema shared by the app, the Worker and the eval scripts.
  *
  * A Plan is what a selection becomes (lib/planner.ts): its screenshot, with
  * the page it came from. The other kinds of Part (text, LaTeX, table, code)
@@ -9,7 +8,7 @@
  */
 
 /**
- * How the model is briefed. The extension uses `ask`: one general tutor brief,
+ * How the model is briefed. The app uses `ask`: one general tutor brief,
  * with the student's macro (Explain, Hint, Check or their own) carrying what
  * they want in the question itself. The fixed modes stay for the eval, which
  * measures each behaviour on its own.
@@ -144,7 +143,7 @@ export interface AskRequest {
   /**
    * Selections attached to the question being asked now. When this is set
    * (even to []), every turn carries its own selections and plan.parts is not
-   * used; the extension always sets it. When it is absent, plan.parts is the
+   * used; the app always sets it. When it is absent, plan.parts is the
    * one selection of a single-selection conversation (the eval, older callers).
    */
   attachments?: Attachment[];

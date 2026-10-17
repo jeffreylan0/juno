@@ -1,5 +1,5 @@
 /**
- * An in-memory stand-in for the parts of Supabase the extension uses: email
+ * An in-memory stand-in for the parts of Supabase the app uses: email
  * codes, sessions and refreshes (Auth), what an account gets (my_account:
  * the free plan, what was given by hand, what it pays for), the chats table
  * and its functions (supabase/migrations, with the same rules: last write

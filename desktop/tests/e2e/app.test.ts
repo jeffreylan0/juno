@@ -1,6 +1,5 @@
 /**
- * The app end to end: the extension's scenarios that make sense outside a
- * browser, on the real app (harness.ts). Each test gets a fresh app on its
+ * The app end to end, on the real app (harness.ts). Each test gets a fresh app on its
  * own display, over a window of known pixels.
  *
  *   pnpm --filter desktop test:e2e
@@ -137,7 +136,6 @@ it('the bar is compact, its modes in the middle; chats, ghost and gear leave it 
   await app.summon();
   await armed();
   const before = await barLayout();
-  // About half the extension's 640 px.
   expect(before.bar.width).toBeLessThan(340);
   const middle = (r: { left: number; width: number }) => r.left + r.width / 2;
   expect(Math.abs(middle(before.chips) - middle(before.bar))).toBeLessThanOrEqual(1);
@@ -147,8 +145,36 @@ it('the bar is compact, its modes in the middle; chats, ghost and gear leave it 
   await selections(1);
   await waitFor('the panel', async () => (await app.window('panel'))?.visible);
   await waitFor('the bar without them', async () => (await barLayout()).shown.length === 0);
-  const open = await barLayout();
-  expect(Math.abs(middle(open.chips) - middle(open.bar))).toBeLessThanOrEqual(1);
+  // ✕ and the modes, as much room before the one as after the other.
+  const pads = await app.read<{ before: number; after: number }>(
+    'overlay',
+    `(() => {
+      const s = document.querySelector('selection-ai-overlay').shadowRoot;
+      const r = (q) => s.querySelector(q).getBoundingClientRect();
+      return { before: r('.close').left - r('.bar').left, after: r('.bar').right - r('.chips').right };
+    })()`,
+  );
+  expect(Math.abs(pads.before - pads.after)).toBeLessThanOrEqual(1);
+
+  // ✕ on the bar: it goes as it is, never showing chats, ghost and gear again on the way out.
+  await app.eval(
+    'overlay',
+    `(() => {
+      window.__flashed = false;
+      const host = document.querySelector('selection-ai-overlay');
+      const look = () => {
+        const s = host.shadowRoot;
+        if (!host.isConnected) return;
+        if (['.chats', '.ghost', '.gear'].some((q) => s.querySelector(q) && getComputedStyle(s.querySelector(q)).display !== 'none')) window.__flashed = true;
+      };
+      new MutationObserver(look).observe(host.shadowRoot, { subtree: true, attributes: true, childList: true });
+      const frame = () => { look(); if (host.isConnected) requestAnimationFrame(frame); };
+      requestAnimationFrame(frame);
+    })()`,
+  );
+  await app.eval('overlay', bar(`querySelector('.close').click()`));
+  await waitFor('the overlay hidden', async () => !(await app.overlay()).visible);
+  expect(await app.read('overlay', 'window.__flashed')).toBe(false);
 });
 
 it('the chats button on the bar opens the panel on the list of chats, with nothing armed over it', async () => {
@@ -335,6 +361,141 @@ it('asking sends the screenshot to the AI, and the answer streams into the panel
   } finally {
     await model.close();
   }
+});
+
+/** The panel's latest answer, once it has finished. */
+async function answered(after?: string) {
+  return await waitFor('the answer', async () => {
+    const c = await app.currentChat();
+    const last = c?.items.at(-1);
+    return last?.kind === 'assistant' && !last.streaming && last.text && last.id !== after ? c : null;
+  });
+}
+
+it('questions are rounded bubbles: copy any, and edit or retry the latest', async () => {
+  await app.summon();
+  await armed();
+  await box(150, 150, 250, 250);
+  await selections(1);
+  await waitFor('the panel', () => app.read('panel', `!!document.querySelector('[data-testid=selection] img')`));
+  await app.eval('panel', `[...document.querySelectorAll('button.macro')].find((b) => b.textContent === 'Answer').click()`);
+  const first = await answered();
+  const asked = first.items.at(-2)!;
+  expect(asked).toMatchObject({ kind: 'user', text: 'Provide the answer first and the explanation after.' });
+
+  await waitFor('the question in its bubble', () => app.read('panel', `!!document.querySelector('[data-testid=question] .bubble')`));
+  expect(await app.read('panel', `getComputedStyle(document.querySelector('[data-testid=question] .bubble')).borderTopLeftRadius`)).toBe('18px');
+  expect(await app.read('panel', `document.querySelector('[data-testid=question] .bubble').textContent`)).toBe(asked.text);
+  // Copy on the question and on the answer.
+  expect(await app.read('panel', `!!document.querySelector('[data-testid=question] [data-testid=copy-question]')`)).toBe(true);
+  expect(await app.read('panel', `!!document.querySelector('[data-testid=copy-answer]')`)).toBe(true);
+
+  // Retry: the same question again, in place of it and its answer.
+  await app.eval('panel', `document.querySelector('[data-testid=retry]').click()`);
+  const again = await answered(first.items.at(-1)!.id);
+  expect(again.items.filter((i) => i.kind === 'user').map((i) => i.text)).toEqual([asked.text]);
+  expect(again.items.filter((i) => i.kind === 'assistant')).toHaveLength(1);
+
+  // Edit: reworded, it replaces the question and its answer.
+  await waitFor('the edit button', () => app.read('panel', `!!document.querySelector('[data-testid=edit]')`));
+  await app.eval('panel', `document.querySelector('[data-testid=edit]').click()`);
+  await waitFor('the edit box', () => app.read('panel', `!!document.querySelector('.edit-box')`));
+  await app.eval(
+    'panel',
+    `(() => {
+      const box = document.querySelector('.edit-box');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(box, 'Only the answer, please.');
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`,
+  );
+  await app.eval('panel', `document.querySelector('[data-testid=edit-send]').click()`);
+  const edited = await answered(again.items.at(-1)!.id);
+  expect(edited.items.filter((i) => i.kind === 'user').map((i) => i.text)).toEqual(['Only the answer, please.']);
+  expect(edited.items.filter((i) => i.kind === 'assistant')).toHaveLength(1);
+  // The selection is still there, carried by the reworded question.
+  expect(edited.items.filter((i) => i.kind === 'selection')).toHaveLength(1);
+});
+
+it('the new-chat key in the panel finishes the chat and brings the bar up for the next', async () => {
+  await app.summon();
+  await armed();
+  await box(150, 150, 250, 250);
+  const chat = await selections(1);
+  await waitFor('the panel', () => app.read('panel', `!!document.querySelector('[data-testid=selection]')`));
+  await waiting();
+
+  await app.eval('panel', `dispatchEvent(new KeyboardEvent('keydown', { key: 'O', code: 'KeyO', ctrlKey: true, shiftKey: true, bubbles: true }))`);
+  await armed('box');
+  // The old chat is kept in the menu; the panel waits, empty, for the new one.
+  expect((await app.storage('local')).chatIndex).toEqual([expect.objectContaining({ id: chat.id })]);
+  await waitFor('the empty panel', () => app.read('panel', `!!document.querySelector('[data-testid=empty]')`));
+  await box(400, 150, 500, 250);
+  const next = await selections(1);
+  expect(next.id).not.toBe(chat.id);
+});
+
+it('settings place the bar and the panel: the bar at the outer edge of its part, the panel in its corner', async () => {
+  await app.eval('core', `browser.runtime.openOptionsPage('selecting')`);
+  await waitFor('the place pickers', () => app.read('settings', `!!document.querySelector('[data-testid=place-bar]')`), 20_000);
+  expect(await app.read('settings', `document.querySelector('[data-testid=place-bar] [aria-checked=true]').dataset.place`)).toBe('bottom-center');
+  expect(await app.read('settings', `document.querySelector('[data-testid=place-panel] [aria-checked=true]').dataset.place`)).toBe('top-right');
+  await app.eval('settings', `document.querySelector('[data-testid=place-bar] [data-place=top-left]').click()`);
+  await app.eval('settings', `document.querySelector('[data-testid=place-panel] [data-place=bottom-left]').click()`);
+  await waitFor('the places saved', async () => {
+    const s = (await app.storage('local')).settings as { barPlace?: string; panelPlace?: string } | undefined;
+    return s?.barPlace === 'top-left' && s.panelPlace === 'bottom-left';
+  });
+  await app.eval('settings', 'window.close()');
+  await waitFor('settings closed', async () => !(await app.window('settings'))?.visible);
+
+  await app.summon();
+  await armed();
+  const at = await app.read<{ left: number; top: number }>('overlay', `(() => { const r = ${bar(`querySelector('.bar')`)}.getBoundingClientRect(); return { left: r.left, top: r.top }; })()`);
+  expect(at).toEqual({ left: 20, top: 20 });
+
+  await box(400, 150, 500, 250);
+  await selections(1);
+  const panel = await waitFor('the panel', async () => {
+    const w = await app.window('panel');
+    return w?.visible && w.width > 0 ? w : null;
+  });
+  // Bottom left, 12 px in, growing upwards from there.
+  expect(panel.x).toBe(12);
+  expect(panel.y + panel.height).toBe(SCREEN.height - 12);
+});
+
+it('a panel resized by hand keeps that size, opens at it next time, and settings can let it grow again', async () => {
+  await app.summon();
+  await armed();
+  await box(150, 150, 250, 250);
+  await selections(1);
+  await waitFor('the panel', () => app.read('panel', `!!document.querySelector('[data-testid=selection] img')`));
+  // Settled: the fitter's own resizes are done.
+  await new Promise((r) => setTimeout(r, 1500));
+  // A resize the panel did not ask for, as the student's dragging an edge is.
+  await app.eval('panel', `window.__TAURI_INTERNALS__.invoke('panel_fit', { height: 700, animate: false })`);
+  await waitFor('the size kept', async () => ((await app.storage('local')).panelSize as { height?: number } | undefined)?.height === 700);
+
+  await app.eval('panel', 'window.close()');
+  await waitFor('the panel hidden', async () => (await app.window('panel'))?.visible === false);
+  await app.summon();
+  await armed();
+  await box(400, 150, 500, 250);
+  await selections(1);
+  await waitFor('the panel at the kept size', async () => {
+    const w = await app.window('panel');
+    return w?.visible && w.height === 700;
+  });
+  await new Promise((r) => setTimeout(r, 1500));
+  expect((await app.window('panel'))?.height).toBe(700);
+
+  // Settings say so, and can forget it.
+  await app.eval('core', `browser.runtime.openOptionsPage('selecting')`);
+  await waitFor('the size in settings', async () => (await app.read<string | null>('settings', `document.querySelector('[data-testid=panel-size]')?.textContent ?? null`))?.includes('420 × 700'), 20_000);
+  await app.eval('settings', `document.querySelector('[data-testid=panel-size] button').click()`);
+  // Forgotten (WXT's storage removes a key set to null), and the note goes.
+  await waitFor('the size forgotten', async () => !('panelSize' in (await app.storage('local'))));
+  await waitFor('the note gone', async () => !(await app.read('settings', `!!document.querySelector('[data-testid=panel-size]')`)));
 });
 
 it('while the bar waits, the pointer goes through to the app beneath, except on the bar', async () => {

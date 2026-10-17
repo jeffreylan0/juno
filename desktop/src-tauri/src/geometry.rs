@@ -108,11 +108,35 @@ impl Display {
         }
     }
 
-    /// The panel: a floating card at the top right of the usable area,
-    /// `width` × `height` CSS pixels, never past the area less a margin all
-    /// round. It grows with its chat from there (wm::fit_panel).
-    pub fn panel_placement(&self, space: Space, width: f64, height: f64) -> Placement {
-        self.card(space, width, height, |work, w, _h, m| (work.x + work.width - m - w, work.y + m))
+    /// The panel: a floating card at the outer edge of the part of the usable
+    /// area the student picked (`place`; top right by default), `width` ×
+    /// `height` CSS pixels, never past the area less a margin all round. It
+    /// grows with its chat from there, away from that edge (wm::fit_panel).
+    pub fn panel_placement(&self, space: Space, width: f64, height: f64, place: Place) -> Placement {
+        self.card(space, width, height, |work, w, h, m| {
+            let x = match place.col {
+                Col::Left => work.x + m,
+                Col::Center => work.x + (work.width - w) / 2.0,
+                Col::Right => work.x + work.width - m - w,
+            };
+            (x, place.row.top(work, h, m))
+        })
+    }
+
+    /// How far the menu bar, Dock or taskbar reach into the display, CSS
+    /// pixels of the overlay that covers it (the bar stays inside them).
+    pub fn insets(&self, space: Space) -> Insets {
+        let (f, w, k) = match space {
+            Space::Points => (self.global_frame(space), self.global_work(space), 1.0),
+            Space::Physical => (self.frame, self.work, self.scale),
+        };
+        let px = |v: f64| (v / k).max(0.0).round();
+        Insets {
+            top: px(w.y - f.y),
+            left: px(w.x - f.x),
+            bottom: px(f.y + f.height - (w.y + w.height)),
+            right: px(f.x + f.width - (w.x + w.width)),
+        }
     }
 
     /// How tall the panel starts on this display: most of its usable height (CSS pixels).
@@ -146,6 +170,73 @@ impl Display {
 
 /// Room between a floating card (the panel, settings) and the edges of the usable area, CSS pixels.
 pub const CARD_MARGIN: f64 = 12.0;
+
+/// The edges of a display the system's own bars take, CSS pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+pub struct Insets {
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+    pub left: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Row {
+    Top,
+    Middle,
+    Bottom,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Col {
+    Left,
+    Center,
+    Right,
+}
+
+/// A part of the screen in a 3×3 grid, as the settings name it ("top-right").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Place {
+    pub row: Row,
+    pub col: Col,
+}
+
+impl Default for Place {
+    /// Where the panel goes unless the student says otherwise.
+    fn default() -> Self {
+        Place { row: Row::Top, col: Col::Right }
+    }
+}
+
+impl Place {
+    pub fn parse(name: &str) -> Option<Place> {
+        let (row, col) = name.split_once('-')?;
+        let row = match row {
+            "top" => Row::Top,
+            "middle" => Row::Middle,
+            "bottom" => Row::Bottom,
+            _ => return None,
+        };
+        let col = match col {
+            "left" => Col::Left,
+            "center" => Col::Center,
+            "right" => Col::Right,
+            _ => return None,
+        };
+        Some(Place { row, col })
+    }
+}
+
+impl Row {
+    /// The top of something `h` tall at this row's outer edge of `work`, `m` in.
+    pub fn top(self, work: Rect, h: f64, m: f64) -> f64 {
+        match self {
+            Row::Top => work.y + m,
+            Row::Middle => work.y + (work.height - h) / 2.0,
+            Row::Bottom => work.y + work.height - m - h,
+        }
+    }
+}
 
 /// How much of a display's usable height the panel starts at (and never shrinks below).
 pub const PANEL_SHARE: f64 = 0.72;
@@ -249,12 +340,13 @@ mod tests {
         let desk = mac_desk();
         assert_eq!(desk[0].overlay_placement(Space::Points), Placement::Logical(Rect::new(0.0, 0.0, 1512.0, 982.0)));
         // A card at the top right, 12 pt in from the edges, under the menu bar (37 pt on a notched laptop).
-        assert_eq!(desk[0].panel_placement(Space::Points, 420.0, 480.0), Placement::Logical(Rect::new(1080.0, 49.0, 420.0, 480.0)));
-        assert_eq!(desk[2].panel_placement(Space::Points, 420.0, 480.0), Placement::Logical(Rect::new(-432.0, -61.0, 420.0, 480.0)));
+        let tr = Place::default();
+        assert_eq!(desk[0].panel_placement(Space::Points, 420.0, 480.0, tr), Placement::Logical(Rect::new(1080.0, 49.0, 420.0, 480.0)));
+        assert_eq!(desk[2].panel_placement(Space::Points, 420.0, 480.0, tr), Placement::Logical(Rect::new(-432.0, -61.0, 420.0, 480.0)));
         // Most of the display tall to start with: 72% of 945 pt.
         assert_eq!(desk[0].panel_height(), 680.0);
         // Never taller than the usable height less the margins.
-        assert_eq!(desk[0].panel_placement(Space::Points, 420.0, 5000.0), Placement::Logical(Rect::new(1080.0, 49.0, 420.0, 921.0)));
+        assert_eq!(desk[0].panel_placement(Space::Points, 420.0, 5000.0, tr), Placement::Logical(Rect::new(1080.0, 49.0, 420.0, 921.0)));
         // Settings, in the middle.
         assert_eq!(desk[1].centred_placement(Space::Points, 760.0, 640.0), Placement::Logical(Rect::new(2092.0, 233.0, 760.0, 640.0)));
     }
@@ -284,8 +376,34 @@ mod tests {
     #[test]
     fn windows_panel_width_scales_with_the_monitor() {
         let desk = windows_desk();
-        assert_eq!(desk[0].panel_placement(Space::Physical, 420.0, 480.0), Placement::Physical(Rect::new(3192.0, 18.0, 630.0, 720.0)));
+        assert_eq!(desk[0].panel_placement(Space::Physical, 420.0, 480.0, Place::default()), Placement::Physical(Rect::new(3192.0, 18.0, 630.0, 720.0)));
         assert_eq!(desk[0].overlay_placement(Space::Physical), Placement::Physical(Rect::new(0.0, 0.0, 3840.0, 2160.0)));
+    }
+
+    #[test]
+    fn the_panel_goes_to_the_outer_edge_of_the_part_picked() {
+        // The 1080p monitor's usable area is 3840,200 1920×1040 (physical, 100%).
+        let d = &windows_desk()[1];
+        let at = |name: &str| match d.panel_placement(Space::Physical, 420.0, 480.0, Place::parse(name).unwrap()) {
+            Placement::Physical(r) => (r.x, r.y),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(at("top-left"), (3852.0, 212.0));
+        assert_eq!(at("top-center"), (4590.0, 212.0));
+        assert_eq!(at("middle-right"), (5328.0, 480.0));
+        assert_eq!(at("bottom-left"), (3852.0, 748.0));
+        assert_eq!(at("bottom-right"), (5328.0, 748.0));
+        assert_eq!(Place::parse("top-right"), Some(Place::default()));
+        assert_eq!(Place::parse("sideways"), None);
+        assert_eq!(Place::parse("top-up"), None);
+    }
+
+    #[test]
+    fn insets_are_the_menu_bar_dock_and_taskbar_in_css_pixels() {
+        // macOS: a 37 pt menu bar, no Dock at the bottom.
+        assert_eq!(mac_desk()[0].insets(Space::Points), Insets { top: 37.0, right: 0.0, bottom: 0.0, left: 0.0 });
+        // Windows at 150%: a 72 px taskbar is 48 CSS pixels.
+        assert_eq!(windows_desk()[0].insets(Space::Physical), Insets { top: 0.0, right: 0.0, bottom: 48.0, left: 0.0 });
     }
 
     #[test]
@@ -299,7 +417,7 @@ mod tests {
     #[test]
     fn panel_never_wider_than_the_screen() {
         let small = display("Small", Rect::new(0.0, 0.0, 800.0, 600.0), Rect::new(0.0, 0.0, 300.0, 600.0), 1.0);
-        assert_eq!(small.panel_placement(Space::Physical, 420.0, 480.0), Placement::Physical(Rect::new(12.0, 12.0, 276.0, 480.0)));
+        assert_eq!(small.panel_placement(Space::Physical, 420.0, 480.0, Place::default()), Placement::Physical(Rect::new(12.0, 12.0, 276.0, 480.0)));
     }
 
     #[test]

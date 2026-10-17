@@ -1,21 +1,15 @@
 /**
- * The app's web layer: four pages (core, overlay, panel, settings) built from
- * the extension's own code. The aliases are the whole adapter:
- *
- *   @/brand, @/lib/surface   the app's versions (src/brand.ts, src/surface.tsx)
- *   @/…                      the extension (shared code, unchanged)
- *   #imports, wxt/browser    WXT's helpers, over the app's `browser` (src/platform)
- *
- * Settings for accounts and hosted answers come from the same .env files as
- * the extension's (WXT_SUPABASE_URL, WXT_SUPABASE_KEY, WXT_GATEWAY_URL).
+ * The app's web layer: four pages (core, overlay, panel, settings), with
+ * `@/` for src/ and `@shared/` for the code the hosted-answers Worker shares.
+ * Accounts and hosted answers are set by WXT_SUPABASE_URL, WXT_SUPABASE_KEY
+ * and WXT_GATEWAY_URL in the repository's .env.local (or the environment).
  */
 import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
-import { hardenLibraries } from '../extension/harden-libs';
+import { hardenLibraries } from './harden-libs';
 
 const here = (p: string) => resolve(__dirname, p);
-const extension = here('../extension');
 
 const pages: Record<string, string> = {
   core: here('web/core.html'),
@@ -30,23 +24,16 @@ export default defineConfig({
   // The package is the root, so the pages' /src/… scripts resolve alike in
   // development and in a build; the pages themselves are under web/.
   root: here('.'),
-  envDir: extension,
+  // The repository's .env.local (see .env.example).
+  envDir: here('..'),
   envPrefix: ['WXT_', 'VITE_'],
-  // The same build-time edits as the extension's (React and DOMPurify
-  // without their HTML-string and eval paths): extension/harden-libs.ts.
+  // React and DOMPurify without their HTML-string and eval paths (harden-libs.ts).
   plugins: [react(), hardenLibraries()],
   resolve: {
     alias: [
-      { find: /^@\/brand$/, replacement: here('src/brand.ts') },
-      { find: /^@\/lib\/surface$/, replacement: here('src/surface.tsx') },
-      { find: /^@\//, replacement: `${extension}/` },
+      { find: /^@\//, replacement: `${here('src')}/` },
       { find: /^@shared\//, replacement: `${here('../shared')}/` },
-      { find: /^#imports$/, replacement: here('src/platform/imports.ts') },
-      { find: /^wxt\/browser$/, replacement: here('src/platform/wxt-browser.ts') },
     ],
-    // The extension's files and the app's resolve React from different
-    // folders; one copy, or hooks break.
-    dedupe: ['react', 'react-dom'],
   },
   // Tauri expects a fixed port, and its own console output kept.
   server: { port: 5180, strictPort: true },

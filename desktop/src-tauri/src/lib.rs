@@ -2,10 +2,10 @@
 //!
 //! It does only what the system has to: the global shortcut, the menu bar (or
 //! tray) icon, the windows, screen capture, and keeping chats, screenshots and
-//! keys on disk. Everything else — the bar, the panel,
-//! chats, answers, accounts — is the extension's own web code, running in the
-//! app's windows (desktop/src). The `core` window plays the extension's
-//! background; the others reach it through events (desktop/src/platform).
+//! keys on disk. Everything else (the bar, the panel, chats, answers,
+//! accounts) is web code running in the app's windows (desktop/src). The
+//! `core` window owns the chats; the others reach it through events
+//! (desktop/src/platform).
 
 mod capture;
 mod crop;
@@ -44,7 +44,7 @@ pub struct Shared {
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ShortcutStatus {
-    /// As the browser extension reports it: "Alt+Shift+S" ("⌥⇧S" on a Mac).
+    /// As the settings show it: "Alt+Shift+S" ("⌥⇧S" on a Mac).
     shortcut: String,
     /// Why the system refused it (another app holds it), if it did.
     error: Option<String>,
@@ -221,14 +221,23 @@ fn overlay_scroll_through(app: AppHandle, state: State<Shared>) {
 }
 
 #[tauri::command(async)]
-fn panel_open(app: AppHandle, state: State<Shared>, focus: bool) -> Res<()> {
-    wm::open_panel(&app, &state.overlay, focus).map_err(err)
+fn panel_open(app: AppHandle, state: State<Shared>, focus: bool, place: Option<String>, size: Option<PanelSize>) -> Res<()> {
+    let at = place.as_deref().and_then(geometry::Place::parse).unwrap_or_default();
+    // A size the student gave it, within reason (wm.rs keeps it on screen).
+    let size = size.filter(|s| s.width.is_finite() && s.height.is_finite()).map(|s| (s.width.clamp(320.0, 1600.0), s.height.clamp(320.0, 2400.0)));
+    wm::open_panel(&app, &state.overlay, focus, at, size).map_err(err)
+}
+
+#[derive(serde::Deserialize)]
+struct PanelSize {
+    width: f64,
+    height: f64,
 }
 
 /// The panel's page asks for the height its chat needs (CSS pixels).
 #[tauri::command(async)]
-fn panel_fit(app: AppHandle, height: f64) -> Res<f64> {
-    wm::fit_panel(&app, height).map_err(err)
+fn panel_fit(app: AppHandle, state: State<Shared>, height: f64, animate: Option<bool>) -> Res<f64> {
+    wm::fit_panel(&app, &state.overlay, height, animate.unwrap_or(true)).map_err(err)
 }
 
 /// A card's page (the panel, settings) has drawn: its window shows.
@@ -487,8 +496,7 @@ pub(crate) fn deep_link(app: &AppHandle, url: &str) {
     }
 }
 
-/// The shortcut (or the menu): the core decides what comes up, as the
-/// extension's background does on a toolbar click.
+/// The shortcut (or the menu): the core decides what comes up.
 pub(crate) fn summon(app: &AppHandle) {
     let _ = app.emit_to(wm::CORE, "app:summon", ());
 }

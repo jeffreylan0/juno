@@ -1,8 +1,7 @@
 /**
- * Screenshots in files under the app's data folder (src-tauri/src/store.rs),
- * in place of the extension's IndexedDB: the same ImageStore, so
- * lib/images.ts is unchanged. Temporary chats' screenshots still go to
- * storage.session, which the app keeps in memory only.
+ * Screenshots in files under the app's data folder (src-tauri/src/store.rs).
+ * Temporary chats' screenshots go to storage.session instead, which the app
+ * keeps in memory only (lib/images.ts).
  */
 import type { ImageStore, StoredImage } from '@/lib/images';
 import type { Transport } from './transport';

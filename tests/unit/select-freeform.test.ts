@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LassoSelector, MAX_POINTS, boundsOf, finishLasso, pathData, thin, type Lasso } from '@/entrypoints/content/select-freeform';
+import { LassoSelector, MAX_POINTS, boundsOf, finishLasso, pathData, thin, type Lasso } from '@/selection/select-freeform';
 
 const circle = (cx: number, cy: number, r: number, n = 64) =>
   Array.from({ length: n }, (_, i) => ({ x: cx + r * Math.cos((i / n) * 2 * Math.PI), y: cy + r * Math.sin((i / n) * 2 * Math.PI) }));

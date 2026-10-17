@@ -2,41 +2,33 @@
   "name": "selection-ai",
   "private": true,
   "version": "0.1.0",
-  "description": "Juno: draw a box or any shape around something on screen and ask Claude or ChatGPT about exactly that.",
+  "type": "module",
+  "description": "Juno: a desktop app to draw a box or any shape around something on screen and ask Claude or ChatGPT about exactly that.",
   "packageManager": "pnpm@10.28.0",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "dev": "pnpm --filter extension dev",
-    "dev:firefox": "pnpm --filter extension dev:firefox",
-    "desktop:dev": "pnpm --filter desktop dev",
-    "desktop:build": "pnpm --filter desktop build",
-    "desktop:app": "pnpm --filter desktop app",
-    "build": "pnpm --filter extension build",
-    "build:firefox": "pnpm --filter extension build:firefox",
-    "zip": "pnpm --filter extension zip",
+    "dev": "pnpm --filter desktop dev",
+    "app": "pnpm --filter desktop app",
+    "build": "pnpm --filter desktop build",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm -r typecheck",
     "test": "vitest run",
     "vitest": "vitest",
-    "playwright": "playwright",
+    "test:native": "pnpm --filter desktop test:native",
+    "test:e2e": "pnpm --filter desktop test:e2e",
     "eval:run": "pnpm --filter eval exec tsx run.ts",
     "eval:batch": "pnpm --filter eval exec tsx batch.ts",
     "eval:score": "pnpm --filter eval exec tsx score.ts",
     "eval:crops": "pnpm --filter eval exec tsx crops.ts",
-    "worker:dev": "pnpm --filter worker dev",
-    "build:e2e": "E2E=1 pnpm --filter extension build",
-    "test:e2e": "pnpm build:e2e && playwright test",
-    "brand:icons": "node scripts/brand-icons.mjs"
+    "worker:dev": "pnpm --filter worker dev"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.0",
     "@types/node": "^22.0.0",
-    "http-server": "^14.1.1",
+    "@webext-core/fake-browser": "^2.0.1",
+    "@wxt-dev/storage": "1.2.9",
     "jsdom": "^26.0.0",
     "typescript": "^5.7.0",
-    "vitest": "^5.0.2",
-    "wxt": "^0.21.4"
+    "vitest": "^5.0.2"
   }
 }

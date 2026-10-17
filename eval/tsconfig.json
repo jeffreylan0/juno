@@ -5,18 +5,16 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "paths": {
       "@shared/*": ["../shared/*"],
-      "@/*": ["../extension/*"],
-      "#imports": ["./shims/imports.ts"]
+      "@/*": ["../desktop/src/*"]
     }
   },
-  // Only the extension modules the eval scripts actually run. The rest of
-  // extension/lib touches browser globals that do not exist in Node.
+  // Only the app modules the eval scripts actually run. The rest of
+  // desktop/src/lib touches browser globals that do not exist in Node.
   "include": [
     "*.ts",
-    "shims/*.ts",
     "../shared/*.ts",
-    "../extension/lib/cache.ts",
-    "../extension/lib/router.ts",
-    "../extension/lib/providers/**/*.ts"
+    "../desktop/src/lib/cache.ts",
+    "../desktop/src/lib/router.ts",
+    "../desktop/src/lib/providers/**/*.ts"
   ]
 }

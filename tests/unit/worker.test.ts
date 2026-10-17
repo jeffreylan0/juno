@@ -2,7 +2,7 @@
 /**
  * The Worker's own logic: who is asking (a Supabase token checked against
  * the project's published keys), which models it may use, Anthropic's stream
- * re-emitted in the OpenAI shape the extension reads, and billing (Stripe's
+ * re-emitted in the OpenAI shape the app reads, and billing (Stripe's
  * events mirrored into the database, checkout, what is on offer).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';

@@ -1,16 +1,15 @@
 /**
- * The part of the WebExtension API the extension's shared code uses, for the
- * app's windows. With it installed as `globalThis.browser`, lib/ (chats,
- * the current chat, images, settings, accounts, sync), ui/ (the panel) and
- * the settings page run unchanged — as do WXT's `storage` helpers, which
+ * A WebExtension-shaped `browser` for the app's windows (the code began as a
+ * browser extension). Installed as `globalThis.browser`, it is what lib/
+ * (chats, the current chat, images, settings, accounts, sync), ui/ (the
+ * panel) and the settings page talk to, as do WXT's `storage` helpers, which
  * read `globalThis.browser`.
  *
  *  - storage.local / storage.session: kept by the native core (store.rs),
  *    shared by every window; every change reaches every window's
- *    `onChanged`, as in the extension.
- *  - runtime.sendMessage: from any window to the core window, which plays
- *    the extension's background and answers; from the core, to every other
- *    window, unanswered (like the background telling its pages).
+ *    `onChanged`.
+ *  - runtime.sendMessage: from any window to the core window, which
+ *    answers; from the core, to every other window, unanswered.
  *  - runtime.connect: a port to the core. It disconnects when either window
  *    goes, which is how the core hears that the panel was closed.
  *  - windows.getCurrent: the app has one panel, so one "window", WINDOW_ID.
@@ -87,11 +86,11 @@ export const AUTH_REDIRECT = 'com.humanbn.juno://auth/callback';
 const AUTH_WAIT_MS = 10 * 60_000;
 
 export interface BrowserOptions {
-  /** The label of the window that plays the background. */
+  /** The label of the core window, which answers messages. */
   core?: string;
   /** Opens a link in the student's browser. */
   openUrl?: (url: string) => void;
-  /** The page's origin, for getURL. */
+  /** The page's origin, which names the sender of its messages. */
   origin?: string;
 }
 
@@ -114,8 +113,7 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
         return keys && typeof keys === 'object' && !Array.isArray(keys) ? { ...keys, ...got } : got;
       },
       async set(items: Record<string, unknown>): Promise<void> {
-        // Stored as JSON, like the extension's structured clone of plain data;
-        // undefined values are left out as they would be there.
+        // Stored as JSON: plain data only, undefined values left out.
         await t.invoke('storage_set', { area: name, items: JSON.parse(JSON.stringify(items ?? {})) });
       },
       async remove(keys: string | string[]): Promise<void> {
@@ -170,7 +168,7 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
 
   const sendMessage = (msg: unknown): Promise<unknown> => {
     if (isCore) {
-      // The background telling its pages: nobody answers.
+      // The core telling the other windows: nobody answers.
       void t.emit('rt:msg', { id: uid(), from: t.label, msg, reply: false } satisfies Wire['msg']).catch(() => {});
       return Promise.resolve(undefined);
     }
@@ -225,7 +223,7 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
         void t.emitTo(other, 'rt:port', { portId, msg: message } satisfies Wire['port']).catch(() => {});
       },
       disconnect() {
-        // As in the extension, only the other end hears about it.
+        // Only the other end hears about it.
         if (close()) void t.emitTo(other, 'rt:disconnect', { portId } satisfies Wire['disconnect']).catch(() => {});
       },
     };
@@ -283,14 +281,6 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
     }),
   ]);
 
-  const settingsPage = /(?:options|settings)\.html(#[\w-]*)?$/;
-  const openTab = async ({ url }: { url?: string }) => {
-    if (!url) return;
-    const page = settingsPage.exec(url);
-    if (page) await t.invoke('settings_open', { hash: page[1]?.slice(1) ?? null });
-    else opts.openUrl?.(url);
-  };
-
   /** A message for one window only, unanswered (the core telling the overlay's bar). */
   const tell = (label: string, msg: unknown): Promise<void> =>
     t.emitTo(label, 'rt:msg', { id: uid(), from: t.label, msg, reply: false } satisfies Wire['msg']).catch(() => {});
@@ -303,23 +293,19 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
     storage: { local, session, onChanged: anyChanged },
     runtime: {
       id: RUNTIME_ID,
-      getURL: (path: string) => `${origin}/${path.replace(/^\//, '').replace(/^options\.html/, 'web/settings.html')}`,
       sendMessage,
       onMessage,
       connect,
       onConnect,
-      openOptionsPage: () => t.invoke('settings_open', { hash: null }),
+      /** The settings window, at `section` if one is named ("account"). */
+      openOptionsPage: (section?: string) => t.invoke('settings_open', { hash: section ?? null }),
     },
     windows: {
       getCurrent: async () => ({ id: WINDOW_ID, focused: true }),
     },
-    tabs: {
-      create: openTab,
-    },
     /**
-     * The extension's sign-in (lib/account/session.ts), in the app: the
-     * page opens in the student's browser, and the answer comes back
-     * through the app's link.
+     * Sign-in (lib/account/session.ts): the page opens in the student's
+     * browser, and the answer comes back through the app's link.
      */
     identity: {
       getRedirectURL: () => AUTH_REDIRECT,
@@ -342,7 +328,7 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
         }),
     },
     commands: {
-      /** The shortcut the app registered, reported as the extension's toolbar shortcut. */
+      /** The shortcut the app registered (ui/useShortcut.ts). */
       getAll: async () => {
         shortcut ??= t
           .invoke<{ shortcut: { shortcut: string; error: string | null } }>('app_info')

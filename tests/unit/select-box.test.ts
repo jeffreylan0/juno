@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BoxSelector, clampToViewport, hitTest, isClamped, moveRect, normalizeRect, resizeRect } from '@/entrypoints/content/select-box';
+import { BoxSelector, clampToViewport, hitTest, isClamped, moveRect, normalizeRect, resizeRect } from '@/selection/select-box';
 
 describe('normalizeRect', () => {
   it('works whichever corner the drag started from', () => {

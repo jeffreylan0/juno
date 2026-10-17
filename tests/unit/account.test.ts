@@ -4,7 +4,7 @@
  * screenshots) going up and coming down, the newer version winning.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fakeBrowser } from 'wxt/testing/fake-browser';
+import { fakeBrowser } from '@webext-core/fake-browser';
 import type { Plan } from '@shared/payload';
 import { FakeSupabase } from '../support/fake-supabase';
 import {
@@ -105,8 +105,8 @@ describe('signing in', () => {
     expect((await sessionItem.getValue())?.accessToken).toBe(s.accessToken);
   });
 
-  it('signs in with Google through the browser’s own window (PKCE), back on the extension’s redirect URL', async () => {
-    const redirect = 'https://bipacelfiohnnmfkhfhkjblblkediabm.chromiumapp.org/';
+  it('signs in with Google in the browser (PKCE), back on the app’s link', async () => {
+    const redirect = 'com.humanbn.juno://auth/callback';
     const identity = {
       getRedirectURL: () => redirect,
       launchWebAuthFlow: vi.fn(async ({ url, interactive }: { url: string; interactive: boolean }) => {

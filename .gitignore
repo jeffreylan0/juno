@@ -1,6 +1,4 @@
 node_modules/
-.output/
-.wxt/
 dist/
 *.log
 .env
@@ -9,8 +7,6 @@ dist/
 eval/out/
 eval/cache/
 test-results/
-playwright-report/
-safari/
 .DS_Store
 .wrangler/
 

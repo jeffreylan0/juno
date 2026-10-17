@@ -1,5 +1,5 @@
 /**
- * The app's icons, from the extension's mark (extension/assets/brand/icon.svg):
+ * The app's icons, from its mark (desktop/assets/icon.svg):
  *
  *   src-tauri/icons/app.png   1024 px, which `tauri icon` turns into every
  *                             size and format the bundles need
@@ -9,8 +9,7 @@
  *
  *   pnpm --filter desktop icons
  *
- * Rendered with the Playwright Chromium the tests already use, as
- * scripts/brand-icons.mjs does for the extension.
+ * Rendered with Playwright's Chromium, so the PNGs match the SVG exactly.
  */
 import { chromium } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -19,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const out = resolve(root, 'desktop/src-tauri/icons');
-const mark = readFileSync(resolve(root, 'extension/assets/brand/icon.svg'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+const mark = readFileSync(resolve(root, 'desktop/assets/icon.svg'), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
 
 // The mark without its blue tile: the frame and the four handles, cut out.
 const tray = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">

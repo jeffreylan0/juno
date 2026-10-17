@@ -2,8 +2,7 @@
  * How a window of the app talks to the native core and to the other
  * windows: commands (invoke) and events. Behind an interface so the browser
  * shim (browser.ts) can be tested with several windows in one process
- * (tests/unit/desktop-browser.test.ts), the way the extension's code is
- * tested against fakeBrowser.
+ * (tests/unit/desktop-browser.test.ts).
  */
 import { invoke } from '@tauri-apps/api/core';
 import { emit, emitTo } from '@tauri-apps/api/event';

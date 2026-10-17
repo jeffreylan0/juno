@@ -1,5 +1,5 @@
 /**
- * The panel window: the extension's side panel, as a card (card.ts) as tall
+ * The panel window: the chat (ui/Panel.tsx), as a card (card.ts) as tall
  * as its chat (fit.ts). It is made when the app starts and kept, hidden
  * between chats, so a selection shows it at once (core/main.ts).
  */

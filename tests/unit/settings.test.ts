@@ -5,11 +5,9 @@ import {
   SETTINGS_VERSION,
   answerChoiceOf,
   fallbackQuestion,
-  isBlockedHost,
   migrateSettings,
   sanitizeMacros,
   shouldAutoSend,
-  siteOf,
   withAnswerChoice,
   type Settings,
 } from '@/lib/storage';
@@ -19,7 +17,7 @@ const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTI
 
 describe('settings defaults', () => {
   it('arms a box that goes to the panel on release, costs nothing, and waits before sending', () => {
-    // Which mode the icon starts is not a setting: it is the last one used.
+    // Which mode the bar starts in is not a setting: always Box.
     expect('defaultSelectionKind' in DEFAULT_SETTINGS).toBe(false);
     expect(DEFAULT_SETTINGS.adjustBox).toBe(false);
     // The panel always opens with the first selection; that is not a setting either.
@@ -28,22 +26,24 @@ describe('settings defaults', () => {
     expect(DEFAULT_SETTINGS.sendBehavior).toBe('prefill');
   });
 
-  it('starts the question box empty and ships the Explain, Hint and Check macros', () => {
+  it('starts the question box empty and ships the Explain, Hint, Check and Answer macros', () => {
     // The macros do the asking; the box waits for the student.
     expect(DEFAULT_PROMPT).toBe('');
     expect(DEFAULT_SETTINGS.defaultPrompt).toBe('');
-    expect(DEFAULT_SETTINGS.macros.map((m) => m.name)).toEqual(['Explain', 'Hint', 'Check']);
+    expect(DEFAULT_SETTINGS.macros.map((m) => m.name)).toEqual(['Explain', 'Hint', 'Check', 'Answer']);
     for (const m of DEFAULT_SETTINGS.macros) expect(m.prompt.length).toBeGreaterThan(10);
     // The hint macro carries its own "do not give it away" instruction now.
     expect(DEFAULT_SETTINGS.macros[1]!.prompt).toMatch(/not the answer/);
   });
 
-  it('ships no model override or blocked sites, and keeps ten chats', () => {
+  it('ships no model override, keeps ten chats (as few as one), the bar at the bottom and the panel top right', () => {
     expect('showUsage' in DEFAULT_SETTINGS).toBe(false);
+    expect('blockedSites' in DEFAULT_SETTINGS).toBe(false);
     expect(DEFAULT_SETTINGS.modelOverride).toBeNull();
-    expect(DEFAULT_SETTINGS.blockedSites).toEqual([]);
     expect(DEFAULT_SETTINGS.chatLimit).toBe(10);
-    expect(CHAT_LIMITS).toEqual([10, 25, 50, 100]);
+    expect(CHAT_LIMITS).toEqual([1, 5, 10, 25, 50, 100]);
+    expect(DEFAULT_SETTINGS.barPlace).toBe('bottom-center');
+    expect(DEFAULT_SETTINGS.panelPlace).toBe('top-right');
   });
 });
 
@@ -143,22 +143,30 @@ describe('answer choice', () => {
   });
 });
 
-describe('blocked sites', () => {
-  it('reads what was typed as a site: a pasted URL, *., www., capitals, a trailing dot', () => {
-    expect(siteOf(' https://Exam.Example.edu/quiz/1 ')).toBe('exam.example.edu');
-    expect(siteOf('*.example.edu')).toBe('example.edu');
-    expect(siteOf('www.example.edu.')).toBe('example.edu');
-    expect(siteOf('example.edu/path')).toBe('example.edu');
-    expect(siteOf('   ')).toBe('');
+describe('settings from before v5', () => {
+  const v4 = (macros: { id: string; name: string; prompt: string }[]) => ({ version: 4, macros, blockedSites: ['exam.example.edu'] });
+  const three = [
+    { id: 'explain', name: 'Explain', prompt: 'Explain this step by step.' },
+    { id: 'hint', name: 'Hint', prompt: 'Give me a hint for the next step, not the answer.' },
+    { id: 'check', name: 'Check', prompt: 'Check my work and point to the first mistake.' },
+  ];
+
+  it('gain the Answer macro, unless they have one of their own', () => {
+    expect(migrateSettings(v4(three)).macros.map((m) => m.name)).toEqual(['Explain', 'Hint', 'Check', 'Answer']);
+    const own = [...three, { id: 'mine', name: 'answer', prompt: 'Just the answer.' }];
+    expect(migrateSettings(v4(own)).macros).toHaveLength(4);
+    const same = [...three, { id: 'x', name: 'Solve', prompt: 'Provide the answer first and the explanation after.' }];
+    expect(migrateSettings(v4(same)).macros.map((m) => m.name)).toEqual(['Explain', 'Hint', 'Check', 'Solve']);
+    // Saved again, they are not asked twice.
+    const once = migrateSettings(v4(three));
+    expect(migrateSettings({ ...once, macros: once.macros.slice(0, 3) }).macros).toHaveLength(3);
   });
 
-  it('blocks a site and everything under it, and nothing that merely ends the same way', () => {
-    const blocked = ['example.edu', 'https://quiz.school.org/x'];
-    expect(isBlockedHost('example.edu', blocked)).toBe(true);
-    expect(isBlockedHost('exam.example.edu', blocked)).toBe(true);
-    expect(isBlockedHost('www.example.edu', blocked)).toBe(true);
-    expect(isBlockedHost('quiz.school.org', blocked)).toBe(true);
-    expect(isBlockedHost('notexample.edu', blocked)).toBe(false);
-    expect(isBlockedHost('school.org', blocked)).toBe(false);
+  it('lose blocked sites, and get the default places for anything that is not one', () => {
+    const s = migrateSettings({ ...v4(three), barPlace: 'sideways', panelPlace: 'bottom-left' });
+    expect('blockedSites' in s).toBe(false);
+    expect(s.barPlace).toBe('bottom-center');
+    expect(s.panelPlace).toBe('bottom-left');
   });
 });
+

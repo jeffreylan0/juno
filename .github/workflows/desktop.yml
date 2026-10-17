@@ -6,9 +6,9 @@ name: Desktop
 on:
   push:
     branches: ['**']
-    paths: ['desktop/**', 'extension/**', 'shared/**', 'tests/unit/desktop-*', 'pnpm-lock.yaml', '.github/workflows/desktop.yml']
+    paths: ['desktop/**', 'shared/**', 'pnpm-lock.yaml', '.github/workflows/desktop.yml']
   pull_request:
-    paths: ['desktop/**', 'extension/**', 'shared/**', 'tests/unit/desktop-*', 'pnpm-lock.yaml', '.github/workflows/desktop.yml']
+    paths: ['desktop/**', 'shared/**', 'pnpm-lock.yaml', '.github/workflows/desktop.yml']
 
 permissions:
   contents: read

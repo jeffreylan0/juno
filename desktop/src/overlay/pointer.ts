@@ -4,9 +4,9 @@
  * through hears nothing of the pointer itself):
  *
  *  - while a selection is armed, drawn or adjusted: all of it;
- *  - while the bar waits: only the bar and any tooltip, so the app beneath
- *    works as usual everywhere else;
- *  - nothing on screen at all (the bar went, the tooltip faded): the window
+ *  - while the bar waits: only the bar, so the app beneath works as usual
+ *    everywhere else;
+ *  - nothing on screen at all (the bar went): the window
  *    is hidden, once an empty frame has been drawn: a window hidden with
  *    the bar still in its last frame shows that frame for a moment the next
  *    time it comes up.
@@ -34,16 +34,14 @@ export interface PointerState {
   idle: boolean;
 }
 
-/** Reads the state off the page: the bar's host, its state, and the tooltips. */
+/** Reads the state off the page: the bar's host, and its state. */
 export function readPointerState(doc: Document = document): PointerState {
   const host = doc.querySelector('selection-ai-overlay');
-  const tips = [...doc.querySelectorAll('selection-ai-tooltip')];
   const state = host?.getAttribute('data-state') ?? '';
   const regions: Region[] = [];
   const bar = host?.shadowRoot?.querySelector('.bar');
   if (bar && !host?.hasAttribute('data-leaving')) regions.push(box(bar));
-  for (const tip of tips) tip.shadowRoot?.querySelectorAll('.sai-tip').forEach((el) => regions.push(box(el)));
-  return { interactive: !!host && ARMED.has(state), regions, idle: !host && tips.length === 0 };
+  return { interactive: !!host && ARMED.has(state), regions, idle: !host };
 }
 
 function box(el: Element): Region {
@@ -71,7 +69,7 @@ export function trackPointer(t: Transport, doc: Document = document): () => void
   };
   // At once when a selection is armed, or the pointer would go through to
   // the app before the first drag; and, while anything shows, on a timer for
-  // whatever moves or grows (the gear's settings, a tooltip's text).
+  // whatever moves or grows (the gear's settings, a note).
   let timer: ReturnType<typeof setInterval> | undefined;
   /** Hides the window after two frames, if nothing came back meanwhile. */
   const hideWhenClear = () =>

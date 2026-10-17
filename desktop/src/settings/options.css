@@ -1,0 +1,169 @@
+/**
+ * The settings page, in the palette the bar and the panel share (Claude's:
+ * warm paper, near-black ink, clay for what acts). Tokens live at the top.
+ */
+:root {
+  color-scheme: light dark;
+  --bg: #faf9f5;
+  --fg: #141413;
+  --muted: #73726c;
+  --line: #e6e4dc;
+  --accent: #c96442;
+  --accent-bg: #f6ebe4;
+  --surface: #ffffff;
+  --hover: #f0eee6;
+  --ok: #3d7a3a;
+  --bad: #b42318;
+  --warn: #8a5a00;
+  --radius: 9px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  font-size: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #262624;
+    --fg: #f5f4ef;
+    --muted: #a6a39b;
+    --line: #3d3d3a;
+    --accent: #d97757;
+    --accent-bg: #3b2c25;
+    --surface: #30302e;
+    --hover: #3a3a37;
+    --ok: #8fc88a;
+    --bad: #f2998b;
+    --warn: #e7c46a;
+  }
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+/* The text size is set on :root. */
+body { margin: 0; background: var(--bg); color: var(--fg); font-size: 1rem; }
+
+/* A sticky header: the name, the sections, and "Saved". */
+.top { position: sticky; top: 0; z-index: 2; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.top-inner { max-width: 680px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+h1 { font-size: 15px; font-weight: 600; margin: 0; }
+.tabs { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
+.tabs a { color: var(--muted); text-decoration: none; font-size: 13px; padding: 5px 10px; border-radius: 8px; transition: background-color 120ms ease, color 120ms ease; }
+.tabs a:hover { color: var(--fg); background: var(--hover); }
+.close {
+  display: flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px; padding: 0;
+  border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer;
+}
+.close:hover { color: var(--fg); background: var(--hover); }
+.close svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.saved { font-size: 12px; color: var(--ok); opacity: 0; transition: opacity 200ms ease; min-width: 3em; text-align: right; }
+.saved.on { opacity: 1; }
+
+.options { max-width: 680px; margin: 0 auto; padding: 20px 20px 80px; }
+.lede { color: var(--muted); margin: 0 0 4px; line-height: 1.55; }
+
+section {
+  display: flex; flex-direction: column; gap: 16px;
+  margin-top: 20px; padding: 20px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 14px;
+}
+h2 { font-size: 15px; margin: 0; }
+.section-lede { margin-top: -10px; }
+.head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+
+/* Who answers: one card per choice. */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+.card {
+  position: relative; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; cursor: pointer;
+  background: var(--bg); border: 1.5px solid var(--line); border-radius: 12px;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.card:hover { border-color: var(--muted); }
+.card.on { border-color: var(--accent); background: var(--accent-bg); }
+.card input { position: absolute; opacity: 0; pointer-events: none; }
+.card:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card b { font-size: 14px; }
+.card small { color: var(--muted); font-size: 12px; }
+@media (max-width: 560px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* What the chosen answerer needs, attached under the cards. */
+.sub { display: flex; flex-direction: column; gap: 14px; padding: 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; }
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field-label { font-weight: 600; font-size: 13px; }
+label.field { cursor: default; }
+.radios { display: flex; flex-direction: column; gap: 8px; }
+label.radio { display: flex; flex-direction: row; align-items: flex-start; gap: 9px; cursor: pointer; }
+label.radio > span { display: flex; flex-direction: column; gap: 2px; }
+label.radio b { font-weight: 500; }
+label.radio small { color: var(--muted); }
+.default { color: var(--muted); font-weight: 400; font-size: 12px; }
+
+input, select, textarea {
+  font: inherit; padding: 7px 9px; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: var(--radius); resize: vertical;
+}
+input[type='radio'] { padding: 0; margin: 3px 0 0; flex: none; }
+input:focus, select:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: -1px; }
+input[type='radio'], input[type='checkbox'] { accent-color: var(--accent); }
+
+.help { color: var(--muted); margin: 0; font-size: 13px; line-height: 1.5; }
+.help.ok { color: var(--ok); }
+.help.bad { color: var(--bad); }
+.help.warn { color: var(--warn); }
+kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font: inherit; font-size: 12px; }
+.link { border: 0; background: none; padding: 0; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; }
+.link:hover { text-decoration: underline; }
+
+.key-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.key-row input { flex: 1; min-width: 12em; }
+.shortcut-row { justify-content: space-between; }
+.limit-row { font-size: 14px; }
+.help.facts { padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px; }
+.help.facts b { color: var(--fg); font-weight: 600; }
+
+button.secondary, button.danger { font: inherit; padding: 7px 14px; border-radius: var(--radius); cursor: pointer; align-self: flex-start; }
+button.secondary { border: 1px solid var(--line); background: var(--bg); color: var(--fg); transition: background-color 120ms ease, border-color 120ms ease; }
+button.secondary:hover:not(:disabled) { background: var(--hover); }
+button.danger { border: 0; background: var(--bad); color: #fff; }
+button:disabled { opacity: .5; cursor: default; }
+.confirm-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.macro-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.macro-row { display: grid; grid-template-columns: 9.5em 1fr auto; gap: 8px; align-items: start; }
+.macro-row textarea { resize: vertical; min-height: 2.6em; }
+.tool { font: inherit; width: 30px; height: 34px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 8px; cursor: pointer; }
+.tool:hover { color: var(--fg); }
+@media (max-width: 520px) { .macro-row { grid-template-columns: 1fr auto; } .macro-row textarea { grid-column: 1 / -1; } }
+
+/* A checkbox with its label. */
+label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+label.check input { margin: 0; padding: 0; }
+
+/* Account → Plan: hosted answers used, and upgrading. */
+.usage { display: flex; flex-direction: column; gap: 4px; }
+.usage meter { width: 100%; max-width: 320px; height: 8px; accent-color: var(--accent); }
+.upgrade { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; background: var(--accent-bg); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 12px; }
+
+/* Where the bar and the panel go (PlacePicker.tsx): a little screen in 3×3 parts. */
+.places { display: flex; gap: 28px; flex-wrap: wrap; }
+.place-picker { display: flex; flex-direction: column; gap: 6px; }
+.place-label { font-size: 13px; color: var(--muted); }
+.place-screen {
+  display: grid; grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(3, 26px); gap: 3px;
+  padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+}
+.place-cell {
+  display: flex; padding: 4px; border: 0; border-radius: 5px; cursor: pointer;
+  background: var(--hover); color: var(--muted);
+}
+.place-cell:hover { color: var(--fg); }
+.place-cell[aria-checked='true'] { background: var(--accent-bg); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.place-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The mark at the part's outer edge: a bar is wide and low, the panel tall. */
+.place-cell[data-place$='-left'] { justify-content: flex-start; }
+.place-cell[data-place$='-center'] { justify-content: center; }
+.place-cell[data-place$='-right'] { justify-content: flex-end; }
+.place-cell[data-place^='top-'] { align-items: flex-start; }
+.place-cell[data-place^='middle-'] { align-items: center; }
+.place-cell[data-place^='bottom-'] { align-items: flex-end; }
+.place-mark { width: 16px; height: 4px; border-radius: 2px; background: currentColor; opacity: 0.45; }
+.place-picker.panel .place-mark { width: 7px; height: 14px; }
+.place-cell[aria-checked='true'] .place-mark { opacity: 1; }

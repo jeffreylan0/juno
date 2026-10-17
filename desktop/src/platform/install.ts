@@ -1,12 +1,12 @@
 /**
  * Imported first by every window of the app: puts the WebExtension-shaped
- * `browser` (browser.ts) in place before any of the extension's modules run,
- * then swaps in the app's ways of keeping screenshots, reaching the network
- * and opening links.
+ * `browser` (browser.ts) in place before anything else runs, then swaps in
+ * the app's ways of keeping screenshots, reaching the network and opening
+ * links.
  *
- * Order matters: WXT's storage helper (lib/storage.ts → #imports) reads
- * `globalThis.browser` when it is first imported, so nothing imported here
- * may import it in turn.
+ * Order matters: WXT's storage helper (@wxt-dev/storage, used by
+ * lib/storage.ts) reads `globalThis.browser` when it is first imported, so
+ * nothing imported here may import it in turn.
  */
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { setImageStore } from '@/lib/images';
@@ -28,6 +28,6 @@ export const browser = createBrowser(transport, { openUrl: (url) => void openUrl
 setImageStore(new FileImageStore(transport));
 installFetch();
 installLinks();
-// window.close() closes the panel or settings window (the panel's ✕ path in
-// the extension); the core and the overlay are only ever hidden.
+// window.close() closes the panel or settings window; the core and the
+// overlay are only ever hidden.
 window.close = () => void transport.invoke('window_close').catch(() => {});

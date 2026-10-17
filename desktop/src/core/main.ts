@@ -1,8 +1,7 @@
 /**
- * The app's hidden core window: what the extension's background is, for the
- * desktop. The chat half is the same code (lib/engine.ts: the write queue,
- * answers, the cloud copy, the connection status); this file is the
- * desktop half, in place of tabs, the toolbar icon and the side panel:
+ * The app's hidden core window. The chat half is lib/engine.ts (the write
+ * queue, answers, the cloud copy, the connection status); this file shows
+ * the bar and the panel and keeps the chat in step with them:
  *
  *  - the shortcut (or the menu bar icon, or opening the app) brings the bar
  *    up, armed in Box, on the display under the pointer;
@@ -16,11 +15,12 @@
  *  - ✕ on the bar or the panel (or Escape before anything was selected)
  *    hides both and finishes the chat, by lib/current.ts's rules;
  *  - the bar's chats button opens the panel on its list of chats; while the
- *    panel shows, the bar leaves the ghost, settings and chats to it.
+ *    panel shows, the bar leaves the ghost, settings and chats to it;
+ *  - the panel's new-chat key (⌘⇧O, Ctrl+Shift+O) finishes the chat and
+ *    brings the bar up for the next.
  *
- * There is one panel, so one "window" of chats (WINDOW_ID). Where the
- * extension knows a tab, the app knows the window a selection was made over,
- * from the native core, at capture time.
+ * There is one panel, so one "window" of chats (WINDOW_ID). The window a
+ * selection was made over comes from the native core, at capture time.
  */
 import { browser, note, transport } from '../platform/install';
 import { WINDOW_ID, type Port } from '../platform/browser';
@@ -28,6 +28,7 @@ import { appFetch } from '../platform/net';
 import { getChat } from '@/lib/chats';
 import { endChat, ensureCurrent, getCurrent, panelOpened, setTemporary, switchTo } from '@/lib/current';
 import { ChatEngine, reply, type KeptCapture } from '@/lib/engine';
+import { getSettings, panelSizeItem } from '@/lib/storage';
 import { PANEL_PORT, isRuntimeMessage, type BarControlMsg, type PanelPortMsg, type RuntimeMessage, type SelectionDoneMsg } from '@/lib/messages';
 import type { NoticeReply } from '../overlay/notices';
 import { pageTitle, type OverlayNotice } from './tips';
@@ -144,14 +145,26 @@ async function tellGhost(on: boolean): Promise<void> {
   if (barUp) await tellOverlay({ type: 'bar:ghost', on });
 }
 
-/** Shows the panel, playing its entrance if it was hidden. */
+/**
+ * Shows the panel, playing its entrance if it was hidden: where the student
+ * put it (the setting), as big as they last made it, if they did.
+ */
 async function openPanel(): Promise<void> {
   if (!panelShown) {
     await browser.tell('panel', { type: 'card:enter' }).catch(() => {});
     void tellOverlay({ type: 'overlay:panel', open: true });
   }
   panelShown = true;
-  await transport.invoke('panel_open', { focus: true }).catch((err) => note(`panel_open failed: ${String(err)}`));
+  const [settings, size] = await Promise.all([getSettings(), panelSizeItem.getValue().catch(() => null)]);
+  await transport
+    .invoke('panel_open', { focus: true, place: settings.panelPlace, size })
+    .catch((err) => note(`panel_open failed: ${String(err)}`));
+}
+
+/** The panel's new-chat key: this chat is finished, the panel shows the new one, and the bar comes up for its first selection. */
+async function newChat(): Promise<void> {
+  await serial(() => endChat(W));
+  await summon();
 }
 
 /** The bar's chats button: the panel, open on its list of chats. */
@@ -219,7 +232,7 @@ browser.runtime.onConnect.addListener((port) => {
   let hello = false;
   port.onMessage.addListener((raw) => {
     const msg = raw as PanelPortMsg;
-    if (msg?.type !== 'hello' || hello) return; // pings only
+    if (msg?.type !== 'hello' || hello) return;
     hello = true;
     panels.add(port);
     void serial(() => panelOpened(W, msg.claim)).then(
@@ -238,11 +251,9 @@ browser.runtime.onConnect.addListener((port) => {
 
 // ── Messages from the overlay, the panel and settings ───────────────────
 
-const DESKTOP_MESSAGES = new Set(['overlay:ready', 'screen:enable', 'screen:later', 'screen:denied', 'chats:open']);
-
 browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
-  if (!isRuntimeMessage(raw) && !DESKTOP_MESSAGES.has((raw as { type?: string })?.type ?? '')) return;
-  const msg = raw as RuntimeMessage | NoticeReply | { type: 'overlay:ready' | 'chats:open' };
+  if (!isRuntimeMessage(raw)) return;
+  const msg = raw as RuntimeMessage | NoticeReply | { type: 'overlay:ready' | 'chats:open' | 'chat:new' };
   if (isRuntimeMessage(msg) && engine.handles(msg)) return engine.handle(msg, sendResponse);
   switch (msg.type) {
     case 'overlay:ready':
@@ -254,6 +265,9 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
       return;
     case 'chats:open':
       void openChats();
+      return;
+    case 'chat:new':
+      void newChat();
       return;
     case 'screen:later':
       void screenNotNow();
@@ -273,9 +287,6 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
       return reply(cancelSelection(), sendResponse);
     case 'chat:finish':
       return reply(finishChat(), sendResponse);
-    case 'panel:open':
-      void openPanel();
-      return;
     case 'options:open':
       void transport.invoke('settings_open', { hash: null });
       return;
