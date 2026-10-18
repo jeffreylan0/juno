@@ -136,7 +136,8 @@ export class App {
     this.xvfb.kill('SIGTERM');
     await Promise.race([new Promise((r) => this.xvfb.once('exit', r)), sleep(2000)]);
     this.xvfb.kill('SIGKILL');
-    rmSync(this.data, { recursive: true, force: true });
+    // Retried: something the app started (a browser for a link) may still be writing there.
+    rmSync(this.data, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 
   get log(): string {

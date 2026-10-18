@@ -874,13 +874,15 @@ it('the app’s windows load only its own pages: a link can’t take the panel t
   await app.eval('panel', `location.href = 'https://example.com/'`);
   await new Promise((r) => setTimeout(r, 1500));
   expect(await app.read<string>('panel', 'location.href')).toBe(before);
-  // A link inside an SVG in an answer is followed by no one either: clicking it changes nothing.
+  // A link inside an SVG is no longer followed in place: even to one of the
+  // app's own pages (which the native core would allow), clicking it leaves
+  // the panel where it is. (An external one opens the browser instead.)
   await app.eval(
     'panel',
     `(() => {
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       const a = document.createElementNS('http://www.w3.org/2000/svg', 'a');
-      a.setAttribute('href', 'https://example.com/');
+      a.setAttribute('href', '/web/settings.html');
       a.textContent = 'x';
       svg.append(a);
       document.body.append(svg);
