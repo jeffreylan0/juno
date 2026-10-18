@@ -70,7 +70,7 @@ export function setImageStore(store: ImageStore): void {
 /** A temporary chat's screenshot, in memory (storage.session). */
 export const MEMORY_REF = 'mem:';
 const memKey = (id: string) => `img:${id}`;
-const session = () => (browser.storage as unknown as { session: chrome.storage.StorageArea }).session;
+const session = () => browser.storage.session;
 
 export const isImageRef = (dataUrl: string) => dataUrl.startsWith(IMAGE_REF) || dataUrl.startsWith(MEMORY_REF);
 

@@ -91,14 +91,12 @@ export interface ChatStopMsg {
  */
 export interface ChatTemporaryMsg {
   type: 'chat:temporary';
-  windowId?: number;
   on: boolean;
 }
 
-/** Panel → core: show a chat from the menu in this window. */
+/** Panel → core: show a chat from the menu. */
 export interface ChatOpenMsg {
   type: 'chat:open';
-  windowId: number;
   chatId: string;
 }
 
@@ -113,7 +111,7 @@ export interface ChatDeleteMsg {
   chatId: string;
 }
 
-/** Options → core: delete every saved chat and its screenshots. */
+/** Settings → core: delete every saved chat and its screenshots. */
 export interface ChatsDeleteAllMsg {
   type: 'chats:delete-all';
 }
@@ -150,17 +148,16 @@ export interface SelectionIncomingMsg {
   kind: SelectionKind;
   /** When it was made (Date.now()): a selection in the chat from then on is it. */
   at: number;
-  windowId?: number;
 }
 
 /** The port the panel keeps open to the core, named this. */
 export const PANEL_PORT = 'panel';
 
 /**
- * Panel → core over the port: which window the panel is in. After the core
- * reloads, the panel says hello again and `claim`s the chat it is showing.
+ * Panel → core over the port: the panel is there. After the core reloads,
+ * the panel says hello again and `claim`s the chat it is showing.
  */
-export type PanelPortMsg = { type: 'hello'; windowId: number; claim?: { chatId: string; temporary: boolean } };
+export type PanelPortMsg = { type: 'hello'; claim?: { chatId: string; temporary: boolean } };
 
 /** Copy chats to and from the cloud now (a panel or the settings page opened). */
 export interface SyncNowMsg {

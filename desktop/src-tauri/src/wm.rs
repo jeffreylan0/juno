@@ -12,7 +12,7 @@
 //!   they say otherwise), most of the screen tall and growing with its chat,
 //!   smoothly; or as big as they last made it. Made hidden at start and kept: a selection only has to
 //!   show it, never wait for it to load. Closing it hides it and finishes
-//!   the chat, as ✕ on Chrome's side panel does.
+//!   the chat.
 //! - `settings`: the settings page, a card in the middle of the screen. Made
 //!   hidden at start and kept, like the panel, so opening it only has to
 //!   show it; closing it hides it. Asked for before its page has drawn, it
@@ -39,7 +39,7 @@ pub const OVERLAY: &str = "overlay";
 pub const PANEL: &str = "panel";
 pub const SETTINGS: &str = "settings";
 
-/// The panel's width, in CSS pixels (Chrome's side panel is 320–ish to 600).
+/// The panel's width, in CSS pixels.
 pub const PANEL_WIDTH: f64 = 420.0;
 /// The panel's height before it is placed on a display (it starts at most of the display's: geometry.rs).
 pub const PANEL_HEIGHT: f64 = 560.0;
@@ -114,8 +114,20 @@ fn place(window: &WebviewWindow, placement: Placement) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Only the app's own pages load in its windows (`tauri://localhost`;
+/// `http://tauri.localhost` on Windows; the dev server in development), so
+/// a link that got into an answer can't take a window to another site.
+pub fn own_page(url: &tauri::Url) -> bool {
+    match (url.scheme(), url.host_str()) {
+        ("tauri", Some("localhost")) | ("http" | "https", Some("tauri.localhost")) => true,
+        ("http", Some("localhost")) => tauri::is_dev(),
+        _ => url.as_str() == "about:blank",
+    }
+}
+
 pub fn make_core(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     WebviewWindowBuilder::new(app, CORE, WebviewUrl::App("web/core.html".into()))
+        .on_navigation(own_page)
         .title("Juno (core)")
         .visible(false)
         .skip_taskbar(true)
@@ -155,6 +167,7 @@ pub fn overlay(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         return Ok(w);
     }
     let window = WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("web/overlay.html".into()))
+        .on_navigation(own_page)
         .title("Juno")
         .transparent(true)
         .decorations(false)
@@ -229,6 +242,7 @@ pub fn focus_overlay(app: &AppHandle) -> tauri::Result<()> {
 /// A card window (see the top of this file), made hidden.
 fn card<'a>(app: &'a AppHandle, label: &'a str, url: &str, title: &str) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
     let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+        .on_navigation(own_page)
         .title(title)
         .resizable(true)
         .visible(false)
@@ -540,5 +554,26 @@ pub mod mac {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::own_page;
+
+    #[test]
+    fn only_the_apps_own_pages_load_in_its_windows() {
+        let ok = |u: &str| own_page(&tauri::Url::parse(u).unwrap());
+        assert!(ok("tauri://localhost/web/panel.html"));
+        assert!(ok("http://tauri.localhost/web/panel.html"));
+        assert!(ok("https://tauri.localhost/web/settings.html#answers"));
+        assert!(!ok("https://evil.example/"));
+        assert!(!ok("https://tauri.localhost.evil.example/"));
+        assert!(!ok("http://127.0.0.1:8080/"));
+        assert!(!ok("file:///etc/passwd"));
+        assert!(!ok("data:text/html,hi"));
+        assert!(!ok("javascript:alert(1)"));
+        // The dev server, in development builds only.
+        assert_eq!(ok("http://localhost:5180/web/panel.html"), tauri::is_dev());
     }
 }

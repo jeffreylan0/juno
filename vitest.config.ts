@@ -10,7 +10,7 @@ export default defineConfig({
       { find: /^@shared\//, replacement: `${resolve(__dirname, 'shared')}/` },
     ],
   },
-  envPrefix: ['WXT_', 'VITE_'],
+  envPrefix: ['WXT_'],
   test: {
     include: ['tests/unit/**/*.test.ts'],
     setupFiles: ['tests/setup.ts'],

@@ -2,7 +2,7 @@
  * Stroke icons, 24×24, drawn in currentColor. Kept as data — each shape a tag
  * and its attributes — and built element by element, never parsed from markup,
  * so no icon can ever carry anything but shapes. Shared by the panel
- * (ui/icons.tsx) and the in-page bar, which cannot use React.
+ * (ui/icons.tsx) and the bar, which cannot use React.
  */
 export type Shape = readonly ['path' | 'circle' | 'rect', Readonly<Record<string, string>>];
 export type Shapes = readonly Shape[];
@@ -32,7 +32,7 @@ export type IconName = keyof typeof ICON_PATHS;
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-/** An icon as an <svg> element, for DOM code (the in-page bar). */
+/** An icon as an <svg> element, for DOM code (the bar). */
 export function svgIcon(shapes: Shapes): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');

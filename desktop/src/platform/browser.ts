@@ -8,11 +8,10 @@
  *  - storage.local / storage.session: kept by the native core (store.rs),
  *    shared by every window; every change reaches every window's
  *    `onChanged`.
- *  - runtime.sendMessage: from any window to the core window, which
- *    answers; from the core, to every other window, unanswered.
+ *  - runtime.sendMessage: from any other window to the core window, which
+ *    answers; the core tells a window something with `tell`.
  *  - runtime.connect: a port to the core. It disconnects when either window
  *    goes, which is how the core hears that the panel was closed.
- *  - windows.getCurrent: the app has one panel, so one "window", WINDOW_ID.
  */
 import type { Transport } from './transport';
 
@@ -96,7 +95,6 @@ export interface BrowserOptions {
 
 export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
   const core = opts.core ?? 'core';
-  const isCore = t.label === core;
   const origin = opts.origin ?? (typeof location === 'undefined' ? 'tauri://localhost' : location.origin);
   const sender = (from: string): Sender => ({ id: RUNTIME_ID, origin: from, url: `${origin}/${from}.html` });
 
@@ -118,11 +116,6 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
       },
       async remove(keys: string | string[]): Promise<void> {
         await t.invoke('storage_remove', { area: name, keys: typeof keys === 'string' ? [keys] : keys });
-      },
-      async clear(): Promise<void> {
-        // What this window may see; the API keys are not among it (src-tauri/src/vault.rs).
-        const keys = Object.keys(await t.invoke<Record<string, unknown>>('storage_get', { area: name, keys: null }));
-        if (keys.length) await t.invoke('storage_remove', { area: name, keys });
       },
     };
   };
@@ -169,11 +162,6 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
   };
 
   const sendMessage = (msg: unknown): Promise<unknown> => {
-    if (isCore) {
-      // The core telling the other windows: nobody answers.
-      void t.emit('rt:msg', { id: uid(), from: t.label, msg, reply: false } satisfies Wire['msg']).catch(() => {});
-      return Promise.resolve(undefined);
-    }
     const id = uid();
     return new Promise((resolve) => {
       const timer = setTimeout(() => replies.delete(id) && resolve(undefined), REPLY_TIMEOUT_MS);
@@ -247,8 +235,20 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
   };
 
   // ── wiring ─────────────────────────────────────────────────────────────
+  /** Each secret's value as this window last heard of it: the oldValue of its next change. */
+  const secretsSeen = new Map<string, unknown>();
   const ready = Promise.all([
-    t.listen<{ area: AreaName; changes: Changes }>('storage:changed', ({ area, changes }) => {
+    t.listen<{ area: AreaName; changes: Changes }>('storage:changed', async ({ area, changes }) => {
+      // A secret's change (the account session) comes without its values,
+      // since any page could hear the event: read it back, through the checks.
+      const blind = Object.keys(changes).filter((k) => !('oldValue' in changes[k]!) && !('newValue' in changes[k]!));
+      if (blind.length) {
+        const now = await t.invoke<Record<string, unknown>>('storage_get', { area, keys: blind });
+        for (const k of blind) {
+          changes[k] = { oldValue: secretsSeen.get(k), newValue: now[k] };
+          secretsSeen.set(k, now[k]);
+        }
+      }
       areas[area]?.onChanged.fire(changes);
       anyChanged.fire(changes, area);
     }),
@@ -301,9 +301,6 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
       onConnect,
       /** The settings window, at `section` if one is named ("account"). */
       openOptionsPage: (section?: string) => t.invoke('settings_open', { hash: section ?? null }),
-    },
-    windows: {
-      getCurrent: async () => ({ id: WINDOW_ID, focused: true }),
     },
     /**
      * Sign-in (lib/account/session.ts): the page opens in the student's

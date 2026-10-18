@@ -328,7 +328,15 @@ pub struct SecretsFile(pub PathBuf);
 impl Secrets for SecretsFile {
     fn load(&self) -> io::Result<Map<String, Value>> {
         match fs::read(&self.0) {
-            Ok(bytes) => Ok(serde_json::from_slice(&sealed::open(bytes)?).unwrap_or_default()),
+            Ok(bytes) => {
+                let plain = !sealed::is_sealed(&bytes);
+                let secrets: Map<String, Value> = serde_json::from_slice(&sealed::open(bytes)?).unwrap_or_default();
+                // Written before it was encrypted (Windows): encrypted now, not at the next change.
+                if plain && !secrets.is_empty() {
+                    self.save(&secrets)?;
+                }
+                Ok(secrets)
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Map::new()),
             Err(e) => Err(e),
         }
@@ -384,6 +392,10 @@ mod sealed {
         Ok([MARK, &take(out)].concat())
     }
 
+    pub fn is_sealed(bytes: &[u8]) -> bool {
+        bytes.starts_with(MARK)
+    }
+
     pub fn open(bytes: Vec<u8>) -> io::Result<Vec<u8>> {
         let Some(sealed) = bytes.strip_prefix(MARK) else { return Ok(bytes) };
         let mut out = CRYPT_INTEGER_BLOB::default();
@@ -396,6 +408,10 @@ mod sealed {
 /// macOS and Linux: the file's permissions are what keep it private.
 #[cfg(not(windows))]
 mod sealed {
+    pub fn is_sealed(_: &[u8]) -> bool {
+        true
+    }
+
     pub fn seal(plain: Vec<u8>) -> std::io::Result<Vec<u8>> {
         Ok(plain)
     }

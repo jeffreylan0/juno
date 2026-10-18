@@ -37,7 +37,7 @@ export default defineConfig(({ mode }) => (checkAddresses(mode), {
   root: here('.'),
   // The repository's .env.local (see .env.example).
   envDir: here('..'),
-  envPrefix: ['WXT_', 'VITE_'],
+  envPrefix: ['WXT_'],
   // React and DOMPurify without their HTML-string and eval paths (harden-libs.ts).
   plugins: [react(), hardenLibraries()],
   resolve: {

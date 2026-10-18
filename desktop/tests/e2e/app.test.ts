@@ -869,6 +869,28 @@ it('an API key goes in once and no page can read it back: kept privately, sent b
   expect(readFileSync(secrets, 'utf8')).not.toContain(key);
 });
 
+it('the app’s windows load only its own pages: a link can’t take the panel to another site', async () => {
+  const before = await app.read<string>('panel', 'location.href');
+  await app.eval('panel', `location.href = 'https://example.com/'`);
+  await new Promise((r) => setTimeout(r, 1500));
+  expect(await app.read<string>('panel', 'location.href')).toBe(before);
+  // A link inside an SVG in an answer is followed by no one either: clicking it changes nothing.
+  await app.eval(
+    'panel',
+    `(() => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const a = document.createElementNS('http://www.w3.org/2000/svg', 'a');
+      a.setAttribute('href', 'https://example.com/');
+      a.textContent = 'x';
+      svg.append(a);
+      document.body.append(svg);
+      a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    })()`,
+  );
+  await new Promise((r) => setTimeout(r, 1500));
+  expect(await app.read<string>('panel', 'location.href')).toBe(before);
+});
+
 it('a theme from settings colours the panel and the bar', async () => {
   await app.eval('core', `browser.runtime.openOptionsPage('appearance')`);
   await waitFor('the themes', () => app.read('settings', `!!document.querySelector('[data-testid=themes]')`), 20_000);

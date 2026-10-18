@@ -5,7 +5,7 @@
  * page fills the window with its own background and its content comes in
  * with a short rise. They go at once: content fading out would leave the
  * empty window on screen for a moment. The top bar drags the window; the
- * page's own ✕ (SURFACE.ownWindow) closes it; ⌘Q quits.
+ * page's own ✕ closes it (`onClose` for the panel); ⌘Q quits.
  *
  * Both are made hidden at start and kept. Settings tell the native core
  * when their page has drawn, so that, asked for before then, they never

@@ -55,7 +55,7 @@ ollama serve                   # OpenAI-compatible on http://localhost:11434/v1
 | Typecheck everything | `pnpm typecheck` |
 | Worker locally | `pnpm worker:dev` |
 
-Rules that keep spend near zero: develop against `mock`; every paid eval answer is written into `eval/cache` by payload hash, so reruns replay for free (the app itself keeps no answer cache, so nothing outlives its chat); planner or prompt changes run the eval on `mock` and `local` first, and the paid batch eval runs weekly and before each gate.
+Rules that keep spend near zero: run the eval on `mock` while working on it; every paid eval answer is written into `eval/cache` by payload hash, so reruns replay for free (the app itself keeps no answer cache, so nothing outlives its chat); planner or prompt changes run the eval on `mock` and `local` first, and the paid batch eval runs weekly and before each gate.
 
 ## Eval
 
@@ -105,6 +105,7 @@ An API key is safe in the app because of how it is built, not because of a promi
 - **Checked by tests.** Rust tests prove the endpoint allowlist and the private file; an end-to-end test saves a key and then tries, from every window, to read it, write it, or send it anywhere else, and fails each time.
 - This protects against the app's own pages and other accounts on the computer, not against software running as you.
 - The account session (the sign-in) is in the same file and goes only to Supabase and the Worker; the overlay can't read it.
+- **No other site in the app's windows.** Each window loads only the app's own pages, so a link that got into an answer can't open a lookalike page asking for your key inside the app: links open in your browser.
 - **Plans**: a student on a plan sends no key at all. Hosted answers go through the Worker with the session token; the Worker holds the service's own keys. Payments go through Stripe's own pages: card details never touch the app or the Worker.
 
 ## Privacy

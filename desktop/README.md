@@ -54,7 +54,7 @@ The app lives in the menu bar, with no Dock icon from the moment it starts (`LSU
 
 The app is Juno, bundle id `com.humanbn.juno`. Builds before the rename were *Selection AI* (`org.humanbn.selectionai`): Juno's first start moves their settings, keys, chats and screenshots into its own folder (`store::adopt_earlier_store`), but to macOS it is a new app, so Screen Recording is asked for again and the old *Selection AI* entry in that list can be removed. Remove the old app too (turn its Open at login off first). Earlier still, keys were kept in the keychain under "Selection AI"; the old items can be deleted in Keychain Access.
 
-Accounts and hosted answers come from `.env.local` at the root of the repository (`WXT_SUPABASE_URL`, `WXT_SUPABASE_KEY`, `WXT_GATEWAY_URL`; the names are older than the app). It used to be `extension/.env.local`: move it up a folder.
+Accounts and hosted answers come from `.env.local` at the root of the repository (`WXT_SUPABASE_URL`, `WXT_SUPABASE_KEY`, `WXT_GATEWAY_URL`; the names are older than the app); the GitHub builds take them from Actions variables (`supabase/README.md`, step 7).
 
 ### When it misbehaves on someone else's computer
 
@@ -85,7 +85,7 @@ Installed copies update themselves from the repository's Releases (Tauri's updat
 
 1. Make the key, on your own computer: `pnpm --filter desktop tauri signer generate -w ~/.tauri/juno-updates.key`, with a password. Keep the key file and the password in your password manager: lose them, and installed copies can never update again.
 2. In GitHub → Settings → Secrets and variables → Actions, add `TAURI_SIGNING_PRIVATE_KEY` (the contents of `juno-updates.key`) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
-3. Put the public key (the contents of `juno-updates.key.pub`) in `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`, and commit it. It is public on purpose.
+3. Add the public key (the contents of `juno-updates.key.pub`) as an Actions **variable**, `TAURI_UPDATER_PUBKEY` (or put it in `src-tauri/tauri.conf.json` → `plugins.updater.pubkey` and commit it). It is public on purpose, and it is what turns updating on in a build. Without it, the builds make no update files and the run says so.
 4. Ship an update by pushing a higher version tag, `desktop-vX.Y.Z`. The *Test build* workflow builds, signs, publishes the release, and points `latest.json` at it.
 
 The releases must stay public: installed copies download without signing in. Builds made before step 3 have no key, so testers reinstall once; every later build updates itself. Until the Mac app is signed with a Developer ID, each update is a new app to macOS, which asks for Screen Recording again after it (the bar says so); a Developer ID ends that.

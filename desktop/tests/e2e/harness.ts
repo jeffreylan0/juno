@@ -192,10 +192,6 @@ export class App {
     await this.xdo('mouseup', '1');
   }
 
-  async screenshot(file: string): Promise<void> {
-    await run('import', ['-window', 'root', file], { env: { ...process.env, DISPLAY: `:${this.display}` } });
-  }
-
   /** The current chat, saved or temporary. */
   async currentChat(): Promise<Chat | null> {
     const session = await this.storage('session');

@@ -114,7 +114,7 @@ export async function getSettings(): Promise<Settings> {
 }
 
 /**
- * Brings stored settings up to date. The options page saves the whole object,
+ * Brings stored settings up to date. Settings once saved the whole object,
  * so a student who saved once has every old default pinned; a version bump is
  * how a changed default reaches them.
  *
@@ -200,7 +200,8 @@ export function answerChoiceOf(s: Pick<Settings, 'provider' | 'vendor' | 'modelO
 export function withAnswerChoice(s: Settings, choice: AnswerChoice): Settings {
   if (choice === 'none') return { ...s, provider: 'mock' };
   if (choice === 'local') return { ...s, provider: 'local' };
-  if (choice === 'hosted') return { ...s, provider: 'gateway' };
+  // Hosted answers use Claude's fast model (shared/models.ts).
+  if (choice === 'hosted') return { ...s, provider: 'gateway', vendor: 'anthropic', modelOverride: null };
   const [vendor, model] = choice.split(':') as ['anthropic' | 'openai', string];
   return { ...s, provider: 'byok', vendor, modelOverride: model === 'auto' || !model ? null : { vendor, model } };
 }

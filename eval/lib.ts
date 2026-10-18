@@ -70,7 +70,7 @@ export function loadPage(problem: Problem): JSDOM {
 /**
  * The `planner` route's stand-in for the "cheapest exact form" idea (Gate A):
  * the problem's text, LaTeX, table or code read from its page, instead of the
- * screenshot the apps send.
+ * screenshot the app sends.
  */
 export function plannerParts(problem: Problem): Part[] {
   const dom = loadPage(problem);

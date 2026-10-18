@@ -95,15 +95,18 @@ const MAX_IMAGE_URL_BYTES: usize = 32 * 1024 * 1024;
 const MAX_REGIONS: usize = 64;
 
 /// Every window hears about every change it may see, as `storage.onChanged`
-/// does (visible_to).
+/// does (visible_to). A secret's change (the account session) comes without
+/// its values: any page can listen to any event, so the window reads the
+/// value back through `storage_get`, which checks who asks.
 fn announce(app: &AppHandle, area: &str, changes: Changes) -> Res<()> {
     #[derive(Serialize, Clone)]
     struct Changed<'a> {
         area: &'a str,
         changes: Changes,
     }
+    let told = |(k, v): (&String, &store::Change)| (k.clone(), if store::is_secret(k) { store::Change::default() } else { v.clone() });
     for window in app.webview_windows().into_values() {
-        let seen: Changes = changes.iter().filter(|(k, _)| visible_to(window.label(), k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+        let seen: Changes = changes.iter().filter(|(k, _)| visible_to(window.label(), k)).map(told).collect();
         if !seen.is_empty() {
             app.emit_to(window.label(), "storage:changed", Changed { area, changes: seen }).map_err(err)?;
         }
@@ -218,7 +221,9 @@ fn image_chat_ids(state: State<Shared>) -> Vec<String> {
 // ── Windows ──────────────────────────────────────────────────────────────
 
 #[tauri::command(async)]
-fn overlay_show(app: AppHandle, state: State<Shared>, focus: bool) -> Res<()> {
+fn overlay_show(app: AppHandle, window: WebviewWindow, state: State<Shared>, focus: bool) -> Res<()> {
+    // Only the core brings the bar up: the overlay showing is what lets it take a screenshot.
+    only(&window, &[wm::CORE])?;
     static FIRST: std::sync::Once = std::sync::Once::new();
     FIRST.call_once(|| diag::note("overlay_show: first"));
     wm::show_overlay(&app, &state.overlay, focus).map_err(|e| {
@@ -228,19 +233,22 @@ fn overlay_show(app: AppHandle, state: State<Shared>, focus: bool) -> Res<()> {
 }
 
 #[tauri::command(async)]
-fn overlay_hide(app: AppHandle, state: State<Shared>) -> Res<()> {
+fn overlay_hide(app: AppHandle, window: WebviewWindow, state: State<Shared>) -> Res<()> {
+    only(&window, &[wm::OVERLAY])?;
     wm::hide_overlay(&app, &state.overlay).map_err(err)
 }
 
 #[tauri::command(async)]
-fn overlay_focus(app: AppHandle) -> Res<()> {
+fn overlay_focus(app: AppHandle, window: WebviewWindow) -> Res<()> {
+    only(&window, &[wm::OVERLAY])?;
     wm::focus_overlay(&app).map_err(err)
 }
 
 /// From the overlay page: whether a selection is armed (it takes every
 /// click), and otherwise which parts of it take clicks (the bar, tooltips).
 #[tauri::command(async)]
-fn overlay_pointer(state: State<Shared>, interactive: bool, mut regions: Vec<Rect>) {
+fn overlay_pointer(window: WebviewWindow, state: State<Shared>, interactive: bool, mut regions: Vec<Rect>) -> Res<()> {
+    only(&window, &[wm::OVERLAY])?;
     regions.truncate(MAX_REGIONS);
     let mut s = state.overlay.lock().unwrap();
     s.interactive = interactive;
@@ -248,21 +256,25 @@ fn overlay_pointer(state: State<Shared>, interactive: bool, mut regions: Vec<Rec
     if !interactive {
         s.scroll_anchor = None;
     }
+    Ok(())
 }
 
 /// The student scrolled over an armed selection: the scroll goes to the app
 /// beneath (the overlay lets the pointer through) until the pointer moves,
 /// when the overlay takes it back to select (wm::start_passthrough).
 #[tauri::command(async)]
-fn overlay_scroll_through(app: AppHandle, state: State<Shared>) {
+fn overlay_scroll_through(app: AppHandle, window: WebviewWindow, state: State<Shared>) -> Res<()> {
+    only(&window, &[wm::OVERLAY])?;
     let mut s = state.overlay.lock().unwrap();
     if s.interactive && s.scroll_anchor.is_none() {
         s.scroll_anchor = app.cursor_position().ok().map(|p| (p.x, p.y));
     }
+    Ok(())
 }
 
 #[tauri::command(async)]
-fn panel_open(app: AppHandle, state: State<Shared>, focus: bool, place: Option<String>, size: Option<PanelSize>) -> Res<()> {
+fn panel_open(app: AppHandle, window: WebviewWindow, state: State<Shared>, focus: bool, place: Option<String>, size: Option<PanelSize>) -> Res<()> {
+    only(&window, &[wm::CORE])?;
     let at = place.as_deref().and_then(geometry::Place::parse).unwrap_or_default();
     // A size the student gave it, within reason (wm.rs keeps it on screen).
     let size = size.filter(|s| s.width.is_finite() && s.height.is_finite()).map(|s| (s.width.clamp(320.0, 1600.0), s.height.clamp(320.0, 2400.0)));
@@ -277,7 +289,8 @@ struct PanelSize {
 
 /// The panel's page asks for the height its chat needs (CSS pixels).
 #[tauri::command(async)]
-fn panel_fit(app: AppHandle, state: State<Shared>, height: f64, animate: Option<bool>) -> Res<f64> {
+fn panel_fit(app: AppHandle, window: WebviewWindow, state: State<Shared>, height: f64, animate: Option<bool>) -> Res<f64> {
+    only(&window, &[wm::PANEL])?;
     wm::fit_panel(&app, &state.overlay, height, animate.unwrap_or(true)).map_err(err)
 }
 
@@ -289,7 +302,8 @@ fn window_show(window: WebviewWindow) -> Res<()> {
 }
 
 #[tauri::command(async)]
-fn panel_close(app: AppHandle) -> Res<()> {
+fn panel_close(app: AppHandle, window: WebviewWindow) -> Res<()> {
+    only(&window, &[wm::CORE])?;
     wm::close_panel(&app).map_err(err)
 }
 
@@ -298,16 +312,13 @@ fn settings_open(app: AppHandle, hash: Option<String>) -> Res<()> {
     wm::open_settings(&app, hash.as_deref()).map_err(err)
 }
 
-/// `window.close()` from a page: the windows are kept for the app's life,
-/// so it only hides them (the core never).
+/// `window.close()` from settings: they are only hidden, kept for the next
+/// time (wm.rs). No other page closes its own window: the panel's ✕ asks the
+/// core, which finishes the chat first.
 #[tauri::command(async)]
 fn window_close(app: AppHandle, window: WebviewWindow) -> Res<()> {
-    match window.label() {
-        wm::OVERLAY => window.hide().map_err(err),
-        wm::PANEL => wm::close_panel(&app).map_err(err),
-        wm::SETTINGS => wm::close_settings(&app).map_err(err),
-        _ => Ok(()),
-    }
+    only(&window, &[wm::SETTINGS])?;
+    wm::close_settings(&app).map_err(err)
 }
 
 // ── Capture ──────────────────────────────────────────────────────────────

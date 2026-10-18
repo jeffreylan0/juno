@@ -546,8 +546,8 @@ export class Overlay {
         e.stopPropagation();
         finish(null);
       };
-      // Capture on both: the page may stop propagation, and focus may sit in
-      // an input rather than on the document body.
+      // Capture on both: focus may sit in an input rather than on the
+      // document body.
       document.addEventListener('keydown', onKey, true);
       window.addEventListener('keydown', onKey, true);
 

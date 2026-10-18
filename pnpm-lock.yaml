@@ -14,9 +14,6 @@ importers:
       '@webext-core/fake-browser':
         specifier: ^2.0.1
         version: 2.0.1
-      '@wxt-dev/storage':
-        specifier: 1.2.9
-        version: 1.2.9
       jsdom:
         specifier: ^26.0.0
         version: 26.1.0
@@ -29,9 +26,6 @@ importers:
 
   desktop:
     dependencies:
-      '@selection-ai/shared':
-        specifier: workspace:*
-        version: link:../shared
       '@tauri-apps/api':
         specifier: ^2.12.0
         version: 2.12.3
@@ -66,9 +60,6 @@ importers:
       '@tauri-apps/cli':
         specifier: ^2.12.0
         version: 2.12.2
-      '@types/chrome':
-        specifier: ^0.3.0
-        version: 0.3.0
       '@types/katex':
         specifier: ^0.16.7
         version: 0.16.8
@@ -93,9 +84,6 @@ importers:
 
   eval:
     dependencies:
-      '@selection-ai/shared':
-        specifier: workspace:*
-        version: link:../shared
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
@@ -765,9 +753,6 @@ packages:
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
-
-  '@types/chrome@0.3.0':
-    resolution: {integrity: sha512-HPAMKyJwUnNJdVsxgypwvIStlwRhhaLnxgEwKIB99oOcffJrC4UMeD5xseVoBwDinSkr690DCBaAtSYdK6M1qw==}
 
   '@types/deep-eql@4.0.2':
     resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
@@ -1784,11 +1769,6 @@ snapshots:
     dependencies:
       '@types/deep-eql': 4.0.2
       assertion-error: 2.0.1
-
-  '@types/chrome@0.3.0':
-    dependencies:
-      '@types/filesystem': 0.0.36
-      '@types/har-format': 1.2.16
 
   '@types/deep-eql@4.0.2': {}
 

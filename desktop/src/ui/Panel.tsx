@@ -61,7 +61,7 @@ const send = (msg: Record<string, unknown>) => browser.runtime.sendMessage(msg).
 const SYNC_EVERY_MS = 5 * 60_000;
 
 export function Panel() {
-  const { windowId, current } = usePanelSession();
+  const current = usePanelSession();
   const chat = useChat(current?.chatId ?? null);
   const chats = useChatList();
   const { status, recheck, checking } = useAiStatus();
@@ -175,15 +175,14 @@ export function Panel() {
   const [incoming, setIncoming] = useState<{ kind: SelectionKind; at: number } | null>(null);
   useEffect(() => {
     const onMessage = (raw: unknown) => {
-      const msg = raw as { type?: string; kind?: SelectionKind; at?: number; windowId?: number };
+      const msg = raw as { type?: string; kind?: SelectionKind; at?: number };
       if (msg?.type !== 'selection:incoming') return;
-      if (msg.windowId !== undefined && windowId !== null && msg.windowId !== windowId) return;
       setIncoming({ kind: msg.kind ?? 'box', at: msg.at ?? Date.now() });
       setMenuOpen(false);
     };
     browser.runtime.onMessage.addListener(onMessage);
     return () => browser.runtime.onMessage.removeListener(onMessage);
-  }, [windowId]);
+  }, []);
   useEffect(() => {
     if (!incoming) return;
     if (landed >= incoming.at) return setIncoming(null);
@@ -259,7 +258,7 @@ export function Panel() {
   // The latest question can be edited or asked again while nothing but its answer follows it (engine.ts).
   const redoable = !busy && last?.kind === 'assistant' && items.at(-2)?.kind === 'user' ? items.at(-2)!.id : null;
   const toggleTemporary = () => {
-    if (windowId !== null) void send({ type: 'chat:temporary', windowId, on: !temporary });
+    void send({ type: 'chat:temporary', on: !temporary });
   };
 
   const placeholder = !askable
@@ -310,7 +309,7 @@ export function Panel() {
           onClose={() => setMenuOpen(false)}
           onOpen={(id) => {
             setMenuOpen(false);
-            if (windowId !== null && id !== chatId) void send({ type: 'chat:open', windowId, chatId: id });
+            if (id !== chatId) void send({ type: 'chat:open', chatId: id });
           }}
           onRename={(id, title) => void send({ type: 'chat:rename', chatId: id, title })}
           onDelete={(id) => void send({ type: 'chat:delete', chatId: id })}

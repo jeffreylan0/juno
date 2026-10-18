@@ -5,8 +5,6 @@ interface ImportMetaEnv {
   readonly WXT_SUPABASE_KEY?: string;
   /** Hosted answers: the Worker's address. */
   readonly WXT_GATEWAY_URL?: string;
-  /** The end-to-end tests' build. */
-  readonly SAI_E2E?: string;
 }
 
 /** The app's WebExtension-shaped `browser` (platform/browser.ts), put on every page by platform/install.ts. */

@@ -12,7 +12,7 @@ Please report it privately through GitHub: the repository's **Security** tab →
 | A student's sign-in session | Their own computer only. It is sent only to Supabase and the Worker. |
 | Chats and screenshots | Their own computer. With a plan that includes cloud storage, also Supabase, in the student's own rows and folder. |
 | What an account has paid for | Stripe, which is the source of truth. The Worker mirrors it into Supabase. |
-| The service's secrets: AI keys, the Supabase secret key, Stripe keys, signing certificates | Worker secrets, GitHub environment secrets, and the providers' dashboards. Never in the app or the repository. |
+| The service's secrets: AI keys, the Supabase secret key, Stripe keys, the update signing key, signing certificates | Worker secrets, GitHub Actions secrets, and the providers' dashboards. Never in the app or the repository. |
 | humanbn's money: AI spend, storage, payments | Bounded by the limits below and by spending caps the owner sets. |
 
 The design assumes these attackers:
@@ -37,7 +37,8 @@ The design doesn't defend against malware running as the student's own user acco
   - So even a page that was taken over (a crafted answer getting past the sanitizer, a malicious package) can't read a key or send it anywhere but to its own company, asking a question.
   - On disk: `secrets.json`, mode 0600 from the moment it is written; on Windows also encrypted for the user with DPAPI, so a copy of the file is useless on another computer or account.
   - Tested: Rust tests pin the allowlist and the file; an end-to-end test saves a key, then tries from every window to read it (by name, with everything, straight from the native core), write it, remove it, and send it from the wrong window or to another address, and checks that each attempt fails.
-- **Commands check their caller:** only the hidden core window can take a screenshot (only while the bar is up) or send with a key. Only Settings can put a key in or change "Open at login". The overlay can't read the account session.
+- **Commands check their caller:** only the hidden core window can take a screenshot (only while the bar is up), bring up the bar, open the panel or send with a key; only the overlay steers its own pointer handling, and only the panel resizes itself. Only Settings can put a key in or change "Open at login". The overlay can't read the account session: `storage_get` refuses it, and changes to it are announced without their values (any page can listen to any event), so each window reads it back through that check.
+- **Only the app's own pages, in every window:** each window refuses to navigate anywhere but the app's own pages (`wm.rs` `own_page`), so no link, whatever got it into an answer, can turn the panel into another site asking for a key. SVG and MathML links lose their `href` when an answer is sanitized, and a click on any other link opens the student's browser.
 - **Network:** the HTTP allowlist covers `https://*`, plus plain HTTP to `localhost`, `127.0.0.1` and `*.local`. Nothing else is reachable, not even the cloud metadata address.
 - **CSP:** `script-src 'self'`, no objects or frames, and no remote images, media or fonts.
 - **Code:** no remote code, no `eval`; React's and DOMPurify's HTML-string paths are removed at build time (`desktop/harden-libs.ts`).
@@ -49,7 +50,7 @@ The design doesn't defend against malware running as the student's own user acco
 - **Cloud copies:** chats already on a computer are never copied into another account that signs in there.
 - **Test hook:** the test-only HTTP hook isn't compiled into releases, and it refuses any request that comes from a browser.
 - **Screen capture on Windows:** the app's windows are left out of captures (display affinity) only while the app takes its own screenshot, so recordings, screen sharing and remote desktops show the app like any other window.
-- **Updates (src-tauri/src/updates.rs):** a new version is installed only if its download carries a valid signature from the update key (minisign, Tauri's updater), fetched over HTTPS from the repository's `updates` release; downgrades are refused. The key's public half is in `tauri.conf.json`; the private half is a GitHub Actions secret, used only by the release build. A build without the public key never updates. The page code can't drive the updater: no window is granted its commands, and the app's own update commands answer only the settings window.
+- **Updates (src-tauri/src/updates.rs):** a new version is installed only if its download carries a valid signature from the update key (minisign, Tauri's updater), fetched over HTTPS from the repository's `updates` release; downgrades are refused. The key's public half goes into each build (the `TAURI_UPDATER_PUBKEY` Actions variable, or `tauri.conf.json`); the private half is a GitHub Actions secret, given only to the build of a `desktop-v*` tag. A build without the public key never updates. The page code can't drive the updater: no window is granted its commands, and the app's own update commands answer only the settings window.
 - **Log:** `juno.log` keeps only the app's own steps and errors (each line stripped of control characters and capped), never what was asked, the screen or a key.
 
 **Worker** (OWASP API Security Top 10; RFC 8725 for JWT)
@@ -131,6 +132,10 @@ Five parts were reviewed separately against the standards above, and every findi
 | Database | Deletion could orphan billing or screenshots | Medium | Refused until both are gone; sync paused meanwhile |
 | Database | A subscription with no period end counted forever | Low | Counts as inactive |
 | App | API keys were readable by the script of every window but the overlay, and a page sent them itself, so a page taken over could send them anywhere | Medium | The native key vault: no page reads a key; only the core sends with one, only to four endpoints at its own company |
+| App | A link inside an SVG in a model's answer escaped the link handler, so a click could load another site in the panel (a lookalike asking for the key) | Medium | Windows load only the app's own pages; SVG and MathML links lose their `href`; every link click is handled |
+| App | Changes to the account session went out as events with their values, which any page can hear | Low | Announced without values; read back through the checked command |
+| App | Halving a long log could cut a character in two and stop the app at every start | Low | Cut at a line's end, in bytes |
+| App | Any window could bring up the overlay (which allows a screenshot) or move the panel | Low | Window commands answer only their own window |
 | App | Every window could call every command (capture, keys, login item) | Medium | Commands check which window called |
 | App | The HTTP plugin could reach any host | Medium | Allowlist |
 | App | Secrets in roaming app data on Windows | Medium | Local app data |
@@ -185,7 +190,7 @@ Beyond strong passwords and business accounts:
   - Untick *Allow GitHub Actions to create and approve pull requests*.
   - Require approval for workflows from outside contributors.
   - Allow only actions from GitHub and verified creators, and *require actions to be pinned to a full-length commit SHA* if the option is offered.
-- **Environments:** the browser stores' `stores` environment and its nine secrets (Chrome Web Store, Firefox, Edge) belonged to the retired extension's release workflow. Delete them. When signing certificates arrive, give them an environment of their own with you as required reviewer, limited to `desktop-v*` tags.
+- **Environments:** the browser stores' `stores` environment and its nine secrets (Chrome Web Store, Firefox, Edge) belonged to the retired extension's release workflow. Delete them. Before updates are turned on (the update key's public half in the `TAURI_UPDATER_PUBKEY` variable), protect the private half: only a `desktop-v*` tag's build is given it today, but anyone who can push a tag (or a workflow) can make one. Add a tag protection rule for `desktop-v*`, then move `TAURI_SIGNING_PRIVATE_KEY` and its password into an environment (`release`) with you as required reviewer, limited to `desktop-v*` tags, and add `environment: release` to the *Test build* job. Signing certificates go there too when they arrive.
 - **Rules → Rulesets:**
   - On `main`: require a pull request and the CI and Desktop checks, and block force pushes and deletion.
   - A tag ruleset so only you can create `desktop-v*` tags. Those tags publish releases.

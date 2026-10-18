@@ -49,7 +49,7 @@ x11rb = "0.13"
 # server; the Tauri CLI turns it on for `tauri build`.
 custom-protocol = ["tauri/custom-protocol"]
 # A local HTTP hook that drives the app from end-to-end tests (desktop/tests).
-# Never in a release build: `pnpm desktop:build` leaves it off.
+# Never in a release build: `pnpm build` leaves it off.
 test-hook = []
 
 [profile.release]

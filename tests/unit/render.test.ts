@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { renderMarkdown } from '@/lib/render';
+import { renderMarkdownFragment } from '@/lib/render';
+
+/** What the panel inserts, as HTML. */
+function renderMarkdown(src: string): string {
+  const box = document.createElement('div');
+  box.append(renderMarkdownFragment(src));
+  return box.innerHTML;
+}
 
 describe('renderMarkdown', () => {
   it('renders inline and display math with KaTeX', () => {
@@ -68,5 +75,15 @@ describe('model output hardening', () => {
     const html = renderMarkdown('[docs](https://example.com)');
     expect(html).toContain('target="_blank"');
     expect(html).toContain('rel="noopener noreferrer"');
+  });
+
+  it('leaves no link in SVG or MathML, which would be followed in place, past the link handler', () => {
+    const svg = renderMarkdown('<svg width="2000" height="2000"><a href="https://evil.example/"><rect width="100%" height="100%"/></a></svg>');
+    expect(svg).toContain('<rect');
+    expect(svg).not.toContain('evil.example');
+    const xlink = renderMarkdown('<svg><a xlink:href="https://evil.example/"><text>x</text></a></svg>');
+    expect(xlink).not.toContain('evil.example');
+    const math = renderMarkdown('<math><mi href="https://evil.example/">x</mi></math>');
+    expect(math).not.toContain('evil.example');
   });
 });

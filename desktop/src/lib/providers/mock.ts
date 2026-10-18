@@ -1,7 +1,7 @@
 /**
- * Mock provider: streams a deterministic placeholder so the UI can be
- * developed with zero API spend (the development default). Given a cache
- * (the eval), it replays what was recorded for the same payload hash instead.
+ * Mock provider, for the eval and the tests (the app never offers it):
+ * streams a deterministic placeholder at zero API spend. Given a cache (the
+ * eval), it replays what was recorded for the same payload hash instead.
  */
 import type { AskRequest, ModelRef } from '@shared/payload';
 import { partToText } from '@shared/prompts';
@@ -34,7 +34,7 @@ function placeholder(req: AskRequest, hash: string): string {
   const lines = [
     `Read: ${fresh.length} part(s) — ${summary || 'nothing'}${earlier ? ` (plus ${earlier} earlier selection(s) in this chat)` : ''}`,
     '',
-    `**Placeholder answer** (mode: ${plan.mode}, route: ${plan.route}): no AI was asked. Pick one in Settings → Answers.`,
+    `**Placeholder answer** (mode: ${plan.mode}, route: ${plan.route}): no AI was asked.`,
     '',
     'Rendering check: $E = mc^2$, $$\\int_0^1 x^2\\,dx = \\tfrac{1}{3}$$ and $\\ce{2H2 + O2 -> 2H2O}$.',
   ];

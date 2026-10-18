@@ -24,10 +24,7 @@ export function ModelPicker({ settings, keys }: { settings: Settings; keys: KeyS
       void browser.runtime.openOptionsPage();
       return;
     }
-    const choice = next as AnswerChoice;
-    // Hosted answers use Claude's fast model (shared/models.ts).
-    const base = choice === 'hosted' ? { ...settings, vendor: 'anthropic' as const, modelOverride: null } : settings;
-    await settingsItem.setValue(withAnswerChoice(base, choice));
+    await settingsItem.setValue(withAnswerChoice(settings, next as AnswerChoice));
   };
 
   return (

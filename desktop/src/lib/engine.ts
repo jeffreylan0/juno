@@ -98,8 +98,8 @@ export interface EngineHost {
 }
 
 /**
- * A crop, and — from the desktop app, which only learns it at capture time —
- * the window it was taken from, which then names the selection's page.
+ * A crop, and the window it was taken from (the native core only learns it
+ * at capture time), which then names the selection's page.
  */
 export type KeptCapture = CaptureResult & { page?: { url: string; title: string } };
 
@@ -113,7 +113,7 @@ export interface KeepInput {
   capture: () => Promise<KeptCapture | undefined>;
 }
 
-const sharedSession = () => (browser.storage as unknown as { session: chrome.storage.StorageArea }).session;
+const sharedSession = () => browser.storage.session;
 
 export class ChatEngine {
   /**
@@ -471,9 +471,9 @@ export class ChatEngine {
 
   /**
    * The chosen AI's status, from a check at most a minute old unless `force`.
-   * One check at a time per choice and key: a panel opening in each of three
-   * windows asks once, and a check for an old choice or key is never passed off
-   * as one for the new.
+   * One check at a time per choice and key: asked again while one runs, it
+   * waits for that one, and a check for an old choice or key is never passed
+   * off as one for the new.
    */
   async aiStatus(force: boolean): Promise<AiStatus> {
     const current = await getSettings();
@@ -518,7 +518,7 @@ export class ChatEngine {
 function captureNotice(err: unknown): string {
   // The core can explain itself (a permission missing, say).
   const message = (err as { notice?: unknown } | null)?.notice;
-  return typeof message === 'string' && message ? message : "Couldn't take a screenshot of that. Try again, or reload the page.";
+  return typeof message === 'string' && message ? message : "Couldn't take a screenshot of that. Try again.";
 }
 
 async function withPixels(a: Attachment): Promise<Attachment> {

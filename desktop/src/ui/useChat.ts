@@ -8,24 +8,24 @@ import { INDEX_KEY, chatKey, getChat, listChats, type Chat, type ChatSummary } f
 import { currentKey, getCurrent, type Current } from '@/lib/current';
 import { getImage, isImageRef, isInlineImage } from '@/lib/images';
 import { PANEL_PORT, type PanelPortMsg } from '@/lib/messages';
+import { WINDOW_ID, type Port } from '@/platform/browser';
 import { STATUS_KEY, type AiStatus } from '@/lib/status';
 
 type Changes = Record<string, { newValue?: unknown }>;
 
 /**
- * The panel's session: which window it is in, and the chat that window
- * shows. Holding the port open is what tells the core the panel is there;
- * its closing (the page crashed or reloaded) ends the chat.
+ * The panel's session: the chat it shows (the app has one panel, so one
+ * "window" of chats: WINDOW_ID). Holding the port open is what tells the
+ * core the panel is there; its closing (the page crashed or reloaded) ends
+ * the chat.
  */
-export function usePanelSession(): { windowId: number | null; current: Current | null } {
-  const [windowId, setWindowId] = useState<number | null>(null);
+export function usePanelSession(): Current | null {
   const [current, setCurrentState] = useState<Current | null>(null);
   const latest = useRef<Current | null>(null);
 
   useEffect(() => {
     let alive = true;
-    let port: chrome.runtime.Port | undefined;
-    let wid: number | undefined;
+    let port: Port | undefined;
     const update = (c: Current | null) => {
       if (!alive) return;
       latest.current = c;
@@ -33,11 +33,11 @@ export function usePanelSession(): { windowId: number | null; current: Current |
     };
 
     const connect = () => {
-      if (!alive || wid === undefined) return;
+      if (!alive) return;
       const reconnecting = latest.current;
-      port = browser.runtime.connect({ name: PANEL_PORT }) as unknown as chrome.runtime.Port;
-      port.onMessage.addListener((msg: { type?: string }) => {
-        if (msg?.type === 'ready' && wid !== undefined) void getCurrent(wid).then(update);
+      port = browser.runtime.connect({ name: PANEL_PORT });
+      port.onMessage.addListener((msg) => {
+        if ((msg as { type?: string } | null)?.type === 'ready') void getCurrent(WINDOW_ID).then(update);
       });
       // The core reloaded: say hello again, keeping this chat.
       port.onDisconnect.addListener(() => {
@@ -45,7 +45,6 @@ export function usePanelSession(): { windowId: number | null; current: Current |
       });
       const hello: PanelPortMsg = {
         type: 'hello',
-        windowId: wid,
         ...(reconnecting ? { claim: { chatId: reconnecting.chatId, temporary: reconnecting.temporary } } : {}),
       };
       port.postMessage(hello);
@@ -53,18 +52,12 @@ export function usePanelSession(): { windowId: number | null; current: Current |
 
     // Deferred a tick so React's development double-mount does not open and
     // close a chat before the real one.
-    const start = setTimeout(() => {
-      void browser.windows.getCurrent().then((w) => {
-        if (!alive) return;
-        wid = w.id;
-        setWindowId(w.id ?? null);
-        connect();
-      });
-    }, 0);
+    const start = setTimeout(connect, 0);
 
+    const key = currentKey(WINDOW_ID);
     const onChanged = (changes: Changes, area: string) => {
-      if (area !== 'session' || wid === undefined || !(currentKey(wid) in changes)) return;
-      update((changes[currentKey(wid)]!.newValue as Current | undefined) ?? null);
+      if (area !== 'session' || !(key in changes)) return;
+      update((changes[key]!.newValue as Current | undefined) ?? null);
     };
     browser.storage.onChanged.addListener(onChanged);
     return () => {
@@ -75,7 +68,7 @@ export function usePanelSession(): { windowId: number | null; current: Current |
     };
   }, []);
 
-  return { windowId, current };
+  return current;
 }
 
 /** One chat, live. Null until it has something in it (empty chats are not stored). */

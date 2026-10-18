@@ -20,7 +20,7 @@ const routes = String(args.route ?? 'mock')
   .filter((r): r is EvalRoute => (EVAL_ROUTES as string[]).includes(r));
 const limit = args.limit ? Number(args.limit) : undefined;
 const only = args.only ? String(args.only).split(',') : undefined;
-const vendor = (String(args.vendor ?? 'anthropic') as 'anthropic' | 'openai') ?? 'anthropic';
+const vendor = String(args.vendor ?? 'anthropic') as 'anthropic' | 'openai';
 const modelArg = args.model ? String(args.model) : undefined;
 
 const ctx: ProviderContext = {
