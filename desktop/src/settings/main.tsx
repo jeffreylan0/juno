@@ -21,7 +21,13 @@ followTheme();
 function opened(section: string): void {
   playEntrance();
   history.replaceState(null, '', section ? `#${section}` : location.pathname);
+  goTo(section, 30);
+}
+
+/** Scrolls to `#section` once the page has drawn it (it may be starting afresh), or to the top. */
+function goTo(section: string, frames: number): void {
   const at = section ? document.getElementById(section) : null;
+  if (section && !at && frames > 0) return void requestAnimationFrame(() => goTo(section, frames - 1));
   if (at) at.scrollIntoView({ behavior: 'instant' });
   else document.querySelector('.page')?.scrollTo({ top: 0, behavior: 'instant' });
 }

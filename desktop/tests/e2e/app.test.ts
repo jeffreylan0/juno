@@ -807,11 +807,14 @@ it('the gear on the bar opens settings: the app’s own shortcut, no blocked sit
   await waitFor('settings hidden', async () => !(await app.window('settings'))?.visible);
   expect(await app.window('settings')).toBeTruthy();
   const asked = Date.now();
-  await app.eval('core', `browser.runtime.openOptionsPage('app')`);
+  await app.eval('core', `browser.runtime.openOptionsPage('privacy')`);
   await waitFor('settings again', async () => (await app.window('settings'))?.visible, 2_000);
   expect(Date.now() - asked).toBeLessThan(1_000);
-  await waitFor('at the section', () => app.read('settings', `Math.abs(document.getElementById('app').getBoundingClientRect().top) < 120`));
-  expect(await app.read('settings', 'location.hash')).toBe('#app');
+  // Below the sticky header, at the top of the window.
+  await waitFor('at the section', () =>
+    app.read('settings', `(() => { const top = document.getElementById('privacy').getBoundingClientRect().top; return top >= 0 && top < 150; })()`),
+  );
+  expect(await app.read('settings', 'location.hash')).toBe('#privacy');
 });
 
 it('an API key goes in once and no page can read it back: kept privately, sent by the native core only to its own company', async () => {
