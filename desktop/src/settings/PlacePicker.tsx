@@ -9,7 +9,7 @@ const ROWS = ['top', 'middle', 'bottom'] as const;
 const COLS = ['left', 'center', 'right'] as const;
 
 /** "Top left", "Middle", "Bottom right": what a screen reader says for each part. */
-export function placeName(place: Place): string {
+function placeName(place: Place): string {
   const [row, col] = place.split('-') as [(typeof ROWS)[number], (typeof COLS)[number]];
   if (row === 'middle' && col === 'center') return 'Middle';
   const r = { top: 'Top', middle: 'Middle', bottom: 'Bottom' }[row];

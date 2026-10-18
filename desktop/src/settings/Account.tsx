@@ -75,7 +75,7 @@ function SignIn() {
 
   return (
     <div className="field" data-testid="sign-in">
-      <p className="help">Optional. Sign in for a plan with hosted answers (no key needed) and your chats in the cloud.</p>
+      <p className="help">Optional: for hosted answers and cloud sync.</p>
       {!sentTo ? (
         <>
           <button type="button" className="secondary" disabled={!!busy} onClick={google} data-testid="google-sign-in">
@@ -210,7 +210,7 @@ function SignedIn({ account, settings, save }: { account: AccountState; settings
                   <input type="checkbox" checked={settings.cloudSync} data-testid="cloud-sync" onChange={(e) => void save({ cloudSync: e.target.checked })} />
                   Keep my chats in the cloud too
                 </label>
-                <small className="help">Your chats and screenshots, on every computer you sign in on. Temporary chats never go.</small>
+                <small className="help">On every computer you sign in on.</small>
                 {settings.cloudSync && <SyncLine status={account.sync} />}
               </>
             ) : (
@@ -304,8 +304,8 @@ function PlanField({ ent }: { ent: Entitlement }) {
       {plan && (
         <div className="upgrade" data-testid="upgrade">
           <p className="help">
-            <b>{plan.name}</b>: {plan.monthly_questions.toLocaleString()} hosted answers a month, no key needed
-            {plan.cloud ? ', and your chats in the cloud' : ''}.
+            <b>{plan.name}</b>: up to {plan.monthly_questions.toLocaleString()} hosted answers a month, no key needed
+            {plan.cloud ? ', and cloud sync' : ''}.{upgrades.every((o) => !o.interval) ? ' Paid once; nothing renews.' : ''}
           </p>
           <div className="key-row">
             {upgrades.map((o) => (
@@ -321,7 +321,7 @@ function PlanField({ ent }: { ent: Entitlement }) {
               </button>
             ))}
           </div>
-          <small className="help">Payment opens in your browser, with Stripe. Cancel any time.</small>
+          <small className="help">Payment opens in your browser, with Stripe.</small>
         </div>
       )}
       {ent.customer && (

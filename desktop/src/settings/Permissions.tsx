@@ -24,13 +24,12 @@ export function Permissions() {
       <span className="field-label">Screen Recording</span>
       {access === 'granted' ? (
         <p className="help ok" data-testid="screen-granted">
-          On. {BRAND.name} looks at the screen only when you select something, never in the background.
+          On. Used only when you select something.
         </p>
       ) : (
         <>
           <p className="help warn" data-testid="screen-denied">
-            Off. {BRAND.name} needs it to see what you select. Turn {BRAND.name} on under Screen &amp; System Audio
-            Recording, then restart it.
+            Off. Turn on {BRAND.name} under Screen &amp; System Audio Recording, then restart.
           </p>
           <span className="key-row">
             <button type="button" className="secondary" onClick={() => void invoke('open_privacy_settings')}>
@@ -42,13 +41,9 @@ export function Permissions() {
           </span>
         </>
       )}
-      <ul className="help facts" data-testid="permission-facts">
-        <li>
-          It is the <b>only</b> permission {BRAND.name} asks for: no accessibility access, no microphone, no keystrokes.
-          macOS names the switch &ldquo;Screen &amp; System Audio Recording&rdquo;; {BRAND.name} never records audio.
-        </li>
-        <li>Only the area you select is captured, and it goes only to the AI you picked.</li>
-      </ul>
+      <small className="help" data-testid="permission-facts">
+        The only permission {BRAND.name} asks for. It never records audio.
+      </small>
     </div>
   );
 }

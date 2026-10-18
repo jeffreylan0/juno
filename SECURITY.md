@@ -43,6 +43,7 @@ The design doesn't defend against malware running as the student's own user acco
 - **Cloud copies:** chats already on a computer are never copied into another account that signs in there.
 - **Test hook:** the test-only HTTP hook isn't compiled into releases, and it refuses any request that comes from a browser.
 - **Screen capture on Windows:** the app's windows are left out of captures (display affinity) only while the app takes its own screenshot, so recordings, screen sharing and remote desktops show the app like any other window.
+- **Updates (src-tauri/src/updates.rs):** a new version is installed only if its download carries a valid signature from the update key (minisign, Tauri's updater), fetched over HTTPS from the repository's `updates` release; downgrades are refused. The key's public half is in `tauri.conf.json`; the private half is a GitHub Actions secret, used only by the release build. A build without the public key never updates. The page code can't drive the updater: no window is granted its commands, and the app's own update commands answer only the settings window.
 - **Log:** `juno.log` keeps only the app's own steps and errors (each line stripped of control characters and capped), never what was asked, the screen or a key.
 
 **Worker** (OWASP API Security Top 10; RFC 8725 for JWT)
@@ -136,7 +137,7 @@ Five parts were reviewed separately against the standards above, and every findi
 ## Known limits (not fixed yet, and why)
 
 - **Unsigned app builds:** the Mac build isn't notarized and the Windows build isn't signed, so testers see warnings and can't tell a genuine build from a lookalike except by its checksum or attestation. This needs an Apple Developer ID and a Windows signing certificate (see the checklist below).
-- **No auto-updater:** a security fix reaches app users only when they reinstall. Add Tauri's updater, with its own signing key kept offline, once builds are signed.
+- **Updates aren't pinned to a version in their signature:** the updater checks every download against the update key, but `latest.json` itself isn't signed, so someone able to serve a different `latest.json` (GitHub, or the network if TLS failed) could point apps at an older genuine release. The updater's `requireSignedVersion` closes that once the Tauri CLI that signs the releases records the version in the signature; check that, then turn it on in `tauri.conf.json`.
 - **App secrets aren't encrypted at rest:** the app's secrets file is protected only by file permissions. Once the app is signed, keep the key in the macOS Keychain or under Windows DPAPI.
 - **Window titles go to the AI:** in the app, the title of the window under the selection goes to the AI with the selection (for example an email subject). A setting to leave it out is a product decision.
 - **Email codes are the weakest sign-in:** NIST no longer treats email as a strong second channel. Google sign-in is offered. Passkeys would be the next step.
@@ -194,6 +195,7 @@ Beyond strong passwords and business accounts:
   - The Worker's secrets: only `wrangler secret put`.
   - Never in `.env` files, chat messages, screenshots or tickets.
   - `.env.local` (at the repository root) holds only the publishable Supabase key and the service addresses.
+- **The update key** (desktop/README.md, *Updates*): the private key and its password live only in your password manager and the `TAURI_SIGNING_PRIVATE_KEY*` Actions secrets. Never rotate it casually: installed copies trust only the public key they shipped with, so a new key needs one release signed with the old key that carries the new public key. If it leaks, publish nothing more with it and tell users to reinstall.
 - **Rotate:** at least yearly, immediately when someone leaves, and whenever a secret might have been seen: the AI keys, the Stripe restricted key and webhook secret, and the Supabase secret key. `supabase/README.md` § Before launch describes the order.
 - **Cap the money:**
   - Monthly spending limits and alerts on the Anthropic and OpenAI workspaces the Worker uses.

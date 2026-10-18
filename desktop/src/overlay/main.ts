@@ -12,6 +12,7 @@ import { SelectionController } from '@/lib/selection-controller';
 import type { OverlayNotice } from '../core/tips';
 import { noticeFor } from './notices';
 import { trackPointer } from './pointer';
+import { followTheme } from '../theme';
 
 const controller = new SelectionController({
   // A wheel while armed scrolls the app beneath: the window lets the pointer
@@ -42,5 +43,6 @@ void transport.listen<Record<'top' | 'right' | 'bottom' | 'left', number>>('over
   for (const [side, px] of Object.entries(insets)) document.documentElement.style.setProperty(`--sai-inset-${side}`, `${px}px`);
 });
 
+followTheme({ bar: true });
 trackPointer(transport);
 void browser.ready.then(announce);

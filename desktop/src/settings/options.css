@@ -57,7 +57,6 @@ h1 { font-size: 15px; font-weight: 600; margin: 0; }
 .saved.on { opacity: 1; }
 
 .options { max-width: 680px; margin: 0 auto; padding: 20px 20px 80px; }
-.lede { color: var(--muted); margin: 0 0 4px; line-height: 1.55; }
 
 section {
   display: flex; flex-direction: column; gap: 16px;
@@ -65,7 +64,6 @@ section {
   border: 1px solid var(--line); border-radius: 14px;
 }
 h2 { font-size: 15px; margin: 0; }
-.section-lede { margin-top: -10px; }
 .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 
 /* Who answers: one card per choice. */
@@ -167,3 +165,20 @@ label.check input { margin: 0; padding: 0; }
 .place-mark { width: 16px; height: 4px; border-radius: 2px; background: currentColor; opacity: 0.45; }
 .place-picker.panel .place-mark { width: 7px; height: 14px; }
 .place-cell[aria-checked='true'] .place-mark { opacity: 1; }
+
+/* Appearance (ThemePicker.tsx): each theme as a little window in its own colours. */
+.themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+.theme { display: flex; flex-direction: column; gap: 6px; padding: 0; border: 0; background: none; cursor: pointer; color: var(--fg); font: inherit; text-align: left; }
+.theme-preview {
+  position: relative; display: flex; flex-direction: column; gap: 5px; height: 64px; padding: 10px;
+  border: 1px solid; border-radius: 10px; box-sizing: border-box;
+}
+.theme[aria-checked='true'] .theme-preview { box-shadow: 0 0 0 2px var(--accent); }
+.theme:focus-visible { outline: none; }
+.theme:focus-visible .theme-preview { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--accent-bg); }
+.theme-bubble { align-self: flex-end; width: 44%; height: 10px; border-radius: 5px; }
+.theme-line { width: 70%; height: 4px; border-radius: 2px; opacity: 0.85; }
+.theme-line.short { width: 46%; }
+.theme-dot { position: absolute; right: 9px; bottom: 9px; width: 12px; height: 12px; border-radius: 6px; }
+.theme-name { font-size: 13px; }
+.theme[aria-checked='true'] .theme-name { font-weight: 600; }

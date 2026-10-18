@@ -19,7 +19,7 @@
  * shared between chats or students, and the scope says nothing about who
  * asked (a hash the vendors cannot link from one chat to the next).
  */
-import { MODEL_TABLE } from '@selection-ai/shared/models';
+import { HOSTED_MODEL } from '@selection-ai/shared/models';
 import type { Env } from './index';
 
 export interface AskBody {
@@ -36,10 +36,10 @@ interface ChatMessage {
   content: string | ContentPart[];
 }
 
-/** Models hosted answers may use: the apps' own automatic choice, nothing else. */
+/** Models hosted answers may use: the apps' own fast model for each vendor, nothing else. */
 export const HOSTED_MODELS: Record<'anthropic' | 'openai', string[]> = {
-  anthropic: Object.values(MODEL_TABLE.anthropic),
-  openai: Object.values(MODEL_TABLE.openai),
+  anthropic: [HOSTED_MODEL.anthropic],
+  openai: [HOSTED_MODEL.openai],
 };
 
 /**
@@ -169,7 +169,8 @@ export async function callVendor(vendor: 'anthropic' | 'openai', model: string, 
       'anthropic-version': '2023-06-01',
       ...gatewayHeaders(env),
     },
-    body: JSON.stringify({ model, system, messages, max_tokens: MAX_OUTPUT_TOKENS, stream: true }),
+    // Low effort: hosted answers are meant to be quick.
+    body: JSON.stringify({ model, system, messages, max_tokens: MAX_OUTPUT_TOKENS, output_config: { effort: 'low' }, stream: true }),
   });
   if (!res.ok || !res.body) return res;
   return new Response(res.body.pipeThrough(anthropicToOpenAI()), { status: 200, headers: { 'content-type': 'text/event-stream' } });

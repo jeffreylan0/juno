@@ -120,6 +120,9 @@ it('the bar always comes up in Box, whatever mode was used last', async () => {
   expect((await app.storage('local')).lastSelectionKind).toBeUndefined();
 });
 
+/** Whether one of the bar's buttons can be seen: folded away, it is hidden with no width. */
+const SHOWS = `(el) => !!el && getComputedStyle(el).visibility !== 'hidden' && el.getBoundingClientRect().width > 0`;
+
 /** Where the bar and its modes are, and which of its chats, ghost and gear show. */
 const barLayout = () =>
   app.read<{ bar: { left: number; width: number }; chips: { left: number; width: number }; shown: string[] }>(
@@ -127,7 +130,7 @@ const barLayout = () =>
     `(() => {
       const s = document.querySelector('selection-ai-overlay').shadowRoot;
       const at = (q) => { const r = s.querySelector(q).getBoundingClientRect(); return { left: r.left, width: r.width }; };
-      const shown = ['.chats', '.ghost', '.gear'].filter((q) => getComputedStyle(s.querySelector(q)).display !== 'none');
+      const shown = ['.chats', '.ghost', '.gear'].filter((q) => (${SHOWS})(s.querySelector(q)));
       return { bar: at('.bar'), chips: at('.chips'), shown };
     })()`,
   );
@@ -141,10 +144,20 @@ it('the bar is compact, its modes in the middle; chats, ghost and gear leave it 
   expect(Math.abs(middle(before.chips) - middle(before.bar))).toBeLessThanOrEqual(1);
   expect(before.shown).toEqual(['.chats', '.ghost', '.gear']);
 
+  // They fold away (an animation, not a jump) once the panel opens.
+  await app.eval(
+    'overlay',
+    `(() => {
+      window.__folds = [];
+      document.querySelector('selection-ai-overlay').shadowRoot
+        .addEventListener('transitionstart', (e) => window.__folds.push(e.target.classList[0] + ':' + e.propertyName));
+    })()`,
+  );
   await box(150, 150, 250, 250);
   await selections(1);
   await waitFor('the panel', async () => (await app.window('panel'))?.visible);
   await waitFor('the bar without them', async () => (await barLayout()).shown.length === 0);
+  expect(await app.read<string[]>('overlay', 'window.__folds')).toEqual(expect.arrayContaining(['chats:width', 'gear:opacity', 'start:width']));
   // ✕ and the modes, as much room before the one as after the other.
   const pads = await app.read<{ before: number; after: number }>(
     'overlay',
@@ -165,7 +178,7 @@ it('the bar is compact, its modes in the middle; chats, ghost and gear leave it 
       const look = () => {
         const s = host.shadowRoot;
         if (!host.isConnected) return;
-        if (['.chats', '.ghost', '.gear'].some((q) => s.querySelector(q) && getComputedStyle(s.querySelector(q)).display !== 'none')) window.__flashed = true;
+        if (['.chats', '.ghost', '.gear'].some((q) => (${SHOWS})(s.querySelector(q)))) window.__flashed = true;
       };
       new MutationObserver(look).observe(host.shadowRoot, { subtree: true, attributes: true, childList: true });
       const frame = () => { look(); if (host.isConnected) requestAnimationFrame(frame); };
@@ -682,9 +695,28 @@ it('the gear on the bar opens settings: the app’s own shortcut, no blocked sit
   expect(text).toContain('Works in every app');
   expect(text).not.toContain('Blocked sites');
   expect(text).not.toContain("browser's PDF viewer");
-  expect(text).toContain("the window's title go to the AI you picked");
+  expect(text).toContain("its window's title, to the AI you picked");
   expect(text).toContain('only your account can read');
+  // A development build carries no update key.
+  expect(text).toContain("Updates aren't set up in this build");
   expect(text).toContain('Quit Juno');
+});
+
+it('a theme from settings colours the panel and the bar', async () => {
+  await app.eval('core', `browser.runtime.openOptionsPage('appearance')`);
+  await waitFor('the themes', () => app.read('settings', `!!document.querySelector('[data-testid=themes]')`), 20_000);
+  expect(await app.read('settings', `document.querySelector('[data-testid=themes] [aria-checked=true]').dataset.theme`)).toBe('claude');
+  await app.eval('settings', `document.querySelector('[data-theme=ocean]').click()`);
+  await waitFor('the theme saved', async () => ((await app.storage('local')).settings as { theme?: string } | undefined)?.theme === 'ocean');
+  const accent = (label: string, name: string) => app.read<string>(label, `getComputedStyle(document.documentElement).getPropertyValue('${name}').trim()`);
+  // The light or the dark palette, whichever the system shows.
+  await waitFor('the panel in Ocean', async () => ['#0e7490', '#22b8cf'].includes(await accent('panel', '--accent')));
+  expect(['#0e7490', '#22b8cf']).toContain(await accent('settings', '--accent'));
+  // The bar is dark in every theme.
+  await waitFor('the bar in Ocean', async () => (await accent('overlay', '--sai-bar-bg')) === '#16252d');
+
+  await app.eval('settings', `document.querySelector('[data-theme=claude]').click()`);
+  await waitFor('back to Claude', async () => (await accent('panel', '--accent')) !== '#0e7490' && (await accent('panel', '--accent')) !== '#22b8cf');
 });
 
 it('Quit in settings ends the app (the menu bar icon starts a selection when clicked, so Quit lives here and in its right-click menu)', async () => {

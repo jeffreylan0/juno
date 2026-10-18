@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { verifySession } from '../../worker/src/auth';
 import { readBody } from '../../worker/src/body';
 import { checkout, form, prices, webhook } from '../../worker/src/billing';
-import { LIMITS, anthropicToOpenAI, cacheScope, parseAsk, scoped, toAnthropic } from '../../worker/src/models';
+import { LIMITS, anthropicToOpenAI, cacheScope, callVendor, parseAsk, scoped, toAnthropic } from '../../worker/src/models';
 import type { Env } from '../../worker/src/index';
 
 const SUPABASE_URL = 'https://proj.supabase.co';
@@ -104,10 +104,13 @@ describe('what may be asked', () => {
   const messages = [{ role: 'user', content: 'hi' }];
   const png = 'data:image/png;base64,iVBORw0KGgo=';
   it('allows exactly the apps’ own models and refuses the rest before anything is spent', () => {
-    expect(parseAsk({ model: 'anthropic/claude-sonnet-5-5', messages }).model).toBe('claude-sonnet-5-5');
+    expect(parseAsk({ model: 'anthropic/claude-haiku-5-5', messages }).model).toBe('claude-haiku-5-5');
     expect(parseAsk({ model: 'openai/gpt-6-luna', messages }).vendor).toBe('openai');
     expect(() => parseAsk({ model: 'anthropic/claude-opus-5-5', messages })).toThrow("can't use");
-    expect(() => parseAsk({ model: 'anthropic/claude-sonnet-5-5-preview', messages })).toThrow("can't use");
+    // The slower, pricier models are for your own key only.
+    expect(() => parseAsk({ model: 'anthropic/claude-sonnet-5-5', messages })).toThrow("can't use");
+    expect(() => parseAsk({ model: 'openai/gpt-6-sol', messages })).toThrow("can't use");
+    expect(() => parseAsk({ model: 'anthropic/claude-haiku-5-5-preview', messages })).toThrow("can't use");
     expect(() => parseAsk({ model: 'openai/gpt-6-astra', messages })).toThrow("can't use");
     expect(() => parseAsk({ model: 'mistral/large', messages })).toThrow("can't use");
     expect(() => parseAsk({ model: 'anthropic/claude-haiku-4-5-20251001', messages: [] })).toThrow();
@@ -115,27 +118,27 @@ describe('what may be asked', () => {
 
   it('passes on only text and inline screenshots, rebuilt without anything else', () => {
     const ok = parseAsk({
-      model: 'openai/gpt-6-sol',
+      model: 'openai/gpt-6-luna',
       ephemeral: 'yes',
       extra: 1,
       messages: [{ role: 'user', name: 'x', content: [{ type: 'text', text: 'What is this?', x: 1 }, { type: 'image_url', image_url: { url: png, detail: 'high', y: 2 } }] }],
     });
     expect(ok.body).toEqual({
-      model: 'openai/gpt-6-sol',
+      model: 'openai/gpt-6-luna',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'What is this?' }, { type: 'image_url', image_url: { url: png, detail: 'high' } }] }],
     });
-    const ask = (content: unknown) => () => parseAsk({ model: 'openai/gpt-6-sol', messages: [{ role: 'user', content }] });
+    const ask = (content: unknown) => () => parseAsk({ model: 'openai/gpt-6-luna', messages: [{ role: 'user', content }] });
     expect(ask([{ type: 'image_url', image_url: { url: 'https://evil.example/x.png' } }])).toThrow('malformed'); // the vendor would fetch it
     expect(ask([{ type: 'image_url', image_url: { url: 'data:text/html;base64,PGI+' } }])).toThrow('malformed');
     expect(ask([{ type: 'file', file: { file_id: 'f' } }])).toThrow('malformed');
     expect(ask([{ type: 'input_audio', input_audio: {} }])).toThrow('malformed');
-    expect(() => parseAsk({ model: 'openai/gpt-6-sol', messages: [{ role: 'tool', content: 'x' }] })).toThrow('malformed');
+    expect(() => parseAsk({ model: 'openai/gpt-6-luna', messages: [{ role: 'tool', content: 'x' }] })).toThrow('malformed');
   });
 
   it('refuses a request bigger than a long chat, as too large', () => {
     const tooLong = (messages: unknown[]) => {
       try {
-        parseAsk({ model: 'anthropic/claude-sonnet-5-5', messages });
+        parseAsk({ model: 'anthropic/claude-haiku-5-5', messages });
       } catch (err) {
         return (err as { status?: number }).status;
       }
@@ -189,6 +192,18 @@ describe('prompt caches, one per chat', () => {
 });
 
 describe('Anthropic, in the OpenAI shape', () => {
+  it('asks for a quick answer: low effort', async () => {
+    let sent: { model?: string; output_config?: { effort?: string } } = {};
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      sent = JSON.parse(String(init.body));
+      return new Response('{}', { status: 529 });
+    });
+    const env = { AI_GATEWAY_ID: '', ANTHROPIC_API_KEY: 'k' } as Env;
+    await callVendor('anthropic', 'claude-haiku-5-5', { model: 'anthropic/claude-haiku-5-5', messages: [{ role: 'user', content: 'hi' }] }, env, 'scope');
+    expect(sent.model).toBe('claude-haiku-5-5');
+    expect(sent.output_config).toEqual({ effort: 'low' });
+  });
+
   it('moves the system prompt out, turns images into base64 blocks and caches the last turn', () => {
     const { system, messages } = toAnthropic([
       { role: 'system', content: 'Be brief.' },

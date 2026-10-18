@@ -11,6 +11,11 @@ name: Test build
 # build others install never restores anything an ordinary run saved. The
 # release carries SHA256SUMS and a signed build provenance attestation
 # (`gh attestation verify <file> --repo jeffreylan0/selectionai`).
+#
+# Updates: with the TAURI_SIGNING_PRIVATE_KEY secret set (desktop/README.md,
+# Updates), the builds also make signed update files, and a `desktop-vX.Y.Z`
+# tag (that X.Y.Z becomes the app's version) publishes latest.json to the
+# `updates` release, where installed apps look for a new version.
 on:
   workflow_dispatch:
   push:
@@ -31,9 +36,12 @@ jobs:
           - name: macOS (universal .dmg)
             os: macos-latest
             targets: aarch64-apple-darwin,x86_64-apple-darwin
-            args: --target universal-apple-darwin --bundles dmg
+            args: --target universal-apple-darwin --bundles app,dmg
             bundle: desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
             asset: mac.dmg
+            # The app as the updater installs it.
+            update: desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            update_asset: mac.app.tar.gz
             # Signed ad hoc: without a Developer ID macOS still warns once,
             # but an unsigned bundle would be called "damaged" instead.
             signing: '-'
@@ -43,6 +51,9 @@ jobs:
             args: --bundles nsis
             bundle: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
             asset: windows-setup.exe
+            # The updater runs the installer itself.
+            update: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+            update_asset: windows-setup.exe
             signing: ''
     runs-on: ${{ matrix.os }}
     steps:
@@ -58,16 +69,40 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.targets }}
       - run: pnpm install --frozen-lockfile
+      - name: Version and update files
+        shell: bash
+        env:
+          SIGNED: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          # A desktop-vX.Y.Z tag is the version; anything else keeps tauri.conf.json's.
+          version=$(node -p "require('./desktop/src-tauri/tauri.conf.json').version")
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" =~ ^desktop-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            version="${BASH_REMATCH[1]}"
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "SIGNED=$SIGNED" >> "$GITHUB_ENV"
+          VERSION=$version node -e '
+            const c = { version: process.env.VERSION };
+            if (process.env.SIGNED === "true") c.bundle = { createUpdaterArtifacts: true };
+            require("fs").writeFileSync("desktop/src-tauri/release.conf.json", JSON.stringify(c));'
+          cat desktop/src-tauri/release.conf.json
       - name: Build
         env:
           APPLE_SIGNING_IDENTITY: ${{ matrix.signing }}
-        run: pnpm --filter desktop exec tauri build ${{ matrix.args }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm --filter desktop exec tauri build ${{ matrix.args }} --config src-tauri/release.conf.json
       - name: Name the installer
         shell: bash
         run: |
-          version=$(node -p "require('./desktop/src-tauri/tauri.conf.json').version")
           mkdir -p out
-          cp ${{ matrix.bundle }} "out/Juno-$version-${{ matrix.asset }}"
+          cp ${{ matrix.bundle }} "out/Juno-$VERSION-${{ matrix.asset }}"
+          if [ "$SIGNED" = true ]; then
+            for f in ${{ matrix.update }}; do
+              cp "$f" "out/Juno-$VERSION-${{ matrix.update_asset }}"
+              cp "$f.sig" "out/Juno-$VERSION-${{ matrix.update_asset }}.sig"
+            done
+          fi
           ls -l out
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -89,7 +124,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-          sparse-checkout: TESTERS.md
+          sparse-checkout: |
+            TESTERS.md
+            desktop/scripts/latest-json.mjs
           sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -106,6 +143,13 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('desktop-test-{0}', github.run_number) }}
         run: |
+          if ls out/*.sig > /dev/null 2>&1; then node desktop/scripts/latest-json.mjs out "$TAG" "$GH_REPO"; fi
           ls -l out
           gh release create "$TAG" out/* --prerelease --target "$GITHUB_SHA" \
             --title "Juno test build ($TAG)" --notes-file TESTERS.md
+          # A tagged version is what installed apps update to (src-tauri/src/updates.rs).
+          if [ -f out/latest.json ] && [[ "$TAG" == desktop-v* ]]; then
+            gh release view updates > /dev/null 2>&1 || gh release create updates --prerelease --target "$GITHUB_SHA" \
+              --title "Juno updates" --notes "Where installed copies of Juno look for a new version (latest.json). Keep it."
+            gh release upload updates out/latest.json --clobber
+          fi

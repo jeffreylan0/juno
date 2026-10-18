@@ -24,7 +24,7 @@ export function ModelPicker({ settings, keys }: { settings: Settings; keys: Keys
       return;
     }
     const choice = next as AnswerChoice;
-    // Hosted answers use Claude, with the automatic model choice.
+    // Hosted answers use Claude's fast model (shared/models.ts).
     const base = choice === 'hosted' ? { ...settings, vendor: 'anthropic' as const, modelOverride: null } : settings;
     await settingsItem.setValue(withAnswerChoice(base, choice));
   };

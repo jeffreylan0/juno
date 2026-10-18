@@ -17,3 +17,4 @@ desktop/src-tauri/gen/
 
 # Wrangler's local secrets (worker/)
 .dev.vars*
+desktop/src-tauri/release.conf.json

@@ -158,7 +158,7 @@ create or replace function pg_temp.acct(id text) returns jsonb language sql as $
 select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'free' and (pg_temp.acct('c') ->> 'customer')::boolean, 'C a customer, still free');
 insert into public.subscriptions (id, user_id, plan, kind, status, price, period_end)
 values ('sub_c', '00000000-0000-0000-0000-00000000000c', 'plus', 'subscription', 'active', 'plus_monthly', now() + interval '20 days');
-select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'plus' and (pg_temp.acct('c') ->> 'quota')::int = 600 and (pg_temp.acct('c') ->> 'cloud')::boolean, 'C subscribed: Plus');
+select pg_temp.check(pg_temp.acct('c') ->> 'plan' = 'plus' and (pg_temp.acct('c') ->> 'quota')::int = 3000 and (pg_temp.acct('c') ->> 'cloud')::boolean, 'C subscribed: Plus');
 insert into public.subscriptions (id, user_id, plan, kind, status, price, period_end)
 values ('sub_c', '00000000-0000-0000-0000-00000000000c', 'plus', 'subscription', 'active', 'plus_monthly', now() + interval '25 days')
 on conflict (id) do update set status = excluded.status, period_end = excluded.period_end, updated_at = now();
@@ -181,7 +181,7 @@ select pg_temp.check(not (pg_temp.acct('c') -> 'billing' ->> 'active')::boolean 
 insert into public.subscriptions (id, user_id, plan, kind, status, period_end)
 values ('cs_d', '00000000-0000-0000-0000-00000000000d', 'plus', 'pass', 'paid', now() + interval '120 days');
 select pg_temp.check(pg_temp.acct('d') ->> 'plan' = 'plus' and pg_temp.acct('d') -> 'billing' ->> 'kind' = 'pass', 'D on a pass');
-select pg_temp.check((public.use_answer('00000000-0000-0000-0000-00000000000d') ->> 'quota')::int = 600, 'a pass counts answers');
+select pg_temp.check((public.use_answer('00000000-0000-0000-0000-00000000000d') ->> 'quota')::int = 3000, 'a pass counts answers');
 update public.subscriptions set status = 'refunded' where id = 'cs_d';
 select pg_temp.check(pg_temp.acct('d') ->> 'plan' = 'free', 'refunded pass: free');
 update public.subscriptions set status = 'paid', period_end = now() - interval '1 minute' where id = 'cs_d';

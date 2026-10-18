@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from '@webext-core/fake-browser';
 import type { Plan } from '@shared/payload';
 import { FakeSupabase } from '../support/fake-supabase';
+import { priceLabel, type Offer } from '@/lib/account/billing';
 import {
   currentSession,
   entitlementItem,
@@ -357,5 +358,24 @@ describe('cloud copies', () => {
     expect(fake.chats).toEqual([]);
     expect(await sessionItem.getValue()).toBeNull();
     expect(await getChat('one')).not.toBeNull();
+  });
+});
+
+describe('prices, as settings show them', () => {
+  const offer = (amount: number, passDays: number | null, interval: 'month' | 'year' | null = null): Offer => ({
+    key: 'k',
+    name: 'Plus',
+    amount,
+    currency: 'usd',
+    interval,
+    intervalCount: 1,
+    passDays,
+    plan: { id: 'plus', name: 'Plus', monthly_questions: 3000, cloud: true },
+  });
+  it('names a pass by how long it lasts, and a subscription by how often it renews', () => {
+    expect(priceLabel(offer(499, 120), 'en-US')).toBe('$4.99 for 4 months');
+    expect(priceLabel(offer(1199, 365), 'en-US')).toBe('$11.99 for a year');
+    expect(priceLabel(offer(199, 7), 'en-US')).toBe('$1.99 for 7 days');
+    expect(priceLabel(offer(799, null, 'month'), 'en-US')).toBe('$7.99 a month');
   });
 });
