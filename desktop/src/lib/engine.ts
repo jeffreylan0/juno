@@ -41,7 +41,7 @@ import { addSelection, allCurrent, discardOrphans, onTemporaryDiscarded, replace
 import { deletePartImages, hydrateParts } from './images';
 import type { RuntimeMessage, SelectionDoneMsg } from './messages';
 import { buildPlan, type CaptureResult } from './planner';
-import { callModel, type ProviderContext } from './providers';
+import { ProviderError, callModel, type ProviderContext, type Vault } from './providers';
 import { testKey } from './providers/byok';
 import { chooseRoute } from './router';
 import { STATUS_KEY, STATUS_TTL_MS, checkStatus, statusFromAnswer, type AiStatus } from './status';
@@ -50,12 +50,9 @@ import {
   GATEWAY_URL,
   answerChoiceOf,
   fallbackQuestion,
-  getKeys,
   getSettings,
-  keysItem,
   settingsItem,
   shouldAutoSend,
-  type Keys,
   type Settings,
 } from './storage';
 
@@ -90,8 +87,12 @@ const SHARED: ReadonlySet<string> = new Set([
 ]);
 
 export interface EngineHost {
-  /** Where answers, connection checks and key checks go out. */
+  /** Where answers and connection checks go out. */
   fetch: typeof fetch;
+  /** Requests with the student's API keys (platform/vault.ts). */
+  vault: Vault;
+  /** Calls `fn` whenever a key is put in or taken out. */
+  watchKeys(fn: () => void): void;
   /** Whether any panel is open: the connection is only worth re-checking then. */
   panelsOpen(): boolean;
 }
@@ -152,7 +153,7 @@ export class ChatEngine {
         });
       }),
     );
-    keysItem.watch(() => void (this.host.panelsOpen() && this.aiStatus(true)));
+    this.host.watchKeys(() => void (this.host.panelsOpen() && this.aiStatus(true)));
     // Signing in or out changes whether hosted answers can be asked.
     sessionItem.watch((now, before) => {
       if (now?.user.id !== before?.user.id && this.settings.provider === 'gateway' && this.host.panelsOpen()) void this.aiStatus(true);
@@ -250,7 +251,7 @@ export class ChatEngine {
       case 'ai:check':
         return reply(this.aiStatus(!!msg.force), sendResponse);
       case 'keys:test':
-        void testKey(this.host.fetch, msg.vendor, msg.key).then(sendResponse);
+        void testKey(this.host.vault, msg.vendor).then(sendResponse);
         return true;
       case 'sync:now':
         this.sync?.soon(0);
@@ -281,11 +282,9 @@ export class ChatEngine {
     await sharedSession().set({ lastDropped: { titles: dropped.map((c) => c.title || 'Untitled chat'), at: Date.now() } });
   }
 
-  /** The keys an answer or a check needs; for hosted answers, the account's current token. */
-  async keysFor(current: Settings): Promise<Keys> {
-    const keys = await getKeys();
-    if (current.provider !== 'gateway') return { ...keys, session: '' };
-    return { ...keys, session: (await currentSession())?.accessToken ?? '' };
+  /** For hosted answers, the account's current token. */
+  async sessionFor(current: Settings): Promise<string> {
+    return current.provider === 'gateway' ? ((await currentSession())?.accessToken ?? '') : '';
   }
 
   /**
@@ -391,11 +390,14 @@ export class ChatEngine {
 
       const done: Partial<AssistantItem> = { streaming: false };
       const current = await getSettings();
-      const keys = await this.keysFor(current);
+      const session = await this.sessionFor(current);
       try {
+        // No one picked yet: placeholder answers are for the eval and tests, not the app.
+        if (current.provider === 'mock') throw new ProviderError('Pick who answers in Settings first.', 'no-key');
         const ctx: ProviderContext = {
           fetch: this.host.fetch,
-          keys,
+          vault: this.host.vault,
+          session,
           settings: { ...current, gatewayUrl: GATEWAY_URL },
           // A temporary chat asks the vendor to keep as little as it allows.
           ephemeral: setup.temporary,
@@ -423,6 +425,7 @@ export class ChatEngine {
         }
       } catch (err) {
         done.error = (err as Error).message;
+        if (err instanceof ProviderError) done.errorCode = err.code;
       } finally {
         clearInterval(timer);
       }
@@ -474,10 +477,11 @@ export class ChatEngine {
    */
   async aiStatus(force: boolean): Promise<AiStatus> {
     const current = await getSettings();
-    const keys = await this.keysFor(current);
+    const session = await this.sessionFor(current);
     const choice = answerChoiceOf(current);
-    // In memory only; the key is part of it so a fixed key (or a new sign-in) is checked afresh.
-    const key = `${choice}|${current.localBaseUrl}|${current.provider === 'byok' ? keys[current.vendor] : current.provider === 'gateway' ? keys.session.slice(-16) : ''}`;
+    // In memory only; the key (its last characters) is part of it so a fixed key (or a new sign-in) is checked afresh.
+    const who = current.provider === 'byok' ? (await this.host.vault.status())[current.vendor] : session.slice(-16);
+    const key = `${choice}|${current.localBaseUrl}|${who ?? ''}`;
     if (this.checking?.key === key) return await this.checking.run;
     const stored = (await sharedSession().get(STATUS_KEY))[STATUS_KEY] as AiStatus | undefined;
     if (!force && stored && stored.choice === choice && Date.now() - stored.checkedAt < STATUS_TTL_MS) return stored;
@@ -488,7 +492,7 @@ export class ChatEngine {
       .then(async () => {
         let status: AiStatus;
         try {
-          status = await checkStatus(this.host.fetch, current, keys);
+          status = await checkStatus(this.host.fetch, current, this.host.vault, session);
         } catch (err) {
           status = { state: 'error', choice, who: '', message: (err as Error).message, checkedAt: Date.now() };
         }

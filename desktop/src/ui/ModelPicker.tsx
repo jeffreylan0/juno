@@ -1,19 +1,20 @@
 /**
  * Who answers, chosen right beside Send instead of in settings: the
- * major Claude and ChatGPT models, a local model, or placeholder answers.
+ * major Claude and ChatGPT models, a local model, or hosted answers.
  *
  * Models from a vendor with no key saved are listed but disabled with "add
  * key", and the last entry opens settings, so the picker never lets a
  * student pick something that can only fail.
  */
 import { ASSISTANT, MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE, SHORT_NAMES } from '@/lib/router';
-import { answerChoiceOf, settingsItem, withAnswerChoice, type AnswerChoice, type Keys, type Settings } from '@/lib/storage';
+import type { KeyStatus } from '@/lib/providers/types';
+import { answerChoiceOf, settingsItem, withAnswerChoice, type AnswerChoice, type Settings } from '@/lib/storage';
 import { hasHosted, useAccount } from './useAccount';
 
 const SETTINGS = '__settings';
 
 
-export function ModelPicker({ settings, keys }: { settings: Settings; keys: Keys | null }) {
+export function ModelPicker({ settings, keys }: { settings: Settings; keys: KeyStatus | null }) {
   const value = answerChoiceOf(settings);
   const has = (vendor: 'anthropic' | 'openai') => !!keys?.[vendor];
   const hosted = hasHosted(useAccount());
@@ -68,11 +69,13 @@ export function ModelPicker({ settings, keys }: { settings: Settings; keys: Keys
           <option value="local" title={`Local model: ${settings.localModel}`}>
             Local model
           </option>
-          <option value="placeholder" title="Placeholder answers, no AI">
-            Placeholder
-          </option>
           {(hosted || value === 'hosted') && <option value="hosted">Hosted</option>}
         </optgroup>
+        {value === 'none' && (
+          <option value="none" disabled hidden>
+            Set up
+          </option>
+        )}
         <option value={SETTINGS}>Add or change API keys…</option>
       </select>
     </label>
@@ -80,7 +83,7 @@ export function ModelPicker({ settings, keys }: { settings: Settings; keys: Keys
 }
 
 function describe(value: AnswerChoice, settings: Settings): string {
-  if (value === 'placeholder') return 'placeholder answers, no AI';
+  if (value === 'none') return 'no one yet';
   if (value === 'local') return `local model ${settings.localModel}`;
   if (value === 'hosted') return 'hosted answers (Claude, through your plan)';
   const [vendor, model] = value.split(':') as ['anthropic' | 'openai', string];
@@ -93,7 +96,7 @@ function describe(value: AnswerChoice, settings: Settings): string {
 
 /** What the closed picker shows: short, since it shares a row with the macros. */
 function short(value: AnswerChoice): string {
-  if (value === 'placeholder') return 'Placeholder';
+  if (value === 'none') return 'Set up';
   if (value === 'local') return 'Local model';
   if (value === 'hosted') return 'Hosted';
   const [vendor, model] = value.split(':') as ['anthropic' | 'openai', string];

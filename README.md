@@ -20,7 +20,7 @@ Juno began as a browser extension (Chrome, Edge and Firefox). The extension is r
 | Settings | Answers, Asking, Selecting, Appearance (seven colour themes), Chats & privacy, Permissions (macOS), Juno (version, updates, login, Quit), and Account in builds with accounts; short text, saved as you go |
 | Updates | the app looks for a new version at start and every 6 hours, downloads it in the background and installs it when nothing of it is on screen, then restarts into the menu bar; on unless turned off. Needs the owner's update key (desktop/README.md, *Updates*) |
 | Real answers | your own Anthropic or OpenAI key: free key check, model picker beside the macros, prompt caching for follow-ups, errors that say what to do; temporary chats ask for the shortest retention the API allows |
-| Providers | placeholder, local (Ollama), your own key (Anthropic, OpenAI), hosted (the Worker: Claude Haiku 5.5 or GPT-6 Luna, quick and cheap, for plans with hosted answers) |
+| Providers | local (Ollama), your own key (Anthropic, OpenAI), hosted (the Worker: Claude Haiku 5.5 or GPT-6 Luna, quick and cheap, for plans with hosted answers); the first start sets one up. Placeholder answers remain for the eval and tests only |
 | Accounts and plans | optional: Google or an emailed code (Supabase). Plans (Free, Plus, given by hand) with hosted answers and cloud storage of chats; Plus as a pass bought once with Stripe (*Plans* below). Built; turned on by the setup in `supabase/README.md` |
 | Permissions | Screen Recording only, on macOS; Windows asks for nothing |
 | Eval | 5 seed problems of 100; mock and image-only routes run |
@@ -29,13 +29,13 @@ Juno began as a browser extension (Chrome, Edge and Firefox). The extension is r
 
 ```bash
 pnpm install
-cp .env.example .env.local     # WXT_PROVIDER=mock needs no keys
+cp .env.example .env.local     # optional: accounts, the eval's keys
 pnpm dev                       # the app with live reload
 ```
 
 On a Mac, try permissions with `pnpm app` instead (a real `Juno.app`, so macOS asks on Juno's behalf, not your terminal's): see `desktop/README.md`, *Running it*.
 
-The default is placeholder answers: no network, no spend. To get real answers, open Settings (the gear on the bar or the panel), choose Claude or ChatGPT, paste a key and press **Check key**, which lists the models the key can use and costs nothing. *Automatic* picks Claude Sonnet 5.5 (GPT-6 Sol on OpenAI), which read screenshots best. Set a spend limit in the vendor's console. Or point at a local Ollama server:
+The first start opens the setup: choose Claude or ChatGPT and paste a key (it is checked at once by listing the models it can use, which costs nothing), point at a local model, or, in builds with accounts, sign in for hosted answers. Settings → *Answers* changes it later. *Automatic* picks Claude Sonnet 5.5 (GPT-6 Sol on OpenAI), which read screenshots best. Set a spend limit in the vendor's console. A local Ollama server:
 
 ```bash
 ollama pull qwen2.5vl:7b
@@ -97,11 +97,14 @@ Two rules hold the design together. Every provider speaks one OpenAI-compatible 
 
 ## How keys are stored
 
-Your own keys and your sign-in session never leave the computer except to the service they belong to: an Anthropic key only to Anthropic, an OpenAI key only to OpenAI, the session only to Supabase and the Worker.
+An API key is safe in the app because of how it is built, not because of a promise: once it goes in, no page of the app can read it back, and it can only ever be sent to the company that issued it.
 
-- They are kept in one file, `secrets.json` in the app's data folder (`~/Library/Application Support/com.humanbn.juno/store/` on macOS, `%LOCALAPPDATA%\com.humanbn.juno\store\` on Windows, never the roaming profile), readable only by your user account (mode 0600 on macOS and Linux; the user's own profile folder on Windows). The overlay window, drawn over whatever is on screen, can't read it at all.
-- Not the keychain: macOS ties a keychain item to the exact build that made it, so every unsigned build asked for the keychain password. Once the app is signed with a Developer ID, the keychain can hold the file's key without prompts.
-- This protects against other accounts on the computer, not against software running as you.
+- **No page holds it.** Settings hands the key to the native core (`desktop/src-tauri/src/vault.rs`) and forgets it. The storage commands never read, write or announce it to any window; pages learn only whether there is one, by its last four characters. A page that was somehow taken over (a crafted answer, a bad package) still can't read it.
+- **Only to its own company.** Asking goes through the native core, which adds the key itself and sends only to four endpoints: asking and listing models, at `api.anthropic.com` or `api.openai.com`, over HTTPS, following no redirect. Any other request with a key is refused. The answer streams back; the key never does.
+- **Private on disk.** It is kept in one file, `secrets.json` in the app's data folder (`~/Library/Application Support/com.humanbn.juno/store/` on macOS, `%LOCALAPPDATA%\com.humanbn.juno\store\` on Windows, never the roaming profile): mode 0600 on macOS and Linux, and on Windows also encrypted for your user by the system (DPAPI), so a copy is useless on another computer or account. Not the macOS keychain: it ties an item to the exact build that made it, so every unsigned build asked for the keychain password.
+- **Checked by tests.** Rust tests prove the endpoint allowlist and the private file; an end-to-end test saves a key and then tries, from every window, to read it, write it, or send it anywhere else, and fails each time.
+- This protects against the app's own pages and other accounts on the computer, not against software running as you.
+- The account session (the sign-in) is in the same file and goes only to Supabase and the Worker; the overlay can't read it.
 - **Plans**: a student on a plan sends no key at all. Hosted answers go through the Worker with the session token; the Worker holds the service's own keys. Payments go through Stripe's own pages: card details never touch the app or the Worker.
 
 ## Privacy
@@ -138,6 +141,6 @@ The outward contact is info@humanbn.com: store listings, Stripe, Google's sign-i
 
 ## Next
 
-Test builds (a Mac `.dmg` and a Windows `.exe`, without accounts) come from the *Test build* workflow; `TESTERS.md` is what testers read. Accounts, plans and billing are built but off until the services are set up: `supabase/README.md` goes through it step by step. Then the eval set and Gate A, and a signed and notarized Mac build.
+Test builds (a Mac `.dmg` and a Windows `.exe`) come from the *Test build* workflow, with accounts once the repository's Actions variables are set (`supabase/README.md`, step 7); `TESTERS.md` is what testers read. Accounts, plans and billing are set up step by step in `supabase/README.md`. Then the eval set and Gate A, and a signed and notarized Mac build.
 
 Ideas from testing kept for later, as possible settings: a visible *New chat* button in the panel (the key does it today), and keeping no saved chats at all (the ghost covers it today). Planned: a marketplace on the website for themes and macros (themes are already data: `desktop/src/lib/themes.ts`).

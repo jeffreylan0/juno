@@ -2,7 +2,7 @@
 
 Thanks for helping test. Juno lets you draw a box (or any shape) around something on your screen, like a math problem, a chart or a paragraph in a PDF, and ask Claude or ChatGPT about exactly that.
 
-This is an early test build, without accounts. Your computer will warn you once when you open it, because the app isn't signed by Apple or Microsoft yet.
+This is an early test build. Your computer will warn you once when you open it, because the app isn't signed by Apple or Microsoft yet.
 
 ## Download
 
@@ -23,29 +23,31 @@ The release lists `SHA256SUMS`, the fingerprint of each file. On a Mac, `shasum 
 2. Open it from Applications. macOS says it "could not verify Juno is free of malware". Click **Done**, not Move to Trash.
 3. Open **System Settings → Privacy & Security**, scroll down to *"Juno" was blocked*, click **Open Anyway** and enter your password. This is needed once per build.
    (If you use Terminal, `xattr -dr com.apple.quarantine "/Applications/Juno.app"` does the same thing.)
-4. The app lives in the menu bar, with no Dock icon, and its bar opens at the bottom of the screen. The first time, it asks for **Screen Recording**:
-   - Click *Turn on Screen Recording*.
+4. The app lives in the menu bar, with no Dock icon. The first time, it opens its setup (*Choose who answers*, below), which also asks for **Screen Recording**:
+   - Click *Open System Settings*.
    - Switch **Juno** on under *Screen & System Audio Recording*.
-   - Click **Restart** on the bar.
+   - Click **Restart Juno**. (If you skip it, the bar asks again the first time you select something.)
 
    This is the only permission the app asks for. It records no video and no audio: it takes one picture of the area you select, when you select it.
 
 ## Install on Windows
 
 1. Run the `-setup.exe`. If Windows says *Windows protected your PC*, click **More info → Run anyway**.
-2. It installs for your account only, so no administrator password is needed. Leave *Run Juno* ticked at the end. The bar comes up at the bottom of the screen, and Juno's blue icon is in the system tray; click **^** next to the clock if it's hidden.
+2. It installs for your account only, so no administrator password is needed. Leave *Run Juno* ticked at the end. The setup opens (*Choose who answers*, below), and Juno's blue icon is in the system tray; click **^** next to the clock if it's hidden.
 
 Windows asks for no permissions.
 
 ## Choose who answers
 
-Open settings with the gear on the bar, or right-click the menu bar or tray icon and choose **Settings…**. Under **Answers**, pick one:
+The first time you open Juno, it asks who should answer. Pick one, then **Start using Juno**:
 
-- **Claude** or **ChatGPT**: paste an API key. Get one at [console.anthropic.com](https://console.anthropic.com/settings/keys) or [platform.openai.com](https://platform.openai.com/api-keys). API use is pay-as-you-go and is billed separately from a Claude or ChatGPT subscription. If you were given a key for testing, paste that.
+- **Claude** or **ChatGPT**: paste an API key and press **Save**; it is checked at once. Get one at [console.anthropic.com](https://console.anthropic.com/settings/keys) or [platform.openai.com](https://platform.openai.com/api-keys). API use is pay-as-you-go and is billed separately from a Claude or ChatGPT subscription. If you were given a key for testing, paste that.
 - **Local model**: a model running on your own computer, such as one served by Ollama. It must be a model that reads images. (In the app, a server on another computer needs an `https://` address or a `.local` name.)
-- **Placeholder**: made-up answers, no AI. Use it to try the selecting without a key.
+- **Juno account**: sign in with Google or an emailed code, for hosted answers if your plan includes them.
 
-Your key stays on your computer, in a file only your user account can read. It is only ever sent to the company that issued it. When you ask, only your selection and your question go to the AI you chose. The app collects no analytics.
+You can change it later in Settings (the gear on the bar, or right-click the menu bar or tray icon and choose **Settings…**) under **Answers**.
+
+Once saved, your key is never shown again, only its last four characters. It stays on your computer, in a file only your user account can read (on Windows also encrypted for your account), and no part of the app's windows can read it back: the app's core adds it to each request itself, and only ever sends it to the company that issued it. When you ask, only your selection and your question go to the AI you chose. The app collects no analytics.
 
 ## Use it
 

@@ -1,8 +1,9 @@
 /**
- * Settings, in the order a student meets them:
+ * Settings, in the order a student meets them (until the first-run setup is
+ * done, Setup.tsx instead):
  *
- *  1. Answers: who answers (Claude, ChatGPT, hosted, a local model or
- *     placeholder answers), and only what that choice needs below it.
+ *  1. Answers: who answers (Claude, ChatGPT, hosted or a local model), and
+ *     only what that choice needs below it.
  *  2. Asking: the macros, the default prompt, and whether a selection is
  *     asked about straight away.
  *  3. Selecting: the shortcut, adjusting a box, where the bar and panel go.
@@ -21,50 +22,43 @@ import { DEFAULT_MACROS, DEFAULT_PROMPT } from '@shared/prompts';
 import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import { listChats } from '@/lib/chats';
-import { COMPANY, MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
-import type { KeyModel, KeyTestResult } from '@/lib/providers/byok';
+import { MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
+import type { KeyModel } from '@/lib/providers/byok';
+import type { KeyStatus } from '@/lib/providers/types';
 import {
   CHAT_LIMITS,
-  getKeys,
   getSettings,
-  keysItem,
   panelSizeItem,
   sanitizeMacros,
   settingsItem,
-  type Keys,
   type Macro,
   type PanelSize,
   type SendBehavior,
   type Settings,
 } from '@/lib/storage';
-import type { AiStatus } from '@/lib/status';
 import { Icon } from '@/ui/icons';
 import { hasHosted, useAccount, type AccountState } from '@/ui/useAccount';
+import { useKeyStatus } from '@/ui/useKeyStatus';
 import { MAC } from '../os';
 import { AppSection } from './AppSection';
+import { VENDOR_OF, choiceOf, patchFor, type Choice } from './choices';
+import { KeyField, type Vendor } from './KeyField';
+import { LocalServer } from './LocalServer';
 import { Permissions } from './Permissions';
 import { PlacePicker } from './PlacePicker';
+import { Setup } from './Setup';
 import { ShortcutField } from './ShortcutField';
 import { ThemePicker } from './ThemePicker';
+import { useDebounced } from './useDebounced';
 import { AccountSection } from './Account';
-
-type Vendor = 'anthropic' | 'openai';
-type Choice = 'claude' | 'chatgpt' | 'hosted' | 'local' | 'placeholder';
 
 const CHOICES: { id: Choice; name: string; sub: string }[] = [
   { id: 'claude', name: 'Claude', sub: 'Your key' },
   { id: 'chatgpt', name: 'ChatGPT', sub: 'Your key' },
   { id: 'hosted', name: 'Hosted', sub: 'Your plan' },
   { id: 'local', name: 'Local model', sub: 'This computer' },
-  { id: 'placeholder', name: 'Placeholder', sub: 'No AI' },
 ];
 
-const VENDOR_OF: Partial<Record<Choice, Vendor>> = { claude: 'anthropic', chatgpt: 'openai' };
-const KEY_HINT: Record<Vendor, string> = { anthropic: 'sk-ant-…', openai: 'sk-…' };
-const KEY_PAGE: Record<Vendor, string> = {
-  anthropic: 'https://console.anthropic.com/settings/keys',
-  openai: 'https://platform.openai.com/api-keys',
-};
 
 const SEND: { id: SendBehavior; label: string; help?: string }[] = [
   { id: 'prefill', label: 'Wait for me' },
@@ -82,63 +76,16 @@ const SECTIONS = [
   ...(ACCOUNTS ? [{ id: 'account', title: 'Account' }] : []),
 ];
 
-type Check = { state: 'idle' } | { state: 'checking' } | KeyTestResult;
-
-function choiceOf(s: Settings): Choice | null {
-  if (s.provider === 'mock') return 'placeholder';
-  if (s.provider === 'local') return 'local';
-  if (s.provider === 'byok') return s.vendor === 'openai' ? 'chatgpt' : 'claude';
-  return 'hosted';
-}
-
-/**
- * Calls `fn` once typing pauses. A change still waiting when the field goes
- * away (another choice picked) or the page is left is saved right then, not
- * dropped.
- */
-function useDebounced<T>(fn: (value: T) => void, ms = 450): (value: T) => void {
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const pending = useRef<{ value: T } | null>(null);
-  const latest = useRef(fn);
-  latest.current = fn;
-  useEffect(() => {
-    const flush = () => {
-      clearTimeout(timer.current);
-      if (!pending.current) return;
-      const { value } = pending.current;
-      pending.current = null;
-      latest.current(value);
-    };
-    addEventListener('pagehide', flush);
-    return () => {
-      removeEventListener('pagehide', flush);
-      flush();
-    };
-  }, []);
-  return useCallback(
-    (value: T) => {
-      clearTimeout(timer.current);
-      pending.current = { value };
-      timer.current = setTimeout(() => {
-        pending.current = null;
-        latest.current(value);
-      }, ms);
-    },
-    [ms],
-  );
-}
-
 export function Options() {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [keys, setKeys] = useState<Keys>({ anthropic: '', openai: '', session: '' });
+  const keys = useKeyStatus();
   const [models, setModels] = useState<Partial<Record<Vendor, KeyModel[]>>>({});
   const [saved, setSaved] = useState(0);
   const account = useAccount();
 
   useEffect(() => {
-    void Promise.all([getSettings(), getKeys(), browser.storage.local.get('models')]).then(([s, k, m]) => {
+    void Promise.all([getSettings(), browser.storage.local.get('models')]).then(([s, m]) => {
       setSettings(s);
-      setKeys(k);
       setModels((m.models as Partial<Record<Vendor, KeyModel[]>> | undefined) ?? {});
     });
     // The panel's model picker writes the same settings; follow it.
@@ -173,24 +120,14 @@ export function Options() {
     [enqueue],
   );
 
-  const saveKey = useCallback(
-    (vendor: Vendor, key: string) => {
-      setKeys((k) => ({ ...k, [vendor]: key.trim() }));
-      return enqueue(async () => {
-        await keysItem.setValue({ ...(await getKeys()), [vendor]: key.trim() });
-        setSaved(Date.now());
-      });
-    },
-    [enqueue],
-  );
-
   const rememberModels = useCallback(async (vendor: Vendor, list: KeyModel[]) => {
     setModels((m) => ({ ...m, [vendor]: list }));
     const stored = ((await browser.storage.local.get('models')).models as Partial<Record<Vendor, KeyModel[]>> | undefined) ?? {};
     await browser.storage.local.set({ models: { ...stored, [vendor]: list } });
   }, []);
 
-  if (!settings) return <main className="options" />;
+  if (!settings || !keys) return <main className="options" />;
+  if (!settings.setupDone) return <Setup settings={settings} keys={keys} account={account} save={save} />;
 
   return (
     <div className="page">
@@ -220,7 +157,7 @@ export function Options() {
           models={models}
           account={account}
           save={save}
-          saveKey={saveKey}
+          onKeySaved={() => setSaved(Date.now())}
           rememberModels={rememberModels}
         />
         <AskingSection settings={settings} save={save} />
@@ -290,31 +227,21 @@ function AnswersSection({
   models,
   account,
   save,
-  saveKey,
+  onKeySaved,
   rememberModels,
 }: {
   settings: Settings;
-  keys: Keys;
+  keys: KeyStatus;
   models: Partial<Record<Vendor, KeyModel[]>>;
   account: AccountState;
   save: (patch: Partial<Settings>) => Promise<void>;
-  saveKey: (vendor: Vendor, key: string) => Promise<void>;
+  onKeySaved: () => void;
   rememberModels: (vendor: Vendor, list: KeyModel[]) => Promise<void>;
 }) {
   const choice = choiceOf(settings);
   const vendor = choice ? VENDOR_OF[choice] : undefined;
 
-  const choose = (next: Choice) => {
-    const v = VENDOR_OF[next];
-    if (v) {
-      // Coming back to a vendor keeps the model picked for it before.
-      const keep = settings.modelOverride?.vendor === v ? settings.modelOverride : null;
-      void save({ provider: 'byok', vendor: v, modelOverride: keep });
-    } else if (next === 'hosted') {
-      // Hosted answers use Claude's fast model (shared/models.ts).
-      void save({ provider: 'gateway', vendor: 'anthropic', modelOverride: null });
-    } else void save({ provider: next === 'local' ? 'local' : 'mock' });
-  };
+  const choose = (next: Choice) => void save(patchFor(next, settings));
   // Offered once the account's plan includes hosted answers (or already picked).
   const hosted = hasHosted(account);
   const offered = CHOICES.filter((c) => c.id !== 'hosted' || hosted || choice === 'hosted');
@@ -347,19 +274,14 @@ function AnswersSection({
           key={vendor}
           vendor={vendor}
           settings={settings}
-          savedKey={keys[vendor]}
+          hint={keys[vendor]}
           listed={models[vendor]}
           save={save}
-          saveKey={saveKey}
+          onKeySaved={onKeySaved}
           rememberModels={rememberModels}
         />
       )}
       {choice === 'local' && <LocalServer settings={settings} save={save} />}
-      {choice === 'placeholder' && (
-        <p className="help" data-testid="placeholder-help">
-          Made-up answers for trying it out. Nothing is sent.
-        </p>
-      )}
     </Section>
   );
 }
@@ -367,88 +289,31 @@ function AnswersSection({
 function KeyAndModel({
   vendor,
   settings,
-  savedKey,
+  hint,
   listed,
   save,
-  saveKey,
+  onKeySaved,
   rememberModels,
 }: {
   vendor: Vendor;
   settings: Settings;
-  savedKey: string;
+  /** The saved key's last four characters, if there is one. */
+  hint: string | null;
   listed: KeyModel[] | undefined;
   save: (patch: Partial<Settings>) => Promise<void>;
-  saveKey: (vendor: Vendor, key: string) => Promise<void>;
+  onKeySaved: () => void;
   rememberModels: (vendor: Vendor, list: KeyModel[]) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState(savedKey);
-  const [check, setCheck] = useState<Check>({ state: 'idle' });
-  const lastChecked = useRef('');
   const table = MODEL_TABLE[vendor];
   const override = settings.modelOverride?.vendor === vendor ? settings.modelOverride.model : '';
   // Selections are screenshots: only models that read images are offered (one picked before stays, marked).
   const choices: KeyModel[] = (listed ?? MAJOR_MODELS[vendor].map((id) => ({ id, name: MODEL_NAMES[id] ?? id, vision: true }))).filter(
     (m) => m.vision || m.id === override,
   );
-  const checking = 'state' in check && check.state === 'checking';
-
-  const run = async (key: string) => {
-    const trimmed = key.trim();
-    if (!trimmed) return;
-    lastChecked.current = trimmed;
-    setCheck({ state: 'checking' });
-    await saveKey(vendor, trimmed);
-    let result: KeyTestResult;
-    try {
-      result = (await browser.runtime.sendMessage({ type: 'keys:test', vendor, key: trimmed })) as KeyTestResult;
-    } catch (err) {
-      result = { ok: false, error: `Couldn't check it: ${(err as Error).message}`, code: 'http' };
-    }
-    setCheck(result);
-    if (result.ok) await rememberModels(vendor, result.models);
-  };
 
   return (
     <div className="sub" data-testid="keys">
-      <div className="field">
-        <span className="field-label">
-          {COMPANY[vendor]} API key ·{' '}
-          <a className="link" href={KEY_PAGE[vendor]} target="_blank" rel="noopener noreferrer">
-            get one
-          </a>
-        </span>
-        <span className="key-row">
-          <input
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            aria-label={`${COMPANY[vendor]} API key`}
-            placeholder={KEY_HINT[vendor]}
-            value={draft}
-            data-testid="key-input"
-            onChange={(e) => {
-              setDraft(e.target.value);
-              setCheck({ state: 'idle' });
-            }}
-            // A pasted or edited key is checked (free) as soon as you leave the
-            // field; an emptied one is removed from this browser.
-            onBlur={() => {
-              const trimmed = draft.trim();
-              if (!trimmed) {
-                if (savedKey) void saveKey(vendor, '');
-                lastChecked.current = '';
-                return;
-              }
-              if (trimmed !== lastChecked.current) void run(draft);
-            }}
-          />
-          <button type="button" className="secondary" data-testid="test-key" disabled={!draft.trim() || checking} onClick={() => void run(draft)}>
-            {checking ? 'Checking…' : 'Check key'}
-          </button>
-        </span>
-        <KeyStatus check={check} hasKey={!!savedKey} />
-        <p className="help">Kept privately on this computer, and sent only to {COMPANY[vendor]}.</p>
-      </div>
+      <KeyField vendor={vendor} hint={hint} onSaved={onKeySaved} onChecked={(models) => void rememberModels(vendor, models)} />
 
       <label className="field">
         <span className="field-label">Model</span>
@@ -470,98 +335,6 @@ function KeyAndModel({
         </select>
         {!listed && <small className="help">Check your key to see every model.</small>}
       </label>
-    </div>
-  );
-}
-
-function KeyStatus({ check, hasKey }: { check: Check; hasKey: boolean }) {
-  if ('state' in check && check.state === 'checking') return <p className="help">Checking…</p>;
-  if (!('ok' in check)) return hasKey ? null : <p className="help warn">Needed to ask anything.</p>;
-  if (check.ok) {
-    const vision = check.models.filter((m) => m.vision).length;
-    return (
-      <p className="help ok" data-testid="key-status">
-        ✓ Works. {check.models.length} models{vision !== check.models.length ? `, ${vision} read images` : ''}.
-      </p>
-    );
-  }
-  return (
-    <p className="help bad" data-testid="key-status">
-      {check.error}
-    </p>
-  );
-}
-
-/** Whether a local-model address is somewhere else: 'plain' over unencrypted HTTP, 'remote' over HTTPS, null on this computer. */
-function offComputer(address: string): 'plain' | 'remote' | null {
-  let url: URL;
-  try {
-    url = new URL(address.trim());
-  } catch {
-    return null;
-  }
-  if (/^(localhost|127(\.\d+){3}|\[::1\])$/i.test(url.hostname)) return null;
-  return url.protocol === 'https:' ? 'remote' : 'plain';
-}
-
-function LocalServer({ settings, save }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void> }) {
-  const [url, setUrl] = useState(settings.localBaseUrl);
-  const [model, setModel] = useState(settings.localModel);
-  const [status, setStatus] = useState<AiStatus | null>(null);
-  const [checking, setChecking] = useState(false);
-  const saveUrl = useDebounced((v: string) => void save({ localBaseUrl: v.trim() }));
-  const saveModel = useDebounced((v: string) => void save({ localModel: v.trim() }));
-
-  const check = async () => {
-    setChecking(true);
-    await save({ localBaseUrl: url.trim(), localModel: model.trim() });
-    const s = (await browser.runtime.sendMessage({ type: 'ai:check', force: true }).catch(() => null)) as AiStatus | null;
-    setStatus(s);
-    setChecking(false);
-  };
-
-  return (
-    <div className="sub" data-testid="local">
-      <label className="field">
-        <span className="field-label">Server address</span>
-        <input
-          value={url}
-          spellCheck={false}
-          onChange={(e) => {
-            setUrl(e.target.value);
-            saveUrl(e.target.value);
-          }}
-        />
-        {offComputer(url) && (
-          <small className="help warn" data-testid="local-remote">
-            {offComputer(url) === 'plain'
-              ? 'Not on this computer, and not https: your selections would travel unencrypted.'
-              : 'Not on this computer: your selections are sent there.'}
-          </small>
-        )}
-      </label>
-      <label className="field">
-        <span className="field-label">Model</span>
-        <input
-          value={model}
-          spellCheck={false}
-          onChange={(e) => {
-            setModel(e.target.value);
-            saveModel(e.target.value);
-          }}
-        />
-        <small className="help">Any OpenAI-compatible server (like Ollama), with a model that reads images.</small>
-      </label>
-      <span className="key-row">
-        <button type="button" className="secondary" disabled={checking} onClick={() => void check()}>
-          {checking ? 'Checking…' : 'Check connection'}
-        </button>
-        {status && (
-          <span className={`help ${status.state === 'ok' ? 'ok' : 'bad'}`}>
-            {status.state === 'ok' ? '✓ Connected.' : status.message}
-          </span>
-        )}
-      </span>
     </div>
   );
 }

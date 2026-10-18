@@ -31,7 +31,7 @@ import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import { autoTitle, hasUsableSelection, isRemovable, pendingSelections, type AssistantItem, type Chat } from '@/lib/chats';
 import { isTransient, needsSettings } from '@/lib/providers/errors';
-import { getKeys, getSettings, keysItem, settingsItem, type Keys, type Macro, type Settings } from '@/lib/storage';
+import { getSettings, settingsItem, type Macro, type Settings } from '@/lib/storage';
 import { splitWhatIRead } from '@shared/prompts';
 import { Answer } from './Answer';
 import { ChatMenu, TitleInput } from './ChatMenu';
@@ -40,14 +40,15 @@ import { ModelPicker } from './ModelPicker';
 import { Notices } from './Notices';
 import { IncomingSelection, SelectionCard } from './Selection';
 import { useAccount } from './useAccount';
+import { useKeyStatus } from './useKeyStatus';
 import { useAiStatus, useChat, useChatList, usePanelSession } from './useChat';
 import { MAC } from '../os';
 import { formatShortcut, useShortcut } from './useShortcut';
 
 /** How long a notice stays before it goes by itself (Notices.tsx). */
 const NOTICE_MS = 9000;
-/** Within this of the bottom, the chat counts as followed: new text keeps it at the bottom. */
-const FOLLOW_SLACK_PX = 48;
+/** Within this of the end, the chat counts as scrolled to it (fractional display scales round). */
+const AT_END_PX = 4;
 /** The new-chat key, as people say it. */
 const NEW_CHAT_KEY = MAC ? '⌘⇧O' : 'Ctrl+Shift+O';
 
@@ -66,7 +67,7 @@ export function Panel() {
   const { status, recheck, checking } = useAiStatus();
   const dropped = useDropped();
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [keys, setKeys] = useState<Keys | null>(null);
+  const keys = useKeyStatus();
   const [menuOpen, setMenuOpen] = useState(false);
   const shortcut = useShortcut();
   const account = useAccount();
@@ -89,13 +90,7 @@ export function Panel() {
 
   useEffect(() => {
     void getSettings().then(setSettings);
-    void getKeys().then(setKeys);
-    const unwatch = settingsItem.watch(() => void getSettings().then(setSettings));
-    const unwatchKeys = keysItem.watch(() => void getKeys().then(setKeys));
-    return () => {
-      unwatch();
-      unwatchKeys();
-    };
+    return settingsItem.watch(() => void getSettings().then(setSettings));
   }, []);
 
   // Chats from the student's other computers (cloud storage): caught up when
@@ -197,8 +192,9 @@ export function Panel() {
   }, [incoming, landed]);
 
   // The chat follows what comes in (an answer streaming, a new selection),
-  // unless the student scrolled up to read: then it stays where they are
-  // until they scroll back down. A new chat, or a question they ask, follows again.
+  // until the student scrolls up, by any amount and any means (wheel,
+  // trackpad, keys, scroll bar): then it stays where they are until they
+  // scroll back down to the end. A new chat, or a question they ask, follows again.
   const last = items.at(-1);
   const following = useRef(true);
   const followBottom = useCallback(() => {
@@ -208,9 +204,25 @@ export function Panel() {
   useEffect(() => {
     const thread = threadRef.current;
     if (!thread) return;
-    const onScroll = () => (following.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < FOLLOW_SLACK_PX);
+    let top = thread.scrollTop;
+    const atEnd = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight <= AT_END_PX;
+    const onScroll = () => {
+      // Up and away from the end lets go; down to the end follows again. (A
+      // chat that got shorter moves the scroll up too, but stays at the end.)
+      if (thread.scrollTop < top && !atEnd()) following.current = false;
+      else if (thread.scrollTop > top && atEnd()) following.current = true;
+      top = thread.scrollTop;
+    };
+    // Before the scroll it causes, so the next line of the answer can't pull the chat back down.
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0 && thread.scrollTop > 0) following.current = false;
+    };
     thread.addEventListener('scroll', onScroll, { passive: true });
-    return () => thread.removeEventListener('scroll', onScroll);
+    thread.addEventListener('wheel', onWheel, { passive: true });
+    return () => {
+      thread.removeEventListener('scroll', onScroll);
+      thread.removeEventListener('wheel', onWheel);
+    };
   }, []);
   useEffect(() => {
     following.current = true;

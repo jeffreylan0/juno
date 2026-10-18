@@ -9,6 +9,7 @@
  * Every paid answer is written to eval/cache so reruns cost nothing.
  */
 import { callModel, type ProviderContext } from '@/lib/providers';
+import { keyVault } from '@/lib/providers/byok';
 import type { Provider } from '@shared/payload';
 import { EVAL_ROUTES, FileCacheStore, buildRequest, loadProblems, parseArgs, writeOutput, type EvalOutput, type EvalRoute } from './lib';
 
@@ -24,7 +25,8 @@ const modelArg = args.model ? String(args.model) : undefined;
 
 const ctx: ProviderContext = {
   fetch: globalThis.fetch.bind(globalThis),
-  keys: { anthropic: process.env.ANTHROPIC_API_KEY ?? '', openai: process.env.OPENAI_API_KEY ?? '', session: '' },
+  vault: keyVault({ anthropic: process.env.ANTHROPIC_API_KEY ?? '', openai: process.env.OPENAI_API_KEY ?? '' }, globalThis.fetch.bind(globalThis)),
+  session: '',
   settings: {
     localBaseUrl: process.env.LOCAL_BASE_URL ?? 'http://localhost:11434/v1',
     localModel: process.env.LOCAL_MODEL ?? 'qwen2.5vl:7b',

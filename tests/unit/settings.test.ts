@@ -127,7 +127,8 @@ describe('shouldAutoSend', () => {
 
 describe('answer choice', () => {
   it('is one decision over provider, vendor and model', () => {
-    expect(answerChoiceOf(DEFAULT_SETTINGS)).toBe('placeholder');
+    // No one, until the first-run setup.
+    expect(answerChoiceOf(DEFAULT_SETTINGS)).toBe('none');
     const sonnet = withAnswerChoice(DEFAULT_SETTINGS, 'anthropic:claude-sonnet-5-5');
     expect([sonnet.provider, sonnet.vendor, sonnet.modelOverride]).toEqual(['byok', 'anthropic', { vendor: 'anthropic', model: 'claude-sonnet-5-5' }]);
     expect(answerChoiceOf(sonnet)).toBe('anthropic:claude-sonnet-5-5');
@@ -140,6 +141,21 @@ describe('answer choice', () => {
     expect(fallbackQuestion(DEFAULT_SETTINGS)).toBe(DEFAULT_SETTINGS.macros[0]!.prompt);
     expect(fallbackQuestion({ defaultPrompt: 'Solve it.', macros: [] })).toBe('Solve it.');
     expect(fallbackQuestion({ defaultPrompt: '', macros: [] })).toBe('Explain this.');
+  });
+});
+
+describe('the first-run setup', () => {
+  it('is ahead of a new student, and of anyone who only ever had placeholder answers', () => {
+    expect(DEFAULT_SETTINGS.setupDone).toBe(false);
+    expect(migrateSettings(undefined).setupDone).toBe(false);
+    expect(migrateSettings({ version: 5 }).setupDone).toBe(false);
+    expect(migrateSettings({ version: 5, provider: 'mock' }).setupDone).toBe(false);
+  });
+
+  it('is behind anyone who had picked a real AI, and stays done once done', () => {
+    for (const provider of ['byok', 'local', 'gateway'] as const) expect(migrateSettings({ version: 5, provider }).setupDone).toBe(true);
+    expect(migrateSettings({ version: 6, provider: 'mock', setupDone: true }).setupDone).toBe(true);
+    expect(migrateSettings({ version: 6, provider: 'local', setupDone: false }).setupDone).toBe(false);
   });
 });
 

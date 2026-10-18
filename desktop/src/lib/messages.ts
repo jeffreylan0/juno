@@ -132,13 +132,12 @@ export interface AiCheckMsg {
 }
 
 /**
- * Options → core: check an API key by listing the vendor's models. It
+ * Settings → core: check the stored API key by listing the vendor's models. It
  * costs nothing, proves the key works, and returns the models to pick from.
  */
 export interface KeysTestMsg {
   type: 'keys:test';
   vendor: 'anthropic' | 'openai';
-  key: string;
 }
 
 /**

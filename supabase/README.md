@@ -135,6 +135,8 @@ WXT_GATEWAY_URL=https://api.<your domain>      # the Worker (step 5)
 
 Then build as usual (`pnpm build`). The publishable key is public by design; row level security protects each account's data.
 
+**The test builds made on GitHub** (the *Test build* workflow) don't read `.env.local`. Give them the same three values as **Actions variables** (not secrets: they are public): GitHub → the repository → Settings → Secrets and variables → Actions → *Variables* → *New repository variable*, once each for `WXT_SUPABASE_URL`, `WXT_SUPABASE_KEY` and `WXT_GATEWAY_URL`. Then run *Test build* again (or push a `desktop-v…` tag): the run's summary says *Accounts are in this build*, and Settings shows an **Account** section. A build without them has no accounts at all. Both addresses must be `https://` (the build refuses anything else but `localhost`).
+
 ## 8. Giving an account a plan by hand
 
 For you, testers and anyone you want to give something to. The person signs in once (that creates the account); then, in the SQL Editor:

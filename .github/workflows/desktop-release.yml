@@ -5,10 +5,12 @@ name: Test build
 # workflow, publishes them as a GitHub prerelease with TESTERS.md as its
 # notes; a push that changes this file only builds them, to check it works.
 #
-# Built without WXT_SUPABASE_* or WXT_GATEWAY_URL: no accounts and no hosted
-# answers, so testers answer with their own key, a local model or
-# placeholders. No key of any kind goes into a build. No caches either: a
-# build others install never restores anything an ordinary run saved. The
+# Accounts and hosted answers come from the repository's Actions variables
+# WXT_SUPABASE_URL, WXT_SUPABASE_KEY (the publishable key, public by design)
+# and WXT_GATEWAY_URL (supabase/README.md, step 7); without them the build has
+# no accounts, and says so in the run's summary. No secret of any kind goes
+# into a build. No caches either: a build others install never restores
+# anything an ordinary run saved. The
 # release carries SHA256SUMS and a signed build provenance attestation
 # (`gh attestation verify <file> --repo jeffreylan0/selectionai`).
 #
@@ -86,8 +88,22 @@ jobs:
             if (process.env.SIGNED === "true") c.bundle = { createUpdaterArtifacts: true };
             require("fs").writeFileSync("desktop/src-tauri/release.conf.json", JSON.stringify(c));'
           cat desktop/src-tauri/release.conf.json
+      - name: Accounts
+        shell: bash
+        env:
+          WXT_SUPABASE_URL: ${{ vars.WXT_SUPABASE_URL }}
+          WXT_SUPABASE_KEY: ${{ vars.WXT_SUPABASE_KEY }}
+        run: |
+          if [ -n "$WXT_SUPABASE_URL" ] && [ -n "$WXT_SUPABASE_KEY" ]; then
+            echo "::notice::Accounts are in this build ($WXT_SUPABASE_URL)."
+          else
+            echo "::warning::No accounts in this build: set the Actions variables WXT_SUPABASE_URL, WXT_SUPABASE_KEY and WXT_GATEWAY_URL (supabase/README.md, step 7)."
+          fi
       - name: Build
         env:
+          WXT_SUPABASE_URL: ${{ vars.WXT_SUPABASE_URL }}
+          WXT_SUPABASE_KEY: ${{ vars.WXT_SUPABASE_KEY }}
+          WXT_GATEWAY_URL: ${{ vars.WXT_GATEWAY_URL }}
           APPLE_SIGNING_IDENTITY: ${{ matrix.signing }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}

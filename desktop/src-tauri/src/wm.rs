@@ -13,9 +13,11 @@
 //!   smoothly; or as big as they last made it. Made hidden at start and kept: a selection only has to
 //!   show it, never wait for it to load. Closing it hides it and finishes
 //!   the chat, as ✕ on Chrome's side panel does.
-//! - `settings`: the settings page, a card in the middle of the screen. It
-//!   shows itself once its page has drawn (`window_show`), so it never
-//!   flashes white or empty; opening it takes the bar away.
+//! - `settings`: the settings page, a card in the middle of the screen. Made
+//!   hidden at start and kept, like the panel, so opening it only has to
+//!   show it; closing it hides it. Asked for before its page has drawn, it
+//!   waits for that (`window_show`), so it never flashes white or empty.
+//!   Opening it takes the bar away.
 //!
 //! The panel and settings are cards like the bar, with no title bar to see
 //! (their top bar drags them): on macOS ordinary windows whose title bar is
@@ -246,15 +248,39 @@ fn finish_card(window: &WebviewWindow) {
     let _ = window;
 }
 
-/// Shows settings once their page has drawn (window_show), or after a moment whatever happens.
-fn show_soon(window: &WebviewWindow) {
-    let w = window.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(1500));
-        if !w.is_visible().unwrap_or(true) {
-            let _ = show_window(&w);
+/// Settings' page has drawn, and they were asked for before it had.
+static SETTINGS_PAGE: Mutex<(bool, bool)> = Mutex::new((false, false));
+
+/// Settings' page has drawn (`window_show`): they show if they were asked for meanwhile.
+pub fn settings_drawn(window: &WebviewWindow) -> tauri::Result<()> {
+    let wanted = {
+        let mut page = SETTINGS_PAGE.lock().unwrap();
+        page.0 = true;
+        std::mem::take(&mut page.1)
+    };
+    if wanted {
+        show_window(window)?;
+    }
+    Ok(())
+}
+
+/// Asked for before their page had drawn: they show once it has, or after a moment whatever happens.
+fn show_settings_soon(window: &WebviewWindow) -> tauri::Result<()> {
+    {
+        let mut page = SETTINGS_PAGE.lock().unwrap();
+        if !page.0 {
+            page.1 = true;
+            let w = window.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(1500));
+                if std::mem::take(&mut SETTINGS_PAGE.lock().unwrap().1) {
+                    let _ = show_window(&w);
+                }
+            });
+            return Ok(());
         }
-    });
+    }
+    show_window(window)
 }
 
 /// A card's page has drawn: its window shows, with the keyboard. Settings
@@ -391,27 +417,42 @@ pub fn close_panel(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Settings, made hidden at start and kept (see the top of this file).
+pub fn make_settings(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    if let Some(w) = app.get_webview_window(SETTINGS) {
+        return Ok(w);
+    }
+    let window = card(app, SETTINGS, "web/settings.html", "Juno Settings")
+        .inner_size(SETTINGS_SIZE.0, SETTINGS_SIZE.1)
+        .min_inner_size(520.0, 420.0)
+        .build()?;
+    finish_card(&window);
+    Ok(window)
+}
+
 /// Opens settings (at `#section` if given), or brings them forward.
 pub fn open_settings(app: &AppHandle, hash: Option<&str>) -> tauri::Result<()> {
     let hash = hash.map(|h| h.trim_start_matches('#')).filter(|h| h.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
     unhide(app);
-    if let Some(w) = app.get_webview_window(SETTINGS) {
-        if let Some(h) = hash {
-            w.eval(format!("location.hash = '#{h}'"))?;
+    let window = make_settings(app)?;
+    if !window.is_visible().unwrap_or(false) {
+        if let Some((d, _)) = display_under_pointer(app) {
+            place(&window, d.centred_placement(Space::native(), SETTINGS_SIZE.0, SETTINGS_SIZE.1))?;
         }
-        w.unminimize()?;
-        return show_window(&w);
     }
-    let url = match hash {
-        Some(h) => format!("web/settings.html#{h}"),
-        None => "web/settings.html".to_string(),
-    };
-    let window = card(app, SETTINGS, &url, "Juno Settings").inner_size(SETTINGS_SIZE.0, SETTINGS_SIZE.1).min_inner_size(520.0, 420.0).build()?;
-    finish_card(&window);
-    if let Some((d, _)) = display_under_pointer(app) {
-        place(&window, d.centred_placement(Space::native(), SETTINGS_SIZE.0, SETTINGS_SIZE.1))?;
+    // The page goes to that section (or the top).
+    let _ = app.emit_to(SETTINGS, "settings:open", hash.unwrap_or(""));
+    window.unminimize()?;
+    show_settings_soon(&window)
+}
+
+/// Hides settings; they are kept, and their page starts afresh for next time.
+pub fn close_settings(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(w) = app.get_webview_window(SETTINGS) {
+        w.hide()?;
+        let _ = app.emit_to(SETTINGS, "settings:closed", ());
     }
-    show_soon(&window);
+    yield_focus(app);
     Ok(())
 }
 

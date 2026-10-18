@@ -120,7 +120,9 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
         await t.invoke('storage_remove', { area: name, keys: typeof keys === 'string' ? [keys] : keys });
       },
       async clear(): Promise<void> {
-        await t.invoke('storage_clear', { area: name });
+        // What this window may see; the API keys are not among it (src-tauri/src/vault.rs).
+        const keys = Object.keys(await t.invoke<Record<string, unknown>>('storage_get', { area: name, keys: null }));
+        if (keys.length) await t.invoke('storage_remove', { area: name, keys });
       },
     };
   };

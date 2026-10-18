@@ -37,7 +37,7 @@ export function AccountSection({ account, settings, save }: { account: AccountSt
 }
 
 
-function SignIn() {
+export function SignIn() {
   const [email, setEmail] = useState('');
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [code, setCode] = useState('');
@@ -142,7 +142,7 @@ function SignIn() {
   );
 }
 
-function SignedIn({ account, settings, save }: { account: AccountState; settings: Settings; save: Save }) {
+export function SignedIn({ account, settings, save }: { account: AccountState; settings: Settings; save: Save }) {
   const user = account.user!;
   const ent = account.entitlement;
   const [confirming, setConfirming] = useState(false);

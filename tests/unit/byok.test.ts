@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryCacheStore } from '@/lib/cache';
 import { callModel, type ProviderContext } from '@/lib/providers';
-import { testKey, toAnthropicBody, ANTHROPIC_URL, OPENAI_URL } from '@/lib/providers/byok';
+import { keyVault, testKey, toAnthropicBody, ANTHROPIC_URL, OPENAI_URL } from '@/lib/providers/byok';
 import { describeHttpError, isTransient, needsSettings } from '@/lib/providers/errors';
 import { toChatMessages } from '@/lib/providers/openai-compat';
 import type { AskChunk, Plan } from '@shared/payload';
@@ -39,14 +39,16 @@ interface Call {
   init: RequestInit;
 }
 
-function ctx(respond: (call: Call) => Response | Promise<Response>, calls: Call[] = []): ProviderContext {
+function ctx(respond: (call: Call) => Response | Promise<Response>, calls: Call[] = [], keys = { anthropic: 'sk-ant-test', openai: 'sk-test' }): ProviderContext {
+  const fetchImpl = (async (url: string, init: RequestInit) => {
+    const call = { url, init };
+    calls.push(call);
+    return respond(call);
+  }) as unknown as typeof fetch;
   return {
-    fetch: (async (url: string, init: RequestInit) => {
-      const call = { url, init };
-      calls.push(call);
-      return respond(call);
-    }) as unknown as typeof fetch,
-    keys: { anthropic: 'sk-ant-test', openai: 'sk-test', session: '' },
+    fetch: fetchImpl,
+    vault: keyVault(keys, fetchImpl),
+    session: '',
     settings: { localBaseUrl: '', localModel: '', gatewayUrl: '' },
     cache: new MemoryCacheStore(),
   };
@@ -78,9 +80,8 @@ describe('Anthropic requests', () => {
     expect(text).toContain('Answer: 4');
     expect(calls[0]!.url).toBe(ANTHROPIC_URL);
     const headers = calls[0]!.init.headers as Record<string, string>;
-    expect(Object.keys(headers).sort()).toEqual(
-      ['anthropic-dangerous-direct-browser-access', 'anthropic-version', 'content-type', 'x-api-key'].sort(),
-    );
+    // No browser-access header: no page sends it (the native core does: vault.rs).
+    expect(Object.keys(headers).sort()).toEqual(['anthropic-version', 'content-type', 'x-api-key']);
     const body = JSON.parse(String(calls[0]!.init.body)) as { model: string; max_tokens: number };
     expect(body.model).toBe('claude-sonnet-5-5');
     expect(body.max_tokens).toBe(4096);
@@ -233,7 +234,7 @@ describe('network failures', () => {
 describe('testKey', () => {
   it('lists Anthropic models without spending a token', async () => {
     const calls: Call[] = [];
-    const fetchImpl = ctx(
+    const { vault } = ctx(
       () =>
         json(200, {
           data: [
@@ -242,8 +243,9 @@ describe('testKey', () => {
           ],
         }),
       calls,
-    ).fetch;
-    const r = await testKey(fetchImpl, 'anthropic', '  sk-ant-x  ');
+      { anthropic: '  sk-ant-x  ', openai: '' },
+    );
+    const r = await testKey(vault, 'anthropic');
     expect(calls[0]!.url).toContain('/v1/models');
     expect((calls[0]!.init.headers as Record<string, string>)['x-api-key']).toBe('sk-ant-x');
     expect(calls[0]!.init.method ?? 'GET').toBe('GET');
@@ -257,23 +259,23 @@ describe('testKey', () => {
   });
 
   it('keeps only OpenAI chat models', async () => {
-    const fetchImpl = ctx(() =>
+    const { vault } = ctx(() =>
       json(200, { data: [{ id: 'gpt-6-sol' }, { id: 'text-embedding-3-large' }, { id: 'gpt-4o-mini-tts' }, { id: 'o4-mini' }, { id: 'dall-e-3' }] }),
-    ).fetch;
-    const r = await testKey(fetchImpl, 'openai', 'sk-x');
+    );
+    const r = await testKey(vault, 'openai');
     expect(r.ok && r.models.map((m) => m.id)).toEqual(['gpt-6-sol', 'o4-mini']);
   });
 
   it('reports a rejected key in words', async () => {
-    const fetchImpl = ctx(() => json(401, { error: { message: 'Incorrect API key provided', type: 'invalid_request_error', code: 'invalid_api_key' } })).fetch;
-    const r = await testKey(fetchImpl, 'openai', 'sk-bad');
+    const { vault } = ctx(() => json(401, { error: { message: 'Incorrect API key provided', type: 'invalid_request_error', code: 'invalid_api_key' } }));
+    const r = await testKey(vault, 'openai');
     expect(r).toEqual({ ok: false, error: 'OpenAI rejected the API key. Check it in Settings.', code: 'bad-key' });
   });
 
   it('asks for a key before calling anyone', async () => {
     const calls: Call[] = [];
-    const r = await testKey(ctx(() => json(200, {}), calls).fetch, 'anthropic', '   ');
-    expect(r.ok).toBe(false);
+    const r = await testKey(ctx(() => json(200, {}), calls, { anthropic: '   ', openai: '' }).vault, 'anthropic');
+    expect(r).toMatchObject({ ok: false, code: 'no-key' });
     expect(calls).toHaveLength(0);
   });
 });

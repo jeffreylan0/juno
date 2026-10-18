@@ -7,10 +7,10 @@
  * empty window on screen for a moment. The top bar drags the window; the
  * page's own ✕ (SURFACE.ownWindow) closes it; ⌘Q quits.
  *
- * Settings are made hidden and shown from here once the page has drawn, so
- * they never flash white or empty first. The panel is made at start and
- * kept: the core shows and hides it, telling it `card:enter` so it plays its
- * entrance.
+ * Both are made hidden at start and kept. Settings tell the native core
+ * when their page has drawn, so that, asked for before then, they never
+ * flash white or empty first; the core shows and hides the panel, telling
+ * it `card:enter` so it plays its entrance.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -23,7 +23,7 @@ const CONTROLS = 'button, a, input, select, textarea, label, [role="button"], [c
 export interface CardOptions {
   /** Where the window can be dragged by. */
   drag: string;
-  /** Shows the window once this holds (or after a moment regardless). Without it, someone else shows it. */
+  /** Tells the native core once this holds (or after a moment regardless): the window may show. */
   ready?: () => boolean;
   /** ✕ asks for this instead of closing the window (the panel: the core finishes the chat, then hides it). */
   onClose?: () => void;
@@ -49,7 +49,7 @@ export function cardWindow(opts: CardOptions): void {
   // Shown by the core again (the panel): its entrance plays again.
   browser.runtime.onMessage.addListener((msg) => {
     if ((msg as { type?: string })?.type !== 'card:enter') return;
-    enter();
+    playEntrance();
     opts.onEnter?.();
   });
 
@@ -72,7 +72,7 @@ export function cardWindow(opts: CardOptions): void {
 }
 
 /** Plays the entrance again (the window is about to show). */
-function enter(): void {
+export function playEntrance(): void {
   for (const el of document.querySelectorAll<HTMLElement>('.panel, .page')) {
     el.style.animation = 'none';
     void el.offsetWidth;

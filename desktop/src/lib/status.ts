@@ -1,20 +1,21 @@
 /**
  * Is the AI the student picked actually reachable?
  *
- * The panel shows a notice above the macros whenever the answer would fail or
- * be fake: placeholder answers, no key, a key the vendor rejects, or a vendor
+ * The panel shows a notice above the macros whenever the answer would fail:
+ * no AI picked yet, no key, a key the vendor rejects, or a vendor
  * (or local server) that cannot be reached — "disconnected". Checking costs
  * nothing: the vendors' model lists are free, and a local server answers
- * /models. The core runs the check (it holds the keys and makes every
- * network call), keeps the result in storage.session for a minute, and
+ * /models. The core runs the check (it makes every network call; an API
+ * key is added by the native core), keeps the result in storage.session for a minute, and
  * updates it from real answers too: an answer that arrives proves the
  * connection, one that fails to connect disproves it.
  */
 import { testKey } from './providers/byok';
 import { ASSISTANT, COMPANY } from './router';
-import { GATEWAY_URL, answerChoiceOf, type Keys, type Settings } from './storage';
+import type { Vault } from './providers/types';
+import { GATEWAY_URL, answerChoiceOf, type Settings } from './storage';
 
-export type AiState = 'ok' | 'placeholder' | 'no-key' | 'bad-key' | 'disconnected' | 'error' | 'unavailable';
+export type AiState = 'ok' | 'unset' | 'no-key' | 'bad-key' | 'disconnected' | 'error' | 'unavailable';
 
 export interface AiStatus {
   state: AiState;
@@ -42,7 +43,7 @@ export function whoAnswers(settings: Pick<Settings, 'provider' | 'vendor'>): str
     case 'gateway':
       return 'hosted answers';
     case 'mock':
-      return 'placeholder answers';
+      return 'no one yet';
   }
 }
 
@@ -50,18 +51,18 @@ function withTimeout(fetchImpl: typeof fetch, ms: number): typeof fetch {
   return (input, init) => fetchImpl(input, { ...init, signal: AbortSignal.timeout(ms) });
 }
 
-export async function checkStatus(fetchImpl: typeof fetch, settings: Settings, keys: Keys): Promise<AiStatus> {
+export async function checkStatus(fetchImpl: typeof fetch, settings: Settings, vault: Vault, session: string): Promise<AiStatus> {
   const base = { choice: answerChoiceOf(settings), who: whoAnswers(settings), checkedAt: Date.now() };
   const f = withTimeout(fetchImpl, TIMEOUT_MS);
 
   switch (settings.provider) {
     case 'mock':
-      return { ...base, state: 'placeholder', message: 'Placeholder answers — no AI is connected.' };
+      return { ...base, state: 'unset', message: 'No one answers yet.' };
 
     case 'gateway': {
-      if (!keys.session) return { ...base, state: 'no-key', message: 'Sign in to use hosted answers.' };
+      if (!session) return { ...base, state: 'no-key', message: 'Sign in to use hosted answers.' };
       try {
-        const res = await f(`${GATEWAY_URL.replace(/\/$/, '')}/me`, { headers: { authorization: `Bearer ${keys.session}` } });
+        const res = await f(`${GATEWAY_URL.replace(/\/$/, '')}/me`, { headers: { authorization: `Bearer ${session}` } });
         if (res.status === 401) return { ...base, state: 'bad-key', message: 'Your sign-in ran out. Sign in again.' };
         if (!res.ok) return { ...base, state: 'disconnected', message: "The hosted service isn't responding right now." };
         const me = (await res.json()) as { quota?: number; used?: number };
@@ -86,9 +87,8 @@ export async function checkStatus(fetchImpl: typeof fetch, settings: Settings, k
 
     case 'byok': {
       const vendor = settings.vendor;
-      const key = keys[vendor].trim();
-      if (!key) return { ...base, state: 'no-key', message: `No ${ASSISTANT[vendor]} API key yet.` };
-      const result = await testKey(f, vendor, key);
+      if (!(await vault.status())[vendor]) return { ...base, state: 'no-key', message: `No ${ASSISTANT[vendor]} API key yet.` };
+      const result = await testKey(vault, vendor, AbortSignal.timeout(TIMEOUT_MS));
       if (result.ok) return { ...base, state: 'ok' };
       return { ...base, ...fromErrorCode(vendor, result.code, result.error) };
     }

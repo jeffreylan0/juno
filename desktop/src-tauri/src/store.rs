@@ -4,9 +4,10 @@
 //! - `local`: one JSON file per key under `<store>/local/`, read into
 //!   memory at start. Except the API keys and the account session (`keys`,
 //!   `account`), which go together into one file only this user can read,
-//!   `<store>/secrets.json`.
+//!   `<store>/secrets.json`; on Windows it is also encrypted for this user
+//!   by the system (DPAPI), so a copy of it is useless elsewhere.
 //!
-//!   Not the system keychain: macOS ties a keychain item to the exact build
+//!   Not the macOS keychain: macOS ties a keychain item to the exact build
 //!   that made it, so every new build (and every development build) had to
 //!   ask for the keychain password, and once refused, asked again at every
 //!   read. Signed with a Developer ID, the app could go back to it.
@@ -193,16 +194,18 @@ impl Store {
         Ok(changes)
     }
 
-    pub fn clear(&self, area: Area) -> io::Result<Changes> {
-        let keys: Vec<String> = match area {
+    /// The keys stored in `area` (the secrets' among them).
+    pub fn keys(&self, area: Area) -> Vec<String> {
+        match area {
             Area::Session => self.session.lock().unwrap().keys().cloned().collect(),
             Area::Local => {
                 let mut local = self.local.lock().unwrap();
-                self.load_secrets(&mut local)?;
+                if let Err(e) = self.load_secrets(&mut local) {
+                    eprintln!("[selection-ai] could not read the secrets: {e}");
+                }
                 local.values.keys().cloned().collect()
             }
-        };
-        self.remove(area, &keys)
+        }
     }
 
     fn load_secrets(&self, local: &mut Local) -> io::Result<()> {
@@ -318,13 +321,14 @@ pub fn decode_key(name: &str) -> Option<String> {
 // ── Secrets ──────────────────────────────────────────────────────────────
 
 /// A file readable only by this user (0600 on macOS and Linux; on Windows
-/// the user's own application data folder already is).
+/// the user's own application data folder already is, and the file is
+/// encrypted for them besides).
 pub struct SecretsFile(pub PathBuf);
 
 impl Secrets for SecretsFile {
     fn load(&self) -> io::Result<Map<String, Value>> {
         match fs::read(&self.0) {
-            Ok(bytes) => Ok(serde_json::from_slice(&bytes).unwrap_or_default()),
+            Ok(bytes) => Ok(serde_json::from_slice(&sealed::open(bytes)?).unwrap_or_default()),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Map::new()),
             Err(e) => Err(e),
         }
@@ -341,9 +345,63 @@ impl Secrets for SecretsFile {
             options.mode(0o600);
         }
         let mut file = options.open(&tmp)?;
-        std::io::Write::write_all(&mut file, &serde_json::to_vec(secrets)?)?;
+        std::io::Write::write_all(&mut file, &sealed::seal(serde_json::to_vec(secrets)?)?)?;
         drop(file);
         fs::rename(&tmp, &self.0)
+    }
+}
+
+/// Windows: the secrets file's contents, encrypted for this user by the
+/// system (DPAPI, as browsers keep their passwords): readable only when this
+/// user is signed in on this computer, by no one else, and nowhere else. A
+/// file written before is read as it is, and encrypted when next written.
+#[cfg(windows)]
+mod sealed {
+    use std::io;
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Cryptography::{CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB};
+
+    const MARK: &[u8] = b"juno-dpapi:";
+
+    fn blob(bytes: &[u8]) -> CRYPT_INTEGER_BLOB {
+        CRYPT_INTEGER_BLOB { cbData: bytes.len() as u32, pbData: bytes.as_ptr() as *mut u8 }
+    }
+
+    /// The system's output, copied out and freed.
+    fn take(out: CRYPT_INTEGER_BLOB) -> Vec<u8> {
+        // SAFETY: the system allocated `out` (LocalAlloc) and it is ours to read once and free.
+        unsafe {
+            let bytes = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
+            LocalFree(Some(HLOCAL(out.pbData.cast())));
+            bytes
+        }
+    }
+
+    pub fn seal(plain: Vec<u8>) -> io::Result<Vec<u8>> {
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        // SAFETY: `plain` outlives the call; the system fills `out`.
+        unsafe { CryptProtectData(&blob(&plain), None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out) }.map_err(io::Error::other)?;
+        Ok([MARK, &take(out)].concat())
+    }
+
+    pub fn open(bytes: Vec<u8>) -> io::Result<Vec<u8>> {
+        let Some(sealed) = bytes.strip_prefix(MARK) else { return Ok(bytes) };
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        // SAFETY: `sealed` outlives the call; the system fills `out`.
+        unsafe { CryptUnprotectData(&blob(sealed), None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out) }.map_err(io::Error::other)?;
+        Ok(take(out))
+    }
+}
+
+/// macOS and Linux: the file's permissions are what keep it private.
+#[cfg(not(windows))]
+mod sealed {
+    pub fn seal(plain: Vec<u8>) -> std::io::Result<Vec<u8>> {
+        Ok(plain)
+    }
+
+    pub fn open(bytes: Vec<u8>) -> std::io::Result<Vec<u8>> {
+        Ok(bytes)
     }
 }
 
@@ -577,8 +635,9 @@ mod tests {
         store.set(Area::Session, items).unwrap();
         assert_eq!(store.get(Area::Session, None).unwrap().len(), 1);
         assert_eq!(fs::read_dir(dir.join("local")).unwrap().count(), 0);
-        let cleared = store.clear(Area::Session).unwrap();
-        assert_eq!(cleared.len(), 1);
+        assert_eq!(store.keys(Area::Session), ["current:1"]);
+        let removed = store.remove(Area::Session, &store.keys(Area::Session)).unwrap();
+        assert_eq!(removed.len(), 1);
         assert!(store.get(Area::Session, None).unwrap().is_empty());
         let _ = fs::remove_dir_all(&dir);
     }

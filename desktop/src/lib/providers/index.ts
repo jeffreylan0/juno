@@ -14,7 +14,7 @@ import { localDriver } from './local';
 import { MOCK_MODEL, mockDriver } from './mock';
 import { ProviderError, type ProviderContext, type ProviderDriver } from './types';
 
-export type { ProviderContext, ProviderDriver } from './types';
+export type { KeyStatus, KeyVendor, ProviderContext, ProviderDriver, Vault } from './types';
 export { ProviderError } from './types';
 
 const DRIVERS: Record<Provider, ProviderDriver> = {

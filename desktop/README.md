@@ -15,17 +15,19 @@ The plan's spike and its *Box, Freeform and the panel on Mac* phase, with accoun
 | Box, Freeform | drawn on the overlay page (selection/); the selection is captured natively and cropped (and masked) natively: ScreenCaptureKit on macOS 14+ with the app's own windows filtered out, GDI on Windows with the app's windows excluded by display affinity for that one capture only, so screen recordings, screen sharing and remote desktops show the app as usual |
 | While the bar waits | clicks go through to the app beneath everywhere but on the bar and its tooltips |
 | Scrolling while armed | the wheel (or trackpad) scrolls the app beneath, under the dim, which stays put; the overlay lets the pointer through until it moves, then takes it back to select. Not while drawing or adjusting (the selection is pinned to the screen). The overlay page itself never scrolls or bounces, which is what made the dim flash |
-| Panel | a card like the bar, on the selection's display where Settings → Selecting puts it (top right to start; the same 3×3 grid, the panel in the part's corner or side), floating above other apps. On macOS a real window with its title bar hidden, so the system rounds it and draws its shadow; its top bar drags it (✕ first, then the chats menu); its content rises in, and it goes at once (fading its content out left the empty window on screen for a moment). Text at the system's sizes (13 px on macOS, 14 px on Windows). Notices (placeholder answers, no key, …) float over the end of the chat and go by themselves after 9 seconds, a ring round their ✕ running down meanwhile (pointing at one holds it); a new chat, or the panel showing again, brings them back. **Made when the app starts and kept**, hidden between chats, so it shows the moment a selection is made, with a placeholder for the selection until the screenshot is in. It opens 72% of the display tall and grows with its chat, smoothly (an eased 180 ms resize in the native core), away from the edge it was placed at, until it reaches the screen's edge. Resized by hand, it keeps that size from then on (Settings → Selecting shows it, with *Let it grow with the chat again*). Questions are rounded bubbles with copy, and edit and retry on the latest one; answers stream out at an even pace and have a copy button; the view follows the answer unless the student scrolls up. ⌘⇧O (Ctrl+Shift+O) finishes the chat and brings the bar up for the next. Its ✕ finishes the chat |
+| Panel | a card like the bar, on the selection's display where Settings → Selecting puts it (top right to start; the same 3×3 grid, the panel in the part's corner or side), floating above other apps. On macOS a real window with its title bar hidden, so the system rounds it and draws its shadow; its top bar drags it (✕ first, then the chats menu); its content rises in, and it goes at once (fading its content out left the empty window on screen for a moment). Text at the system's sizes (13 px on macOS, 14 px on Windows). Notices (no AI picked yet, no key, …) float over the end of the chat and go by themselves after 9 seconds, a ring round their ✕ running down meanwhile (pointing at one holds it); a new chat, or the panel showing again, brings them back. **Made when the app starts and kept**, hidden between chats, so it shows the moment a selection is made, with a placeholder for the selection until the screenshot is in. It opens 72% of the display tall and grows with its chat, smoothly (an eased 180 ms resize in the native core), away from the edge it was placed at, until it reaches the screen's edge. Resized by hand, it keeps that size from then on (Settings → Selecting shows it, with *Let it grow with the chat again*). Questions are rounded bubbles with copy, and edit and retry on the latest one; answers stream out at an even pace and have a copy button; the view follows the answer unless the student scrolls up. ⌘⇧O (Ctrl+Shift+O) finishes the chat and brings the bar up for the next. Its ✕ finishes the chat |
 | Chats, temporary chats, macros, model picker, answers | one chat at a time (one panel); macros Explain, Hint, Check and Answer to start; a chat is named after the window its first selection was made over, without the app's name or counters that change from step to step ("Task 10 of 13 - Quiz 2.1 | Stemble — Mozilla Firefox" is "Quiz 2.1 \| Stemble") |
-| Who answers | placeholder, your own Anthropic or OpenAI key, a local model, hosted answers — every request goes out through the native core, so no browser CORS rule applies, and only to the addresses its allowlist names (`capabilities/default.json`): any `https://` address, and plain HTTP only to this computer (`localhost`, `127.0.0.1`) or a `.local` name. A local model on another computer needs one of those |
-| Native commands | every page can invoke every command, so the ones that matter check which window is asking: only the core takes a screenshot, and only while the bar is up; the overlay never sees or changes the keys; only Settings turns Open at login on or off (`lib.rs`, SECURITY.md) |
-| Settings | in the same palette, as a card (a real window, as the panel) in the middle of the screen; once it is on screen the bar and the dim go (the chat carries on; the shortcut brings the bar back). The app's shortcut, where the bar and the panel go, the colour theme, updates, and a Permissions section on macOS (Screen Recording: status, *Open System Settings*, *Restart*, and what the app does and does not ask for) |
+| First run | the setup instead of the bar (`src/settings/Setup.tsx`): who answers (a Claude or ChatGPT key, a local model, or an account with hosted answers), then Screen Recording on macOS; *Start using Juno* puts the bar up. Until something is picked, asking says to pick who answers |
+| Who answers | your own Anthropic or OpenAI key, a local model, hosted answers — every request goes out through the native core, so no browser CORS rule applies, and only to the addresses its allowlist names (`capabilities/default.json`): any `https://` address, and plain HTTP only to this computer (`localhost`, `127.0.0.1`) or a `.local` name. A local model on another computer needs one of those |
+| API keys | kept by the native core where no page can read them (`src-tauri/src/vault.rs`): Settings puts a key in (`key_set`) and pages learn only its last four characters (`key_status`); the storage commands never read, write or announce `keys`. The core asks through `vendor_fetch`, which adds the key and sends only to asking or listing models at `api.anthropic.com` or `api.openai.com`, over HTTPS, following no redirect; the answer streams back over a channel |
+| Native commands | every page can invoke every command, so the ones that matter check which window is asking: only the core takes a screenshot (only while the bar is up) and sends with a key; only Settings puts a key in, or turns Open at login on or off; the overlay never sees the account session (`lib.rs`, SECURITY.md) |
+| Settings | in the same palette, as a card (a real window, as the panel) in the middle of the screen. Made hidden at start and kept, like the panel, so it is on screen the moment it is asked for (from the bar's gear it took seconds when each opening made a new window); closing hides it and starts its page afresh. Once it is on screen the bar and the dim go (the chat carries on; the shortcut brings the bar back). The app's shortcut, where the bar and the panel go, the colour theme, updates, and a Permissions section on macOS (Screen Recording: status, *Open System Settings*, *Restart*, and what the app does and does not ask for) |
 | Permissions | **Screen Recording only**, on macOS (Windows asks for nothing). No keychain, no accessibility access, no microphone, no input monitoring. macOS names the switch "Screen & System Audio Recording"; the app records no audio |
 | Quit | Settings → Juno → *Quit Juno*, ⌘Q in the panel or settings, or the menu bar icon's right-click menu |
 | Themes | Settings → Appearance: seven colour themes (Claude, Graphite, Ocean, Forest, Rose, Lavender, High contrast), each a light and a dark palette that follows the system, for the panel, settings and the bar (always dark). Themes are data (`src/lib/themes.ts`), so marketplace themes can be added later; every palette is checked for contrast (tests/unit/themes.test.ts) |
 | Updates | as Discord does: a look at start and every 6 hours, the download in the background, the install once nothing of the app is on screen, then a restart into the menu bar (no bar pops up). Settings → Juno → *Update automatically* (on to start) and *Check now* (`src-tauri/src/updates.rs`). Off in a build without the update key; see *Updates* below |
 | Open at login | Settings → Juno, off until turned on: the app starts in the menu bar only (`--hidden`). No permission: a launch agent in `~/Library/LaunchAgents` on macOS (the system may say a background item was added), the user's Run key on Windows |
-| Storage | chats in JSON files, screenshots as image files, under the app's data folder (`~/Library/Application Support/com.humanbn.juno` on macOS); temporary chats in memory only; API keys and the account session in one file only your account can read (`secrets.json`, mode 0600). Not the keychain: macOS ties a keychain item to the exact build that made it, so each new build asked for the keychain password, and once refused, asked at every read |
+| Storage | chats in JSON files, screenshots as image files, under the app's data folder (`~/Library/Application Support/com.humanbn.juno` on macOS); temporary chats in memory only; API keys and the account session in one file only your account can read (`secrets.json`, mode 0600; on Windows also encrypted for the user with DPAPI). Not the keychain: macOS ties a keychain item to the exact build that made it, so each new build asked for the keychain password, and once refused, asked at every read |
 | Accounts and plans | built in when the build has the variables (below): email codes, and Google, which opens in the student's browser and comes back through the app's `com.humanbn.juno://auth/callback` link (a reverse-DNS scheme, so no other app named Juno claims it) (registered from the bundle on macOS, at first run on Windows); plans, Stripe checkout and the billing portal open in the browser too. Setup: `supabase/README.md` |
 | Escape | before anything is selected: never mind, everything goes; while selecting: stops that selection. *While the bar waits* it works only when the bar has the keyboard (after clicking it), since the app does not take Escape from the app you are working in |
 
@@ -67,7 +69,7 @@ The *Test build* workflow (`.github/workflows/desktop-release.yml`) builds the i
 
 To publish them as a prerelease on the repository's Releases page, go to *Actions → Test build → Run workflow*, or push a tag (`git tag desktop-v0.2.0 && git push origin desktop-v0.2.0`); a `desktop-vX.Y.Z` tag sets the app's version to X.Y.Z. [`TESTERS.md`](../TESTERS.md) is the release notes: installing, choosing who answers, what to look for, and how to report.
 
-These builds have no accounts, so testers bring their own key, a local model, or use placeholders. To share a key with testers:
+They have accounts when the repository's Actions variables hold the Supabase project and the Worker (`supabase/README.md`, step 7; the run's summary says whether they were there). Testers can also bring their own key or a local model. To share a key with testers:
 
 1. Make it in its own Anthropic workspace with a monthly spend limit.
 2. Send it privately.
@@ -92,8 +94,8 @@ The releases must stay public: installed copies download without signing in. Bui
 
 *Gate: overlay and capture work across displays and over full-screen apps, or the overlay goes native.*
 
-1. Open the app: the bar opens from its middle at the bottom of the screen, asking for Screen Recording the first time. After that, Option+Shift+S over Preview: the screen dims a little, the bar comes up with Box armed, the cursor is a crosshair everywhere, and resting it a moment shows *Drag to select* beside it.
-2. Drag a box over part of a PDF: the panel comes in as a card at the top right, the selection shows in it, and Explain answers (placeholder answers need no key). The panel grows with the answer and stops at the bottom of the screen.
+1. Open the app the first time: the setup comes up (who answers, then Screen Recording); *Start using Juno* puts the bar up from its middle at the bottom of the screen. After that, Option+Shift+S over Preview: the screen dims a little, the bar comes up with Box armed, the cursor is a crosshair everywhere, and resting it a moment shows *Drag to select* beside it.
+2. Drag a box over part of a PDF: the panel comes in as a card at the top right, the selection shows in it, and Explain answers. The panel grows with the answer and stops at the bottom of the screen.
 3. The bar waits: clicking and scrolling in Preview work everywhere except on the bar.
 4. Freeform: the panel shows only the inside of the shape; ✕ closes bar and panel; Escape before selecting closes the bar.
 5. Full screen: put Preview (or Keynote) in full screen, press the shortcut: the bar comes up over it, a box works, the panel appears next to it without leaving the full-screen Space.
@@ -101,13 +103,13 @@ The releases must stay public: installed copies download without signing in. Bui
 7. Stage Manager on: the same.
 8. Screen Recording off (System Settings): the shortcut brings the bar up with the note under it; *Turn on Screen Recording* opens System Settings, and the next shortcut offers *Restart*.
 9. Switching modes, opening the panel or settings, finishing a selection: no flash anywhere (the dim fades out; windows appear only once drawn).
-10. Click the menu bar icon: the bar comes up at once. Right-click it: Select, Settings…, Quit. No keychain prompt, ever; keys entered in Settings work for asking.
+10. Click the menu bar icon: the bar comes up at once. Right-click it: Select, Settings…, Quit. No keychain prompt, ever; a key saved in Settings shows only as its last four characters and works for asking.
 11. Box armed, scroll with the trackpad over Preview: the page scrolls under the dim, which never flickers; moving the pointer and dragging selects as usual.
 12. A selection: the panel is there at once with a shimmering placeholder, then the screenshot. Its corners and shadow look like any Mac window's, with no halo. The gear opens settings and the bar and dim go; the macro rows show name, prompt and ✕ side by side.
-13. With the bar up, the gear → *All settings*: settings come up (in round 22 they did not: the app hid itself), then the bar and dim go.
+13. With the bar up, the gear → *All settings*: settings are on screen at once (they are kept, hidden, from the start), then the bar and dim go.
 14. In a build with accounts (`supabase/README.md`): Settings → Account → *Continue with Google* opens the browser; after signing in it asks to open Juno, and settings come back signed in.
 15. With the panel open, ✕ on the bar: the bar goes as it is, without first showing the chats, ghost and gear again. With the panel open the bar's ✕ and modes sit evenly in it.
-16. An answer comes out evenly rather than in bursts, and the panel grows smoothly with it. Scroll up while it streams: the panel stays put; scroll back down and it follows again.
+16. An answer comes out evenly rather than in bursts, and the panel grows smoothly with it. Scroll up while it streams, even the smallest trackpad nudge: the panel stays put; scroll back to the end and it follows again.
 17. Point at a question: copy; on the latest, edit (ask it reworded) and retry (ask it again). ⌘⇧O starts a new chat.
 18. Settings → Selecting → *Where the bar and the panel go*: pick other squares; the next shortcut puts the bar there, and the next panel opens there. Resize the panel by hand, finish the chat, select again: it opens at that size.
 19. With the panel open (by a selection, or the bar's chats button), the bar's chats, ghost and gear fold away smoothly, and come back the same way.
@@ -128,20 +130,21 @@ desktop/
 │   ├── src/geometry.rs   displays, the pointer, the system bars, where the bar and the panel go (mixed scales, negative coordinates)
 │   ├── src/capture/      a display's screenshot without our windows: macos.rs (ScreenCaptureKit), windows.rs (GDI), linux.rs (X11, tests); the window a selection was made over
 │   ├── src/crop.rs       crop, freeform mask, downscale to 1568 px, PNG
-│   ├── src/store.rs      storage.local/session, screenshot files, the private secrets file
+│   ├── src/store.rs      storage.local/session, screenshot files, the private secrets file (DPAPI on Windows)
+│   ├── src/vault.rs      the API keys: kept from every page, sent by the core only to asking and listing models at their own company
 │   ├── src/updates.rs    updating itself: look, download, install when not in use, restart hidden
 │   └── src/testhook.rs   the end-to-end tests' hook (debug builds with --features test-hook only)
 ├── src/
 │   ├── core/             the hidden core window: shows the bar and the panel, takes the screenshot, keeps the chat in step
 │   ├── overlay/          the overlay window: the selection flow (lib/selection-controller.ts), which parts take the pointer, the bar's notes
 │   ├── panel/            the panel window, and fitting it to its chat (fit.ts)
-│   ├── settings/         the settings window (Options.tsx and its sections)
+│   ├── settings/         the settings window (Options.tsx and its sections; Setup.tsx, the first-run setup)
 │   ├── selection/        the bar, the overlay's drawing surface, the Box and Freeform selectors
 │   ├── lib/              the chat engine (engine.ts: the write queue, answers, the cloud copy, the connection status), chats,
 │   │                     the current chat, screenshots, settings, the planner, providers/, account/, rendering
 │   ├── ui/               the panel's components (Panel, Answer, Selection, ChatMenu, ModelPicker, Notices)
-│   ├── platform/         a WebExtension-shaped `browser` over the native core, files for screenshots, network, links
-│   ├── card.ts           the panel and settings as cards: drag by the top bar, the entrance and exit (`card:enter`/`card:leave` for the kept panel), settings shown once drawn
+│   ├── platform/         a WebExtension-shaped `browser` over the native core, files for screenshots, network, links, the key vault (vault.ts)
+│   ├── card.ts           the panel and settings as cards: drag by the top bar, the entrance (`card:enter` for the kept panel), settings shown only once drawn
 │   ├── theme.ts          each page following the colour theme (lib/themes.ts)
 │   └── brand.ts          what the app calls itself
 ├── web/                  the four pages (and a fixture page for the tests)
@@ -153,7 +156,7 @@ The code began as a browser extension, and its pages still talk to a WebExtensio
 
 | `browser` | In the app |
 | --- | --- |
-| `storage.local` | JSON files under `<app data>/store/local`, one per key; `keys` and `account` in `<app data>/store/secrets.json`, private to the user |
+| `storage.local` | JSON files under `<app data>/store/local`, one per key; `account` in `<app data>/store/secrets.json`, private to the user, with the API keys, which no page reaches (`vault.rs`) |
 | `storage.session` | memory in the native core, shared by the windows |
 | screenshots (`lib/images.ts`) | files under `<app data>/store/images/<chat id>/` |
 | `runtime.sendMessage` / `onMessage` | Tauri events to the core window, which answers |
@@ -163,16 +166,16 @@ The code began as a browser extension, and its pages still talk to a WebExtensio
 | `commands.getAll` | the shortcut the app registered |
 | `fetch` from the core | `tauri-plugin-http` (the native core), for any other origin |
 
-Capture and the windows are commands of their own: `capture_selection` (native capture, crop and mask), `panel_open` / `panel_close` / `panel_fit`, `window_show`.
+Capture, the windows and the keys are commands of their own: `capture_selection` (native capture, crop and mask), `panel_open` / `panel_close` / `panel_fit`, `window_show` (settings' page has drawn), `key_status` / `key_set` / `vendor_fetch` (vault.rs).
 
 ## Tests
 
 ```bash
 pnpm test               # unit tests, including tests/unit/desktop-browser.test.ts (the `browser` shim, several windows in memory)
-pnpm test:native        # Rust: display geometry and placement, crop and mask, storage and the secrets file
+pnpm test:native        # Rust: display geometry and placement, crop and mask, storage and the secrets file, the key vault's endpoint allowlist
 pnpm test:e2e           # the real app on a virtual X display (Linux: Xvfb, xdotool, ImageMagick)
 ```
 
-The end-to-end tests drive the app the way a student does — the real shortcut, the real pointer and keys through the X server, a real screen capture over a window with known pixels — and read the results back: the crop's pixels, the request body a (fake) local model receives, which windows show. They cover: opening the app, the shortcut and the bar, the Screen Recording note both ways, a box (exact pixels, the panel card at the top right, the bar waiting), freeform (outside painted white), an answer streamed from a model, click-through while waiting, ✕, Escape both ways, closing the panel, the panel kept between chats (made at start, the placeholder, the same page next time), scrolling through while armed, two selections in one chat (the panel growing to fit them), the ghost, settings from the gear (the bar going, every field showing), Quit, and Open at login (the autostart entry written with `--hidden`, and removed).
+The end-to-end tests drive the app the way a student does — the real shortcut, the real pointer and keys through the X server, a real screen capture over a window with known pixels — and read the results back: the crop's pixels, the request body a (fake) local model receives, which windows show. They cover: the first-run setup, opening the app, the shortcut and the bar, the Screen Recording note both ways, a box (exact pixels, the panel card at the top right, the bar waiting), freeform (outside painted white), an answer streamed from a model, click-through while waiting, ✕, Escape both ways, closing the panel, the panel kept between chats (made at start, the placeholder, the same page next time), scrolling through while armed, two selections in one chat (the panel growing to fit them), the ghost, settings from the gear (the bar going, every field showing, kept and on screen at once the next time), an API key no page can read or send elsewhere, scrolling up while an answer streams, Quit, and Open at login (the autostart entry written with `--hidden`, and removed).
 
 On Linux the overlay draws black (a virtual display has no compositor) and the capture steps it aside; on macOS and Windows the system leaves the app's windows out instead.
