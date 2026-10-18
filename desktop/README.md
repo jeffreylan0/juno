@@ -19,9 +19,11 @@ The plan's spike and its *Box, Freeform and the panel on Mac* phase, with accoun
 | Chats, temporary chats, macros, model picker, answers | one chat at a time (one panel); macros Explain, Hint, Check and Answer to start; a chat is named after the window its first selection was made over, without the app's name or counters that change from step to step ("Task 10 of 13 - Quiz 2.1 | Stemble — Mozilla Firefox" is "Quiz 2.1 \| Stemble") |
 | Who answers | placeholder, your own Anthropic or OpenAI key, a local model, hosted answers — every request goes out through the native core, so no browser CORS rule applies, and only to the addresses its allowlist names (`capabilities/default.json`): any `https://` address, and plain HTTP only to this computer (`localhost`, `127.0.0.1`) or a `.local` name. A local model on another computer needs one of those |
 | Native commands | every page can invoke every command, so the ones that matter check which window is asking: only the core takes a screenshot, and only while the bar is up; the overlay never sees or changes the keys; only Settings turns Open at login on or off (`lib.rs`, SECURITY.md) |
-| Settings | in the same palette, as a card (a real window, as the panel) in the middle of the screen; once it is on screen the bar and the dim go (the chat carries on; the shortcut brings the bar back). The app's shortcut, where the bar and the panel go, and a Permissions section on macOS (Screen Recording: status, *Open System Settings*, *Restart*, and what the app does and does not ask for) |
+| Settings | in the same palette, as a card (a real window, as the panel) in the middle of the screen; once it is on screen the bar and the dim go (the chat carries on; the shortcut brings the bar back). The app's shortcut, where the bar and the panel go, the colour theme, updates, and a Permissions section on macOS (Screen Recording: status, *Open System Settings*, *Restart*, and what the app does and does not ask for) |
 | Permissions | **Screen Recording only**, on macOS (Windows asks for nothing). No keychain, no accessibility access, no microphone, no input monitoring. macOS names the switch "Screen & System Audio Recording"; the app records no audio |
 | Quit | Settings → Juno → *Quit Juno*, ⌘Q in the panel or settings, or the menu bar icon's right-click menu |
+| Themes | Settings → Appearance: seven colour themes (Claude, Graphite, Ocean, Forest, Rose, Lavender, High contrast), each a light and a dark palette that follows the system, for the panel, settings and the bar (always dark). Themes are data (`src/lib/themes.ts`), so marketplace themes can be added later; every palette is checked for contrast (tests/unit/themes.test.ts) |
+| Updates | as Discord does: a look at start and every 6 hours, the download in the background, the install once nothing of the app is on screen, then a restart into the menu bar (no bar pops up). Settings → Juno → *Update automatically* (on to start) and *Check now* (`src-tauri/src/updates.rs`). Off in a build without the update key; see *Updates* below |
 | Open at login | Settings → Juno, off until turned on: the app starts in the menu bar only (`--hidden`). No permission: a launch agent in `~/Library/LaunchAgents` on macOS (the system may say a background item was added), the user's Run key on Windows |
 | Storage | chats in JSON files, screenshots as image files, under the app's data folder (`~/Library/Application Support/com.humanbn.juno` on macOS); temporary chats in memory only; API keys and the account session in one file only your account can read (`secrets.json`, mode 0600). Not the keychain: macOS ties a keychain item to the exact build that made it, so each new build asked for the keychain password, and once refused, asked at every read |
 | Accounts and plans | built in when the build has the variables (below): email codes, and Google, which opens in the student's browser and comes back through the app's `com.humanbn.juno://auth/callback` link (a reverse-DNS scheme, so no other app named Juno claims it) (registered from the bundle on macOS, at first run on Windows); plans, Stripe checkout and the billing portal open in the browser too. Setup: `supabase/README.md` |
@@ -63,7 +65,7 @@ The *Test build* workflow (`.github/workflows/desktop-release.yml`) builds the i
 - a universal `.dmg`, signed ad hoc;
 - a Windows setup `.exe`.
 
-To publish them as a prerelease on the repository's Releases page, go to *Actions → Test build → Run workflow*, or push a tag (`git tag desktop-v0.1.0-test.1 && git push origin desktop-v0.1.0-test.1`). [`TESTERS.md`](../TESTERS.md) is the release notes: installing, choosing who answers, what to look for, and how to report.
+To publish them as a prerelease on the repository's Releases page, go to *Actions → Test build → Run workflow*, or push a tag (`git tag desktop-v0.2.0 && git push origin desktop-v0.2.0`); a `desktop-vX.Y.Z` tag sets the app's version to X.Y.Z. [`TESTERS.md`](../TESTERS.md) is the release notes: installing, choosing who answers, what to look for, and how to report.
 
 These builds have no accounts, so testers bring their own key, a local model, or use placeholders. To share a key with testers:
 
@@ -74,6 +76,17 @@ These builds have no accounts, so testers bring their own key, a local model, or
 Never put a key in a build.
 
 Because the builds aren't signed with a Developer ID, macOS asks testers to *Open Anyway* once per build and to allow Screen Recording again after each update. Windows SmartScreen shows *More info → Run anyway*. An Apple Developer ID ($99 a year) with notarization removes the macOS steps: set `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` as the build's environment, and Tauri signs and notarizes.
+
+### Updates
+
+Installed copies update themselves from the repository's Releases (Tauri's updater): each looks at `latest.json` in the release called `updates`, and installs a newer version only if it carries a valid signature from the update key. To turn it on, once:
+
+1. Make the key, on your own computer: `pnpm --filter desktop tauri signer generate -w ~/.tauri/juno-updates.key`, with a password. Keep the key file and the password in your password manager: lose them, and installed copies can never update again.
+2. In GitHub → Settings → Secrets and variables → Actions, add `TAURI_SIGNING_PRIVATE_KEY` (the contents of `juno-updates.key`) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+3. Put the public key (the contents of `juno-updates.key.pub`) in `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`, and commit it. It is public on purpose.
+4. Ship an update by pushing a higher version tag, `desktop-vX.Y.Z`. The *Test build* workflow builds, signs, publishes the release, and points `latest.json` at it.
+
+The releases must stay public: installed copies download without signing in. Builds made before step 3 have no key, so testers reinstall once; every later build updates itself. Until the Mac app is signed with a Developer ID, each update is a new app to macOS, which asks for Screen Recording again after it (the bar says so); a Developer ID ends that.
 
 ## Spike checklist (the plan's first gate)
 
@@ -97,6 +110,9 @@ Because the builds aren't signed with a Developer ID, macOS asks testers to *Ope
 16. An answer comes out evenly rather than in bursts, and the panel grows smoothly with it. Scroll up while it streams: the panel stays put; scroll back down and it follows again.
 17. Point at a question: copy; on the latest, edit (ask it reworded) and retry (ask it again). ⌘⇧O starts a new chat.
 18. Settings → Selecting → *Where the bar and the panel go*: pick other squares; the next shortcut puts the bar there, and the next panel opens there. Resize the panel by hand, finish the chat, select again: it opens at that size.
+19. With the panel open (by a selection, or the bar's chats button), the bar's chats, ghost and gear fold away smoothly, and come back the same way.
+20. Settings → Appearance: each theme recolours the panel, settings and the bar at once, in light and dark.
+21. Settings → Juno shows the version and, in a build with the update key, *Update automatically* and *Check now*.
 
 Anything that fails in 1, 3, 5 or 6 is the spike's question: whether the transparent overlay holds up, or becomes a small native window.
 
@@ -113,6 +129,7 @@ desktop/
 │   ├── src/capture/      a display's screenshot without our windows: macos.rs (ScreenCaptureKit), windows.rs (GDI), linux.rs (X11, tests); the window a selection was made over
 │   ├── src/crop.rs       crop, freeform mask, downscale to 1568 px, PNG
 │   ├── src/store.rs      storage.local/session, screenshot files, the private secrets file
+│   ├── src/updates.rs    updating itself: look, download, install when not in use, restart hidden
 │   └── src/testhook.rs   the end-to-end tests' hook (debug builds with --features test-hook only)
 ├── src/
 │   ├── core/             the hidden core window: shows the bar and the panel, takes the screenshot, keeps the chat in step
@@ -125,6 +142,7 @@ desktop/
 │   ├── ui/               the panel's components (Panel, Answer, Selection, ChatMenu, ModelPicker, Notices)
 │   ├── platform/         a WebExtension-shaped `browser` over the native core, files for screenshots, network, links
 │   ├── card.ts           the panel and settings as cards: drag by the top bar, the entrance and exit (`card:enter`/`card:leave` for the kept panel), settings shown once drawn
+│   ├── theme.ts          each page following the colour theme (lib/themes.ts)
 │   └── brand.ts          what the app calls itself
 ├── web/                  the four pages (and a fixture page for the tests)
 ├── tests/e2e/            the app end to end, on a virtual display

@@ -49,7 +49,7 @@ create table if not exists public.plans (
 -- their metadata (supabase/README.md).
 insert into public.plans (id, name, monthly_questions, cloud, rank) values
   ('free', 'Free', 0, false, 0),
-  ('plus', 'Plus', 600, true, 10),
+  ('plus', 'Plus', 3000, true, 10),
   ('unlimited', 'Unlimited', 100000, true, 100)
 on conflict (id) do nothing;
 

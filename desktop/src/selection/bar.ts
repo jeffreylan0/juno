@@ -5,7 +5,7 @@
  * (the panel, open on its list), the ghost (the next selection starts a
  * temporary chat) and a gear that expands the bar into a short settings
  * menu, and Send, when selections wait for it (the setting). While the panel
- * shows, the chats, ghost and gear are the panel's, and leave the bar. The
+ * shows, the chats, ghost and gear are the panel's, and fold away. The
  * instruction shows above the row only when it adds something (a selection
  * to adjust, a warning); the cursor tooltip says the rest. A note the app
  * needs to give (a permission) attaches under the row. Every control has a
@@ -50,19 +50,29 @@ export const BAR_STYLE = `
 /* A note or the settings widen the bar while open. */
 .bar.wide { width: min(460px, calc(100vw - 32px)); }
 .bar button { font: inherit; }
-/* ✕ | the modes, centred | chats, ghost, gear: equal outer columns keep the
-   modes in the middle. While the panel has the chats, ghost and gear (and
-   Send is not shown), the row is just ✕ and the modes, evenly padded. */
-.row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 6px; min-height: 52px; box-sizing: border-box; padding: 8px; }
-.start { justify-self: start; display: flex; }
-.end { justify-self: end; display: flex; align-items: center; gap: 2px; }
-.bar.panel-open .chats, .bar.panel-open .ghost, .bar.panel-open .gear { display: none; }
-.bar.panel-open:not(:has(.ask.on)) .row { grid-template-columns: auto auto; }
-.bar.panel-open:not(:has(.ask.on)) .end { display: none; }
+/* ✕ | the modes | chats, ghost, gear (and Send). The two sides are as wide
+   as each other (buttons are 32 px, 2 px apart; Send 6 px off), so the modes
+   sit in the middle. While the panel has the chats, ghost and gear, they fold
+   away and the bar narrows with them, to ✕ and the modes, evenly padded. */
+.row { display: flex; align-items: center; min-height: 52px; box-sizing: border-box; padding: 8px; }
+.start { display: flex; flex: none; width: 100px; }
+.bar:has(.ask.on) .start { width: 138px; }
+.chips { margin: 0 6px; }
+.end { display: flex; flex: none; align-items: center; }
+.end > * + * { margin-left: 2px; }
+.end > .ask { margin-left: 6px; }
+.bar.panel-open .start { width: 32px; }
+.bar.panel-open:has(.ask.on) .start { width: 38px; }
+.bar.panel-open:not(:has(.ask.on)) .chips { margin-right: 0; }
+.bar.panel-open :is(.chats, .ghost, .gear) { width: 0; margin-left: 0; opacity: 0; visibility: hidden; pointer-events: none; }
+/* Folding takes as long as unfolding; a folded button is out of reach only once folded. */
+.start, .chips, .chats, .ghost, .gear { transition: width 220ms ease, margin 220ms ease, opacity 160ms ease, visibility 0s; }
+.bar.panel-open :is(.chats, .ghost, .gear) { transition: width 220ms ease, margin 220ms ease, opacity 120ms ease, visibility 0s 220ms; }
+@media (prefers-reduced-motion: reduce) { .start, .chips, .chats, .ghost, .gear { transition: none; } }
 /* Quiet round controls: the close on the left, chats, ghost and gear on the right. */
 .close, .chats, .gear, .ghost {
   display: flex; align-items: center; justify-content: center; flex: none;
-  width: 32px; height: 32px; padding: 0; border: 0; border-radius: 9px; cursor: pointer;
+  width: 32px; height: 32px; padding: 0; border: 0; border-radius: 9px; cursor: pointer; overflow: hidden;
   background: transparent; color: var(--sai-bar-muted, #a6a39b);
 }
 .close:hover, .chats:hover, .gear:hover, .gear[aria-expanded='true'], .ghost:hover { color: var(--sai-bar-fg, #f5f4ef); background: rgba(255, 255, 255, 0.08); }
@@ -93,7 +103,7 @@ export const BAR_STYLE = `
 .chip svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 /* Send: shown when selections wait to be sent (the setting), ready once one is drawn. */
 .ask {
-  display: none; align-items: center; justify-content: center; flex: none; margin-left: 4px;
+  display: none; align-items: center; justify-content: center; flex: none;
   width: 32px; height: 32px; padding: 0; border: 0; border-radius: 9px; cursor: pointer;
   background: var(--sai-accent, #d97757); color: #fff;
 }
@@ -295,7 +305,7 @@ export class Bar {
     this.el.classList.toggle('panel-open', open);
     if (!open) return;
     this.closeSettings();
-    if (this.hintFor && this.hintFor.offsetParent === null) this.hideHint();
+    if (this.hintFor?.matches('.chats, .ghost, .gear')) this.hideHint();
   }
 
   /** Which mode is being selected in; null while the bar waits. */

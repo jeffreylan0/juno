@@ -13,7 +13,7 @@ compatibility_flags = ["nodejs_compat"]
 AI_GATEWAY_ID = ""
 # The prices on offer: Stripe lookup keys, in the order the apps show them
 # (supabase/README.md). Empty: no plans are offered.
-STRIPE_PRICES = "plus_monthly,plus_yearly,plus_semester"
+STRIPE_PRICES = "plus_semester,plus_year"
 # "on" once Stripe Tax is set up in the Stripe dashboard.
 STRIPE_TAX = ""
 

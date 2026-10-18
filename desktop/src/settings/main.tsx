@@ -7,8 +7,10 @@ import { Options } from '@/settings/Options';
 import '@/settings/options.css';
 import '../app.css';
 import { cardWindow } from '../card';
+import { followTheme } from '../theme';
 
 document.title = `${BRAND.name} Settings`;
+followTheme();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

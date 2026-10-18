@@ -91,6 +91,7 @@ export function priceLabel(o: Offer, locale?: string): string {
   const amount = new Intl.NumberFormat(locale, { style: 'currency', currency: o.currency.toUpperCase() }).format(o.amount / 100);
   if (o.interval) return o.intervalCount > 1 ? `${amount} every ${o.intervalCount} ${o.interval}s` : `${amount} a ${o.interval}`;
   const days = o.passDays ?? 0;
+  if (days >= 360 && days <= 366) return `${amount} for a year`;
   const months = Math.round(days / 30);
   return `${amount} for ${days % 30 === 0 || months >= 2 ? `${months} months` : `${days} days`}`;
 }

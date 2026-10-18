@@ -3,7 +3,7 @@
  * OpenAI Batch API (both ~50% of list price), polls until done, and writes
  * every answer into eval/cache and eval/out so `eval:score` can grade them.
  *
- *   pnpm eval:batch --model claude-haiku-4-5-20251001 --route planner,image-only
+ *   pnpm eval:batch --model claude-haiku-5-5 --route planner,image-only
  *   pnpm eval:batch --model gpt-6-luna --route planner
  *
  * Needs ANTHROPIC_API_KEY or OPENAI_API_KEY in .env.local.
@@ -16,7 +16,7 @@ import type { AskRequest, ModelRef } from '@shared/payload';
 import { EVAL_ROUTES, FileCacheStore, buildRequest, loadProblems, parseArgs, writeOutput, type EvalRoute } from './lib';
 
 const args = parseArgs(process.argv.slice(2));
-const model = String(args.model ?? 'claude-haiku-4-5-20251001');
+const model = String(args.model ?? 'claude-haiku-5-5');
 const vendor: 'anthropic' | 'openai' = model.startsWith('gpt') || model.startsWith('o') ? 'openai' : 'anthropic';
 const routes = String(args.route ?? 'planner,image-only')
   .split(',')

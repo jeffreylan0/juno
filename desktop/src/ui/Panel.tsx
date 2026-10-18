@@ -391,7 +391,7 @@ export function Panel() {
             disabled={!askable}
           />
           <div className="composer-row">
-            <span className="composer-hint">Shift + Enter for a new line · {NEW_CHAT_KEY} new chat</span>
+            <span className="composer-hint">{NEW_CHAT_KEY} new chat</span>
             {settings && <ModelPicker settings={settings} keys={keys} />}
             {busy ? (
               <button type="button" className="send stop" aria-label="Stop" title="Stop" onClick={stop}>
@@ -573,28 +573,23 @@ function ChatTitle({ chat, temporary, onRename }: { chat: Chat | null; temporary
   );
 }
 
-/** What an empty chat says. Default text, so it is set in italics. */
+/** What an empty chat says: how to start. Default text, so it is set in italics. */
 function Empty({ temporary, shortcut, provider }: { temporary: boolean; shortcut: string; provider?: Settings['provider'] }) {
   const keys = formatShortcut(shortcut);
-  const how = (
-    <>
-      Click {BRAND.iconName}
-      {keys ? <> or use {keys}</> : null} to select what you want to ask about.
-    </>
-  );
+  const how = keys ? `Press ${keys} to select something.` : `Click ${BRAND.iconName} to select something.`;
   if (temporary) {
     return (
       <div className="empty temporary" data-testid="empty">
         <Icon name="ghost" className="empty-ghost" />
         <p>
-          <strong>Temporary chat.</strong> Not saved, and deleted when you're done.
+          <strong>Temporary chat.</strong> Not saved.
         </p>
         <p className="privacy" data-testid="ghost-privacy">
           {provider === 'local'
-            ? 'Your local model answers, so nothing leaves your computer.'
+            ? 'Nothing leaves your computer.'
             : provider === 'mock'
-              ? 'Placeholder answers are made up here, so nothing is sent.'
-              : "Claude and ChatGPT don't train on API data, and this chat asks them to keep as little as they can."}
+              ? 'Nothing is sent.'
+              : 'The AI is asked to keep as little as it can.'}
         </p>
         <p>{how}</p>
       </div>
@@ -603,7 +598,6 @@ function Empty({ temporary, shortcut, provider }: { temporary: boolean; shortcut
   return (
     <div className="empty" data-testid="empty">
       <p>{how}</p>
-      <p>Selections from any app go into this chat. Press ✕ or Escape when you're done, or {NEW_CHAT_KEY} for a new chat.</p>
     </div>
   );
 }

@@ -14,6 +14,7 @@ mod geometry;
 mod store;
 #[cfg(feature = "test-hook")]
 mod testhook;
+mod updates;
 mod wm;
 
 use std::sync::{Arc, Mutex};
@@ -418,7 +419,7 @@ fn relaunch(app: AppHandle) {
 struct AppInfo {
     version: String,
     shortcut: ShortcutStatus,
-    /// Started with `--hidden` (at login, say): no bar until it is asked for.
+    /// Started with `--hidden` (at login, say), or by an update: no bar until it is asked for.
     hidden: bool,
 }
 
@@ -428,7 +429,7 @@ fn app_info(app: AppHandle, window: WebviewWindow, state: State<Shared>) -> AppI
     AppInfo {
         version: app.package_info().version.to_string(),
         shortcut: state.shortcut.lock().unwrap().clone(),
-        hidden: std::env::args().any(|a| a == "--hidden"),
+        hidden: std::env::args().any(|a| a == "--hidden") || updates::started_by_update(),
     }
 }
 
@@ -442,6 +443,21 @@ fn diag_note(window: WebviewWindow, text: String) {
 #[tauri::command]
 fn quit(app: AppHandle) {
     app.exit(0);
+}
+
+/// Settings → Juno: where updating stands (updates.rs).
+#[tauri::command]
+fn update_status(window: WebviewWindow, updates: State<updates::Updates>) -> Res<updates::Status> {
+    only(&window, &[wm::SETTINGS])?;
+    Ok(updates.status())
+}
+
+/// Settings → Juno → Check now.
+#[tauri::command]
+fn update_check(app: AppHandle, window: WebviewWindow) -> Res<()> {
+    only(&window, &[wm::SETTINGS])?;
+    updates::check_now(&app);
+    Ok(())
 }
 
 /// Settings → Juno → Open at login: whether the app starts, in the
@@ -480,7 +496,9 @@ fn quote_run_entry(app: &AppHandle) -> Res<()> {
 // ── The shortcut and the menu bar icon ───────────────────────────────────
 
 /// The app's own link, a reverse-DNS scheme (RFC 8252 §7.1): no other app
-/// named Juno can claim it by accident.
+/// named Juno can claim it by accident. Test builds run side by side and
+/// never take it.
+#[cfg(not(feature = "test-hook"))]
 const LINK_SCHEME: &str = "com.humanbn.juno://";
 
 /// The app's link was opened. Today that is only Google sign-in coming back
@@ -561,6 +579,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::Builder::new().args(["--hidden"]).build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, pressed, event| {
@@ -580,7 +599,11 @@ pub fn run() {
             // Local, not roaming, app data: on Windows a roaming profile would
             // copy the keys, chats and screenshots to the domain's server.
             // (The same folder as before on macOS and Linux.)
-            let dir = app.path().app_local_data_dir()?.join("store");
+            let data = app.path().app_local_data_dir()?;
+            if updates::take_marker(&data) {
+                diag::note("setup: restarted by an update");
+            }
+            let dir = data.join("store");
             store::adopt_earlier_store(&dir, &[app.path().local_data_dir()?, app.path().data_dir()?]);
             std::fs::create_dir_all(&dir)?;
             let store = Store::open(&dir, store::system_secrets(&dir))?;
@@ -617,6 +640,8 @@ pub fn run() {
                 }
             }
             wm::start_passthrough(handle.clone(), overlay);
+            app.manage(updates::Updates::new(&handle));
+            updates::start(handle.clone());
             diag::note("setup: done");
             Ok(())
         })
@@ -671,6 +696,8 @@ pub fn run() {
             quit,
             login_item,
             login_item_set,
+            update_status,
+            update_check,
             diag_note,
         ])
         .build(tauri::generate_context!())

@@ -15,7 +15,7 @@ export { MODEL_TABLE };
  * key can use is available in settings after a key check.
  */
 export const MAJOR_MODELS: Record<'anthropic' | 'openai', string[]> = {
-  anthropic: ['claude-haiku-4-5-20251001', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1'],
+  anthropic: ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1'],
   openai: ['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra'],
 };
 
@@ -24,7 +24,7 @@ export const MAJOR_MODELS: Record<'anthropic' | 'openai', string[]> = {
  * a side panel that can be ~340 px wide. The vendor is the option group.
  */
 export const SHORT_NAMES: Record<string, string> = {
-  'claude-haiku-4-5-20251001': 'Haiku 4.5',
+  'claude-haiku-5-5': 'Haiku 5.5',
   'claude-sonnet-5-5': 'Sonnet 5.5',
   'claude-opus-5-5': 'Opus 5.5',
   'claude-fable-5-1': 'Fable 5.1',
@@ -47,7 +47,7 @@ export const COMPANY = { anthropic: 'Anthropic', openai: 'OpenAI' } as const;
  * the multiplier on input for prompt-cache hits (Anthropic writes cost 1.25×).
  */
 export const PRICES: Record<string, { input: number; output: number; cacheRead?: number }> = {
-  'claude-haiku-4-5-20251001': { input: 1, output: 5, cacheRead: 0.1 },
+  'claude-haiku-5-5': { input: 0.1, output: 0.5, cacheRead: 0.1 },
   'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.1 },
   'claude-sonnet-5': { input: 2, output: 10, cacheRead: 0.1 },
   'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.05 },

@@ -2,7 +2,7 @@
 
 Thanks for helping test. Juno lets you draw a box (or any shape) around something on your screen, like a math problem, a chart or a paragraph in a PDF, and ask Claude or ChatGPT about exactly that.
 
-This is an early test build. There are no accounts and no automatic updates yet. Your computer will also warn you once when you open it, because the app isn't signed by Apple or Microsoft yet.
+This is an early test build, without accounts. Your computer will warn you once when you open it, because the app isn't signed by Apple or Microsoft yet.
 
 ## Download
 
@@ -64,6 +64,8 @@ In the panel:
 
 Settings → **Selecting** → *Where the bar and the panel go* picks a part of the screen for each: click one of the nine squares. The bar sits at that part's outer edge (the bottom of the screen to start), and the panel in its corner or side (top right to start).
 
+Settings → **Appearance** has seven colour themes. Each follows your computer's light or dark mode.
+
 ## What to look for
 
 - **Installing:** where did you hesitate or get stuck?
@@ -92,7 +94,7 @@ If the app doesn't start or shows nothing, also attach its log, which holds only
   3. Then remove Selection AI (Mac: drag it to the Trash; Windows: Settings → Apps → Selection AI → Uninstall).
 
   On a Mac, allow Screen Recording for Juno; the old *Selection AI* entry in that list can be removed with **−**.
-- **Updating:** there are no automatic updates yet. To update, install the new build over the old one. On a Mac, quit first (right-click the menu bar icon → Quit), then replace the app in Applications.
+- **Updating:** once a build with updates is out, Juno updates itself: it downloads the new version in the background and installs it when you're not using it, then restarts in the menu bar. Settings → **Juno** shows the version, and lets you turn this off or check now. Until then (and to update by hand), install the new build over the old one; on a Mac, quit first (right-click the menu bar icon → Quit), then replace the app in Applications.
 - **Screen Recording after a Mac update:** each new build is a new app to macOS, so allow Screen Recording again. If the switch already shows as on but the app can't see the screen:
   1. Select Juno in that list.
   2. Remove it with **−**.

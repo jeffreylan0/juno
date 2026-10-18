@@ -29,11 +29,10 @@ export function ShortcutField() {
       </span>
       {status?.error ? (
         <small className="help bad" data-testid="shortcut-taken">
-          Another app is using {keys}, so it does nothing here. Click {BRAND.iconName} instead, or quit the other app and
-          restart {BRAND.name}.
+          Another app is using {keys}. Click {BRAND.iconName} instead, or quit that app and restart {BRAND.name}.
         </small>
       ) : (
-        <small className="help">Works in every app, full screen included. Same as clicking {BRAND.iconName}.</small>
+        <small className="help">Works in every app.</small>
       )}
     </div>
   );

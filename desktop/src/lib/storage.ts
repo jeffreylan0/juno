@@ -7,6 +7,7 @@ import { storage } from '@wxt-dev/storage';
 import { DEFAULT_MACROS, DEFAULT_PROMPT, DEFAULT_PROMPTS, type Macro } from '@shared/prompts';
 import type { ModelRef, Provider } from '@shared/payload';
 import type { Place } from '@/selection/bar';
+import { DEFAULT_THEME, isThemeId } from './themes';
 
 export type { Macro } from '@shared/prompts';
 
@@ -54,6 +55,10 @@ export interface Settings {
   barPlace: Place;
   /** Where the panel opens, the same way. */
   panelPlace: Place;
+  /** The colour theme (lib/themes.ts). */
+  theme: string;
+  /** Install new versions by itself (core/updates.ts). */
+  autoUpdate: boolean;
   /**
    * Copy saved chats to the signed-in account (account/sync.ts). Only does
    * anything for accounts given cloud storage; off until the student turns it on.
@@ -75,6 +80,8 @@ export const DEFAULT_SETTINGS: Settings = {
   chatLimit: DEFAULT_CHAT_LIMIT,
   barPlace: 'bottom-center',
   panelPlace: 'top-right',
+  theme: DEFAULT_THEME,
+  autoUpdate: true,
   cloudSync: false,
   localBaseUrl: 'http://localhost:11434/v1',
   localModel: 'qwen2.5vl:7b',
@@ -153,6 +160,8 @@ export function migrateSettings(stored: unknown): Settings {
   if ((merged.sendBehavior as string) === 'auto-box') merged.sendBehavior = 'auto';
   if (!isPlace(merged.barPlace)) merged.barPlace = DEFAULT_SETTINGS.barPlace;
   if (!isPlace(merged.panelPlace)) merged.panelPlace = DEFAULT_SETTINGS.panelPlace;
+  if (!isThemeId(merged.theme)) merged.theme = DEFAULT_THEME;
+  merged.autoUpdate = merged.autoUpdate !== false;
   merged.macros = sanitizeMacros(merged.macros);
   if (!(CHAT_LIMITS as readonly number[]).includes(merged.chatLimit)) merged.chatLimit = DEFAULT_CHAT_LIMIT;
   merged.version = SETTINGS_VERSION;

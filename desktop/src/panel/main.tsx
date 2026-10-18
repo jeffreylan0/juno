@@ -14,8 +14,10 @@ import '../app.css';
 import { cardWindow } from '../card';
 import { MAC } from '../os';
 import { fitToChat } from './fit';
+import { followTheme } from '../theme';
 
 document.title = BRAND.name;
+followTheme();
 // The system's own text sizes (app.css).
 document.documentElement.dataset.system = MAC ? 'mac' : /Windows/.test(navigator.userAgent) ? 'windows' : 'linux';
 

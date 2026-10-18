@@ -42,7 +42,7 @@ Before starting, have ready: the business's legal details for Stripe (humanbn, i
    A project made with the other choices works the same: the migration states every privilege itself.
 2. **Project Settings → API Keys**: note the project URL (`https://<ref>.supabase.co`), the **publishable** key (`sb_publishable_…`, goes in the apps) and the **secret** key (`sb_secret_…`, only ever in the Worker).
 3. **SQL Editor**: paste all of `migrations/20261006000000_accounts.sql` and run it. It is safe to run again after an update, and brings a project made from an earlier version of the file up to date.
-4. **Table Editor → plans**: the three plans it made. `free` is every signed-in account (0 hosted answers, no cloud storage); `plus` is the paid plan (600 hosted answers a month, cloud storage); `unlimited` is for you and testers. Change the numbers here at any time: they apply at once. The round-9 pricing proposal gives `free` about 30 hosted answers a month; leave it at 0 until the abuse protection in step 10 is on, since email sign-up is free.
+4. **Table Editor → plans**: the three plans it made. `free` is every signed-in account (0 hosted answers, no cloud storage); `plus` is the paid plan (3,000 hosted answers a month, about 100 a day, which nobody reaches; and cloud storage); `unlimited` is for you and testers. Change the numbers here at any time: they apply at once. The pricing below gives `free` 100 hosted answers a month; leave it at 0 until the abuse protection in step 10 is on, since email sign-up is free. (A project made before this was decided has `plus` at 600: change it here.)
 
 ## 2. Email codes
 
@@ -100,21 +100,20 @@ Optional: an **AI Gateway** named `juno` (Cloudflare → AI → AI Gateway) give
 Do all of this in **test mode** first (the toggle at the top of the dashboard), try it end to end, then repeat the starred steps in live mode.
 
 1. **Activate the account** for humanbn: business details, bank account, and under **Settings → Public details** the name students see (Juno), info@humanbn.com as the support email, and the privacy policy and terms URLs. **Settings → Branding**: icon and colours (the checkout page uses them).
-2. ★ **The product and its prices** (Product catalog → Add product): *Juno Plus*, with metadata `plan` = `plus`. Add three prices, each with a **lookup key** (under *More options*):
+2. ★ **The product and its prices** (Product catalog → Add product): *Juno Plus*, with metadata `plan` = `plus`. Add two prices, each with a **lookup key** (under *More options*):
 
    | Price | Type | Lookup key | Metadata |
    | --- | --- | --- | --- |
-   | $7.99 a month | Recurring, monthly | `plus_monthly` | |
-   | $59.99 a year | Recurring, yearly | `plus_yearly` | |
-   | $24.99 for a semester | One-time | `plus_semester` | `pass_days` = `120` |
+   | $4.99 for a semester | One-time | `plus_semester` | `pass_days` = `120` |
+   | $11.99 for a year | One-time | `plus_year` | `pass_days` = `365` |
 
-   The apps show whatever prices these keys name, in the order of `STRIPE_PRICES` in `worker/wrangler.toml`. To change a price later, make a new price and move the lookup key to it (*Transfer lookup key*); students already subscribed keep theirs. A one-time price is a pass: Plus for `pass_days` days, no renewal.
-3. **Settings → Billing → Customer portal**: allow *Update payment methods*, *View invoice history* and *Cancel subscriptions* (at the end of the period); under *Subscriptions → Customers can switch plans*, add the monthly and yearly prices. Save.
+   Both are passes: paid once, Plus for `pass_days` days, nothing renews, so a student never meets a charge they forgot. Why these prices: README.md, *Plans*. The apps show whatever prices these keys name, in the order of `STRIPE_PRICES` in `worker/wrangler.toml`. To change a price later, make a new price and move the lookup key to it (*Transfer lookup key*). The Worker still handles subscriptions (a recurring price with a lookup key, added to `STRIPE_PRICES`), should you ever want one.
+3. **Settings → Billing → Customer portal**: allow *Update payment methods* and *View invoice history* (receipts for passes). Save.
 4. **Settings → Billing → Subscriptions and emails**: turn on Smart Retries, and the emails for failed payments and expiring cards, so a declined card is retried before anything ends. Set what happens *if all retries for a payment fail* to **Cancel the subscription** (not "leave it past due", which would keep Plus on unpaid for a whole period). (While Stripe retries, the account keeps Plus and Settings tells the student to update their card.)
 5. **Tax**: Stripe Tax (**Tax → Set up**) registers where you must collect sales tax or VAT and adds it at checkout; then set `STRIPE_TAX = "on"` in `worker/wrangler.toml` and deploy. If you would rather not handle sales tax and VAT registrations yourself, a merchant of record (Paddle, Lemon Squeezy) does it for a larger fee, but that would replace `worker/src/billing.ts`; decide before launch.
 6. ★ **A restricted API key** (Developers → API keys → Create restricted key), with only: *Customers* write, *Checkout Sessions* write, *Customer portal* write, *Prices* read, *Products* read, *Subscriptions* read, *PaymentIntents* read, *Charges* read (the last two so a pass's payment is read back from Stripe: refunded or disputed passes end). Then `npx wrangler secret put STRIPE_SECRET_KEY`.
 7. ★ **The webhook** (Developers → Webhooks → Add endpoint): `https://<your Worker>/stripe/webhook`, sending `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `customer.subscription.paused`, `customer.subscription.resumed`, `charge.refunded`, `charge.dispute.created` and `charge.dispute.closed`. Don't make Payment Links or other Checkout integrations on this Stripe account for Juno: the Worker gives a plan only for checkouts it made itself, so those would take payment and give nothing. Copy its signing secret: `npx wrangler secret put STRIPE_WEBHOOK_SECRET`.
-8. **Try it** (test mode): sign in to a test build, Settings → Account → *$7.99 a month*, pay with card `4242 4242 4242 4242` (any future date, any CVC). Back in Settings, the plan line says *Plus · Renews on …*, hosted answers show 600 left, and cloud storage can be turned on. In Supabase, `subscriptions` has the row. *Manage billing* opens the portal; cancel there and Settings says *Ends on …*. Try the semester price too, and a declined card (`4000 0000 0000 0341`) to see *Your last payment didn't go through*.
+8. **Try it** (test mode): sign in to a test build, Settings → Account → *$4.99 for a semester*, pay with card `4242 4242 4242 4242` (any future date, any CVC). Back in Settings, the plan line says *Plus · Until …*, hosted answers show 3000 left, and cloud storage can be turned on. In Supabase, `subscriptions` has the row. *Manage billing* opens the portal with the receipt. Try a declined card (`4000 0000 0000 0341`) too.
 9. **Go live**: switch the dashboard to live mode, repeat the starred steps (live prices, live restricted key, live webhook and its secret), and `wrangler secret put` the live values over the test ones.
 
 What happens when:
@@ -153,7 +152,7 @@ This never touches what they pay for, and what they pay for never undoes it: the
 
 Settings → **Account**: *Continue with Google*, or an email address and *Email me a code*. Signed in, the section is the account's dashboard:
 
-- **Plan**: its name and what is next for it (*Renews on …*, *Ends on …*, *Until …* for a pass, or that a payment failed), hosted answers left this month with a meter, the prices on offer when the account pays for nothing (*$7.99 a month*, …), and *Manage billing* (Stripe's portal: card, invoices, switching, cancelling) once it has paid.
+- **Plan**: its name and what is next for it (*Renews on …*, *Ends on …*, *Until …* for a pass, or that a payment failed), hosted answers left this month with a meter, the prices on offer when the account pays for nothing (*$4.99 for a semester*, …), and *Manage billing* (Stripe's portal: card, invoices, switching, cancelling) once it has paid.
 - **Cloud storage**, when the plan includes it: *Keep my chats in the cloud too*, off until they turn it on, with a sync status line.
 - **Delete account**, which says when a subscription would end with it.
 

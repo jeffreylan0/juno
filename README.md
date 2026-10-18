@@ -13,14 +13,15 @@ Juno began as a browser extension (Chrome, Edge and Firefox). The extension is r
 | Shortcut (⌥⇧S on a Mac, Alt+Shift+S on Windows) or the menu bar / tray icon → selection → native crop → streamed answer | working on macOS 14+ and Windows 10/11; tested end to end on Linux |
 | Box selection | sends on release; optionally waits with resize-and-move handles; Escape cancels, ✕ closes everything |
 | Freeform selection | draw any closed shape; the AI sees only what is inside the outline |
-| The bar | one dark row in the manner of Claude's quick entry, always armed in Box; where it sits is a setting (a 3×3 grid of the screen; the bottom edge to start) |
+| The bar | one dark row in the manner of Claude's quick entry, always armed in Box; while the panel is open its chats, ghost and gear fold smoothly away; where it sits is a setting (a 3×3 grid of the screen; the bottom edge to start) |
 | The panel | a card that grows with its chat, placed by the same kind of setting (top right to start); resized by hand, it keeps that size. Questions in rounded bubbles with copy, edit and retry; answers stream at an even pace with a copy button; the view follows the answer unless you scroll up |
 | Chats | the panel opens with the first selection; ✕ (bar or panel) or Escape hides both and finishes the chat; ⌘⇧O / Ctrl+Shift+O finishes it and brings the bar up for the next; a chat menu with search, rename and delete; temporary (ghost) chats; 1, 5, 10, 25, 50 or 100 chats kept on this computer |
 | Macros | Explain, Hint, Check and Answer (the answer first, then the explanation) to start with; yours to rename, rewrite and add to |
-| Settings | Answers, Asking, Selecting, Chats & privacy, Permissions (macOS), Juno, and Account in builds with accounts; saved as you go |
+| Settings | Answers, Asking, Selecting, Appearance (seven colour themes), Chats & privacy, Permissions (macOS), Juno (version, updates, login, Quit), and Account in builds with accounts; short text, saved as you go |
+| Updates | the app looks for a new version at start and every 6 hours, downloads it in the background and installs it when nothing of it is on screen, then restarts into the menu bar; on unless turned off. Needs the owner's update key (desktop/README.md, *Updates*) |
 | Real answers | your own Anthropic or OpenAI key: free key check, model picker beside the macros, prompt caching for follow-ups, errors that say what to do; temporary chats ask for the shortest retention the API allows |
-| Providers | placeholder, local (Ollama), your own key (Anthropic, OpenAI), hosted (the Worker, for plans with hosted answers) |
-| Accounts and plans | optional: Google or an emailed code (Supabase). Plans (Free, Plus, given by hand) with hosted answers and cloud storage of chats; Plus bought with Stripe, managed in Stripe's portal. Built; turned on by the setup in `supabase/README.md` |
+| Providers | placeholder, local (Ollama), your own key (Anthropic, OpenAI), hosted (the Worker: Claude Haiku 5.5 or GPT-6 Luna, quick and cheap, for plans with hosted answers) |
+| Accounts and plans | optional: Google or an emailed code (Supabase). Plans (Free, Plus, given by hand) with hosted answers and cloud storage of chats; Plus as a pass bought once with Stripe (*Plans* below). Built; turned on by the setup in `supabase/README.md` |
 | Permissions | Screen Recording only, on macOS; Windows asks for nothing |
 | Eval | 5 seed problems of 100; mock and image-only routes run |
 
@@ -111,6 +112,22 @@ Neither Anthropic nor OpenAI trains on API traffic by default (OpenAI does if th
 
 Model answers are DOMPurify-sanitized and inserted as nodes, links open in the student's browser, and nothing in an answer is fetched: no images, no CSS `url()` or `image-set()`, no `background` attributes, no SVG or MathML images, and no fixed or absolute layers over the panel. The pages' CSP refuses remote images, media and fonts as a second wall. A page on screen can try to steer the model into emitting a URL that carries data out (prompt injection); there is nowhere for it to go without the student clicking a link. `desktop/harden-libs.ts` removes, at build time, dead paths in React (`dangerouslySetInnerHTML`, unused) and DOMPurify (its non-DOMParser fallback); each edit must match or the build fails, so a library upgrade cannot ship half-patched. Security as a whole, and what the owner sets up: `SECURITY.md`.
 
+## Plans
+
+Juno is a passion project: plans are priced to cover what hosted answers and the services cost, not to make a profit.
+
+| Plan | Price | What it gives |
+| --- | --- | --- |
+| Free | $0 | Everything, unlimited, with your own API key or a local model. 100 hosted answers a month once sign-up has CAPTCHA (`supabase/README.md`, step 10); 0 until then |
+| Plus, semester | $4.99 once, for 120 days | Hosted answers (up to 3,000 a month, about 100 a day: more than anyone uses) and cloud sync |
+| Plus, year | $11.99 once, for 365 days | The same |
+
+- **Paid once, nothing renews.** Students pay at most a few dollars a term, and don't want to think about payment again; a pass can't surprise them with a charge.
+- **One fast model, no "think harder".** Hosted answers go to Claude Haiku 5.5 (or GPT-6 Luna) at low effort: about $0.0006 an answer, so even a heavy month costs well under a pass's share. A student who wants a bigger model brings their own key.
+- **What it costs to run:** about $0.20 a month for a typical Plus student (300 answers), and $31–56 a month of fixed costs (Supabase, Cloudflare, Apple's developer fee, Windows code signing, domain and email). A pass nets about $1 a month after Stripe's fee, so 40–70 paying students cover everything (free students' hosted answers add at most 6¢ each a month).
+- **Before launch:** run the eval with Haiku 5.5 against Sonnet 5.5 (on at least 50 problems) to confirm the fast model reads screenshots well enough.
+- **Later, without raising prices:** themes and macros sold on the website (a marketplace), and an optional "support Juno" tip.
+
 ## Rebranding
 
 What the app calls itself in its pages lives in `desktop/src/brand.ts`. The app's name, bundle id (`com.humanbn.juno`) and link scheme (`com.humanbn.juno://`) are in `desktop/src-tauri/tauri.conf.json`. The icon is drawn once, in `desktop/assets/icon.svg`; `desktop/scripts/icons.mjs` renders it to every size the app needs.
@@ -123,4 +140,4 @@ The outward contact is info@humanbn.com: store listings, Stripe, Google's sign-i
 
 Test builds (a Mac `.dmg` and a Windows `.exe`, without accounts) come from the *Test build* workflow; `TESTERS.md` is what testers read. Accounts, plans and billing are built but off until the services are set up: `supabase/README.md` goes through it step by step. Then the eval set and Gate A, and a signed and notarized Mac build.
 
-Ideas from testing kept for later, as possible settings: a visible *New chat* button in the panel (the key does it today), and keeping no saved chats at all (the ghost covers it today).
+Ideas from testing kept for later, as possible settings: a visible *New chat* button in the panel (the key does it today), and keeping no saved chats at all (the ghost covers it today). Planned: a marketplace on the website for themes and macros (themes are already data: `desktop/src/lib/themes.ts`).

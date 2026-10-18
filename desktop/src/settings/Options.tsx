@@ -1,24 +1,20 @@
 /**
  * Settings, in the order a student meets them:
  *
- *  1. Answers — who answers. One choice (Claude, ChatGPT, a local model or
- *     placeholder answers), and below it only what that choice needs: a key
- *     and a model, or a server address. Nothing else is on screen.
- *  2. Asking — the macros above the question box, the default prompt, and
- *     whether a selection is asked about straight away.
- *  3. Selecting — the shortcut, and what happens after drawing a box (which
- *     the bar's gear offers too).
- *  4. Chats & privacy — how many chats are kept and how to delete them,
- *     blocked sites, and what is ever sent and kept.
- *  5. Account (builds with accounts only) — sign in, cloud storage, hosted
- *     answers (Account.tsx).
+ *  1. Answers: who answers (Claude, ChatGPT, hosted, a local model or
+ *     placeholder answers), and only what that choice needs below it.
+ *  2. Asking: the macros, the default prompt, and whether a selection is
+ *     asked about straight away.
+ *  3. Selecting: the shortcut, adjusting a box, where the bar and panel go.
+ *  4. Appearance: the colour theme.
+ *  5. Chats & privacy: how many chats are kept, deleting them, what is sent.
+ *  6. Permissions (macOS), Juno (version, updates, login, Quit), and
+ *     Account in builds with accounts (Account.tsx).
  *
- * Every change saves as it is made — there is no Save button to forget — and
- * a small "Saved" confirms it. Writes read the latest stored settings first,
- * so a model picked in the panel meanwhile is never overwritten.
- *
- * Every colour is a token in options.css, so the real theme drops in without
- * touching this file.
+ * Text is kept short: a label, and a line of help only where the choice
+ * isn't clear without it. Every change saves as it is made, and a small
+ * "Saved" confirms it. Writes read the latest stored settings first, so a
+ * model picked in the panel meanwhile is never overwritten.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { DEFAULT_MACROS, DEFAULT_PROMPT } from '@shared/prompts';
@@ -44,23 +40,23 @@ import {
 import type { AiStatus } from '@/lib/status';
 import { Icon } from '@/ui/icons';
 import { hasHosted, useAccount, type AccountState } from '@/ui/useAccount';
-import { formatShortcut, useShortcut } from '@/ui/useShortcut';
 import { MAC } from '../os';
 import { AppSection } from './AppSection';
 import { Permissions } from './Permissions';
 import { PlacePicker } from './PlacePicker';
 import { ShortcutField } from './ShortcutField';
+import { ThemePicker } from './ThemePicker';
 import { AccountSection } from './Account';
 
 type Vendor = 'anthropic' | 'openai';
 type Choice = 'claude' | 'chatgpt' | 'hosted' | 'local' | 'placeholder';
 
 const CHOICES: { id: Choice; name: string; sub: string }[] = [
-  { id: 'claude', name: 'Claude', sub: 'Anthropic · your key' },
-  { id: 'chatgpt', name: 'ChatGPT', sub: 'OpenAI · your key' },
-  { id: 'hosted', name: 'Hosted', sub: 'Your plan · no key' },
-  { id: 'local', name: 'Local model', sub: 'On this computer' },
-  { id: 'placeholder', name: 'Placeholder', sub: 'No AI · for trying it out' },
+  { id: 'claude', name: 'Claude', sub: 'Your key' },
+  { id: 'chatgpt', name: 'ChatGPT', sub: 'Your key' },
+  { id: 'hosted', name: 'Hosted', sub: 'Your plan' },
+  { id: 'local', name: 'Local model', sub: 'This computer' },
+  { id: 'placeholder', name: 'Placeholder', sub: 'No AI' },
 ];
 
 const VENDOR_OF: Partial<Record<Choice, Vendor>> = { claude: 'anthropic', chatgpt: 'openai' };
@@ -70,18 +66,16 @@ const KEY_PAGE: Record<Vendor, string> = {
   openai: 'https://platform.openai.com/api-keys',
 };
 
-const SEND: { id: SendBehavior; label: string; help: string }[] = [
-  { id: 'prefill', label: 'Wait for me', help: 'Nothing is asked until you press Enter or a macro.' },
-  { id: 'auto', label: 'Ask right away', help: 'Asks the default prompt, or the first macro. Each selection costs a question.' },
+const SEND: { id: SendBehavior; label: string; help?: string }[] = [
+  { id: 'prefill', label: 'Wait for me' },
+  { id: 'auto', label: 'Ask right away', help: 'With the default prompt, or the first macro.' },
 ];
-
-/** Where API keys are kept (store.rs), as a sentence. */
-const KEYS_KEPT = 'Your keys stay in a private file on this computer that only your account can read.';
 
 const SECTIONS = [
   { id: 'answers', title: 'Answers' },
   { id: 'asking', title: 'Asking' },
   { id: 'selecting', title: 'Selecting' },
+  { id: 'appearance', title: 'Appearance' },
   { id: 'privacy', title: 'Chats & privacy' },
   ...(MAC ? [{ id: 'permissions', title: 'Permissions' }] : []),
   { id: 'app', title: BRAND.name },
@@ -139,7 +133,6 @@ export function Options() {
   const [keys, setKeys] = useState<Keys>({ anthropic: '', openai: '', session: '' });
   const [models, setModels] = useState<Partial<Record<Vendor, KeyModel[]>>>({});
   const [saved, setSaved] = useState(0);
-  const shortcut = formatShortcut(useShortcut());
   const account = useAccount();
 
   useEffect(() => {
@@ -221,16 +214,6 @@ export function Options() {
       </header>
 
       <main className="options">
-        <p className="lede">
-          Click {BRAND.iconName}
-          {shortcut ? (
-            <>
-              {' '}or use <kbd>{shortcut}</kbd>
-            </>
-          ) : null}{' '}
-          to select what you want to ask about. Changes here save on their own.
-        </p>
-
         <AnswersSection
           settings={settings}
           keys={keys}
@@ -242,6 +225,9 @@ export function Options() {
         />
         <AskingSection settings={settings} save={save} />
         <SelectingSection settings={settings} save={save} />
+        <Section id="appearance" title="Appearance">
+          <ThemePicker value={settings.theme} onChange={(theme) => void save({ theme })} />
+        </Section>
         <PrivacySection settings={settings} save={save} account={account} />
         {MAC && (
           <Section id="permissions" title="Permissions">
@@ -249,7 +235,7 @@ export function Options() {
           </Section>
         )}
         <Section id="app" title={BRAND.name}>
-          <AppSection />
+          <AppSection settings={settings} save={save} />
         </Section>
         <AccountSection account={account} settings={settings} save={save} />
       </main>
@@ -257,17 +243,16 @@ export function Options() {
   );
 }
 
-function Section({ id, title, lede, children }: { id: string; title: string; lede?: string; children: ReactNode }) {
+function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
     <section id={id} data-testid={`section-${id}`}>
       <h2>{title}</h2>
-      {lede && <p className="help section-lede">{lede}</p>}
       {children}
     </section>
   );
 }
 
-/** A group of radio buttons, each with a short explanation under it. */
+/** A group of radio buttons, each with an optional line under it. */
 function Radios<T extends string>({
   name,
   value,
@@ -326,7 +311,7 @@ function AnswersSection({
       const keep = settings.modelOverride?.vendor === v ? settings.modelOverride : null;
       void save({ provider: 'byok', vendor: v, modelOverride: keep });
     } else if (next === 'hosted') {
-      // Hosted answers use Claude, with the automatic model choice.
+      // Hosted answers use Claude's fast model (shared/models.ts).
       void save({ provider: 'gateway', vendor: 'anthropic', modelOverride: null });
     } else void save({ provider: next === 'local' ? 'local' : 'mock' });
   };
@@ -336,7 +321,7 @@ function AnswersSection({
   const ent = account.entitlement;
 
   return (
-    <Section id="answers" title="Answers" lede="Who answers your questions.">
+    <Section id="answers" title="Answers">
       <div className="cards" role="radiogroup" aria-label="Who answers">
         {offered.map((c) => (
           <label key={c.id} className={`card${choice === c.id ? ' on' : ''}`} data-testid={`answer-${c.id}`}>
@@ -349,12 +334,11 @@ function AnswersSection({
       {choice === 'hosted' &&
         (hosted && ent ? (
           <p className="help" data-testid="hosted-help">
-            Answers come through our server with our key; it keeps no copy. {Math.max(0, ent.quota - ent.used)} of {ent.quota} left
-            this month.
+            {Math.max(0, ent.quota - ent.used)} of {ent.quota} left this month.
           </p>
         ) : (
           <p className="help warn" data-testid="hosted-help">
-            {account.user ? "Your account doesn't include hosted answers. Pick another above." : 'Sign in under Account to use it.'}
+            {account.user ? "Your plan doesn't include hosted answers." : 'Sign in under Account first.'}
           </p>
         ))}
 
@@ -373,7 +357,7 @@ function AnswersSection({
       {choice === 'local' && <LocalServer settings={settings} save={save} />}
       {choice === 'placeholder' && (
         <p className="help" data-testid="placeholder-help">
-          Made-up answers, so you can try it without a key. Nothing is sent.
+          Made-up answers for trying it out. Nothing is sent.
         </p>
       )}
     </Section>
@@ -463,10 +447,7 @@ function KeyAndModel({
           </button>
         </span>
         <KeyStatus check={check} hasKey={!!savedKey} />
-        <p className="help">
-          {KEYS_KEPT} It only ever goes to {COMPANY[vendor]}. Clear the field to remove it. Tip: set a monthly spend
-          limit in {COMPANY[vendor]}'s console.
-        </p>
+        <p className="help">Kept privately on this computer, and sent only to {COMPANY[vendor]}.</p>
       </div>
 
       <label className="field">
@@ -487,7 +468,7 @@ function KeyAndModel({
           ))}
           {override && !choices.some((m) => m.id === override) && <option value={override}>{override}</option>}
         </select>
-        <small className="help">You can also change it in the panel.{listed ? '' : ' Check your key to see every model.'}</small>
+        {!listed && <small className="help">Check your key to see every model.</small>}
       </label>
     </div>
   );
@@ -554,8 +535,8 @@ function LocalServer({ settings, save }: { settings: Settings; save: (patch: Par
         {offComputer(url) && (
           <small className="help warn" data-testid="local-remote">
             {offComputer(url) === 'plain'
-              ? "This server isn't on this computer, and the address isn't https: screenshots and questions would cross the network unencrypted."
-              : "This server isn't on this computer: screenshots and questions leave it, to wherever that server is."}
+              ? 'Not on this computer, and not https: your selections would travel unencrypted.'
+              : 'Not on this computer: your selections are sent there.'}
           </small>
         )}
       </label>
@@ -569,7 +550,7 @@ function LocalServer({ settings, save }: { settings: Settings; save: (patch: Par
             saveModel(e.target.value);
           }}
         />
-        <small className="help">Any OpenAI-compatible server, like Ollama. For screenshots, use a model that reads images.</small>
+        <small className="help">Any OpenAI-compatible server (like Ollama), with a model that reads images.</small>
       </label>
       <span className="key-row">
         <button type="button" className="secondary" disabled={checking} onClick={() => void check()}>
@@ -604,14 +585,13 @@ function AskingSection({ settings, save }: { settings: Settings; save: (patch: P
     <Section id="asking" title="Asking">
       <div className="field" data-testid="asking">
         <div className="head">
-          <span className="field-label">Answer macros</span>
+          <span className="field-label">Macros</span>
           {changed && (
             <button type="button" className="link" onClick={() => update(DEFAULT_MACROS.map((m) => ({ ...m })))}>
-              Reset to Explain, Hint, Check
+              Reset
             </button>
           )}
         </div>
-        <p className="help">Buttons above the question box. Click one to ask it.</p>
         <ol className="macro-list">
           {macros.map((m, i) => (
             <li key={m.id} className="macro-row" data-testid="macro-row">
@@ -660,7 +640,7 @@ function AskingSection({ settings, save }: { settings: Settings; save: (patch: P
             savePrompt(e.target.value);
           }}
         />
-        <small className="help">Put in the question box after each selection.</small>
+        <small className="help">Fills the question box after each selection.</small>
       </label>
 
       <div className="field">
@@ -685,15 +665,10 @@ function SelectingSection({ settings, save }: { settings: Settings; save: (patch
           value={settings.adjustBox ? 'adjust' : 'send'}
           options={[
             { id: 'send', label: 'Send right away' },
-            {
-              id: 'adjust',
-              label: 'Let me adjust it first',
-              help: "Drag a box's edges (or draw an outline again), then press ↑ on the bar or Enter.",
-            },
+            { id: 'adjust', label: 'Let me adjust it first', help: 'Then press Enter to send.' },
           ]}
           onChange={(v) => void save({ adjustBox: v === 'adjust' })}
         />
-        <small className="help">Also in the gear on the selection bar.</small>
       </div>
 
       <div className="field" data-testid="places">
@@ -702,7 +677,6 @@ function SelectingSection({ settings, save }: { settings: Settings; save: (patch
           <PlacePicker label="Bar" value={settings.barPlace} onChange={(v) => void save({ barPlace: v })} />
           <PlacePicker label="Panel" value={settings.panelPlace} onChange={(v) => void save({ panelPlace: v })} />
         </div>
-        <small className="help">Pick a part of the screen: each goes to its outer edge, out of the way of the middle.</small>
         <PanelSizeNote />
       </div>
     </Section>
@@ -719,9 +693,9 @@ function PanelSizeNote() {
   if (!size) return null;
   return (
     <small className="help" data-testid="panel-size">
-      The panel opens at the size you gave it ({Math.round(size.width)} × {Math.round(size.height)}).{' '}
+      Panel size kept at {Math.round(size.width)} × {Math.round(size.height)}.{' '}
       <button type="button" className="link" onClick={() => void panelSizeItem.setValue(null)}>
-        Let it grow with the chat again
+        Reset
       </button>
     </small>
   );
@@ -746,35 +720,29 @@ function PrivacySection({
       <ChatsField limit={settings.chatLimit} cloud={cloud} save={save} />
 
       <div className="field" data-testid="what-is-sent">
-        <span className="field-label">What's sent and kept</span>
+        <span className="field-label">What's sent</span>
         <p className="help">
-          Only what you select (a screenshot) and the window's title go to the AI you picked. {KEYS_KEPT} Your chats stay on this
-          computer{cloud ? ' and in your account' : ''}.
+          Only your selection and its window's title, to the AI you picked. Keys and chats stay on this computer
+          {cloud ? ' (chats also in your account)' : ''}, in files only your account can read.
         </p>
         <ul className="help facts">
           <li>
-            <b>Claude</b>: not used for training. Anthropic deletes it within 30 days, unless it's flagged for breaking their
-            rules.
-          </li>
-          <li>
-            <b>ChatGPT</b>: not used for training, unless your OpenAI organization opted in to sharing. OpenAI keeps abuse
-            logs for up to 30 days. Answers aren't stored.
+            <b>Claude, ChatGPT</b>: not used for training; deleted within 30 days.
           </li>
           {hasHosted(account) && (
             <li>
-              <b>Hosted answers</b> go to Claude through our server, which counts them but keeps no copy.
+              <b>Hosted</b>: through our server, which keeps no copy.
             </li>
           )}
           <li>
-            <b>A local model</b> on this computer: nothing leaves it.
+            <b>Local model</b>: nothing leaves this computer.
           </li>
           <li>
-            <b>Temporary chats</b> are never saved{ACCOUNTS ? ' or synced' : ''}, and are deleted when you're done.
+            <b>Temporary chats</b>: never saved{ACCOUNTS ? ' or synced' : ''}.
           </li>
           {ACCOUNTS && (
             <li>
-              <b>Your account</b>, if you sign in, holds your email address. Chats go to the cloud only if your account has
-              cloud storage and you turn it on.
+              <b>Account</b>: your email; chats sync only if you turn it on.
             </li>
           )}
         </ul>
@@ -808,10 +776,7 @@ function ChatsField({ limit, cloud, save }: { limit: number; cloud: boolean; sav
     <div className="field" data-testid="chats">
       <span className="field-label">Chats</span>
       <p className="help">
-        {cloud
-          ? 'Saved on this computer and in your account, with their screenshots. Past the limit, the oldest leaves this computer but stays in your account.'
-          : 'Saved on this computer with their screenshots. Past the limit, the oldest is deleted.'}{' '}
-        Temporary chats are never saved.
+        {cloud ? 'Past the limit, the oldest leaves this computer but stays in your account.' : 'Past the limit, the oldest is deleted.'}
       </p>
       <label className="key-row limit-row">
         <span>Keep my</span>
