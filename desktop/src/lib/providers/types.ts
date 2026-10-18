@@ -1,9 +1,31 @@
 import type { AskRequest, ModelRef, Provider, Usage } from '@shared/payload';
 import type { CacheStore } from '../cache';
 
+/** The companies a student's own API key can be for. */
+export type KeyVendor = 'anthropic' | 'openai';
+
+/** Which keys there are, each by its last four characters ("…WXYZ"); never the keys. */
+export interface KeyStatus {
+  anthropic: string | null;
+  openai: string | null;
+}
+
+/**
+ * Sends requests with the student's API keys. In the app no page ever holds
+ * one: the native core adds it (platform/vault.ts, src-tauri/src/vault.rs).
+ * The eval holds its own (byok.ts keyVault).
+ */
+export interface Vault {
+  status(): Promise<KeyStatus>;
+  /** fetch, to that company's API, with its key. */
+  fetch(vendor: KeyVendor, url: string, init: RequestInit): Promise<Response>;
+}
+
 export interface ProviderContext {
   fetch: typeof fetch;
-  keys: { anthropic: string; openai: string; session: string };
+  vault: Vault;
+  /** The signed-in account's token, for hosted answers (empty otherwise). */
+  session: string;
   settings: { localBaseUrl: string; localModel: string; gatewayUrl: string };
   /**
    * Answers recorded by request hash, so a rerun replays for free. The eval

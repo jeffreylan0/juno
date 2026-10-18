@@ -11,13 +11,13 @@ import { ProviderError, type ProviderContext, type ProviderDriver } from './type
 export const gatewayDriver: ProviderDriver = {
   name: 'gateway',
   async *stream(req: AskRequest, model: ModelRef, ctx: ProviderContext) {
-    if (!ctx.keys.session) throw new ProviderError('Sign in to use hosted answers.', 'no-key');
+    if (!ctx.session) throw new ProviderError('Sign in to use hosted answers.', 'no-key');
     try {
       const usage = yield* streamOpenAIChat(
         ctx.fetch,
         `${ctx.settings.gatewayUrl.replace(/\/$/, '')}/ask`,
         'the hosted service',
-        { authorization: `Bearer ${ctx.keys.session}` },
+        { authorization: `Bearer ${ctx.session}` },
         {
           model: `${model.vendor}/${model.model}`,
           messages: toChatMessages(req),

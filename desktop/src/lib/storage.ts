@@ -1,6 +1,6 @@
 /**
- * Settings and keys, in storage.local through WXT's `storage` helper (the
- * native core keeps the keys in a private file of their own: store.rs).
+ * Settings, in storage.local through WXT's `storage` helper. Not the API
+ * keys: the native core keeps those where no page can read them (vault.rs).
  * Chats are not here: see lib/chats.ts (and lib/images.ts for screenshots).
  */
 import { storage } from '@wxt-dev/storage';
@@ -24,7 +24,7 @@ export const CHAT_LIMITS = [1, 5, 10, 25, 50, 100] as const;
 export const DEFAULT_CHAT_LIMIT = 10;
 
 /** Bumped when a default changes in a way stored settings must pick up. */
-export const SETTINGS_VERSION = 5;
+export const SETTINGS_VERSION = 6;
 
 /**
  * Where hosted plans are served from. A build setting, not a student one: it
@@ -34,6 +34,10 @@ export const GATEWAY_URL = (import.meta.env.WXT_GATEWAY_URL as string | undefine
 
 export interface Settings {
   version: number;
+  /**
+   * Who answers. `mock` (placeholder answers, for the eval and tests) means
+   * no one yet in the app: asking waits for a choice.
+   */
   provider: Provider;
   /** Preferred vendor for the router's model table. */
   vendor: 'anthropic' | 'openai';
@@ -66,11 +70,13 @@ export interface Settings {
   cloudSync: boolean;
   localBaseUrl: string;
   localModel: string;
+  /** The first-run setup (settings/Setup.tsx) is behind the student. */
+  setupDone: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   version: SETTINGS_VERSION,
-  provider: (import.meta.env.WXT_PROVIDER as Provider | undefined) ?? 'mock',
+  provider: 'mock',
   vendor: 'anthropic',
   modelOverride: null,
   defaultPrompt: DEFAULT_PROMPT,
@@ -85,17 +91,8 @@ export const DEFAULT_SETTINGS: Settings = {
   cloudSync: false,
   localBaseUrl: 'http://localhost:11434/v1',
   localModel: 'qwen2.5vl:7b',
+  setupDone: false,
 };
-
-export interface Keys {
-  anthropic: string;
-  openai: string;
-  /**
-   * Unused in storage (always empty): the hosted plan's token comes from the
-   * signed-in account (account/session.ts) when an answer is asked.
-   */
-  session: string;
-}
 
 export const settingsItem = storage.defineItem<Settings>('local:settings', {
   fallback: DEFAULT_SETTINGS,
@@ -112,14 +109,12 @@ export interface PanelSize {
 }
 export const panelSizeItem = storage.defineItem<PanelSize | null>('local:panelSize', { fallback: null });
 
-export const keysItem = storage.defineItem<Keys>('local:keys', { fallback: { anthropic: '', openai: '', session: '' } });
-
 export async function getSettings(): Promise<Settings> {
   return migrateSettings(await settingsItem.getValue());
 }
 
 /**
- * Brings stored settings up to date. The options page saves the whole object,
+ * Brings stored settings up to date. Settings once saved the whole object,
  * so a student who saved once has every old default pinned; a version bump is
  * how a changed default reaches them.
  *
@@ -132,6 +127,8 @@ export async function getSettings(): Promise<Settings> {
  * v4: every selection is a screenshot, so "ask right away, screenshots only"
  * is simply "ask right away".
  * v5: an Answer macro joins the defaults, added to macros that lack one.
+ * v6: placeholder answers are gone from the app; someone who had picked a
+ * real AI has the first-run setup behind them.
  */
 export function migrateSettings(stored: unknown): Settings {
   const s = (stored && typeof stored === 'object' ? stored : {}) as Partial<Settings> & {
@@ -157,6 +154,7 @@ export function migrateSettings(stored: unknown): Settings {
     const has = (m: Macro) => m.id === answer.id || m.name.trim().toLowerCase() === 'answer' || m.prompt.trim() === answer.prompt;
     if (!s.macros.some(has)) merged.macros = [...s.macros, { ...answer }];
   }
+  if ((s.version ?? 1) < 6) merged.setupDone = s.provider !== undefined && s.provider !== 'mock';
   if ((merged.sendBehavior as string) === 'auto-box') merged.sendBehavior = 'auto';
   if (!isPlace(merged.barPlace)) merged.barPlace = DEFAULT_SETTINGS.barPlace;
   if (!isPlace(merged.panelPlace)) merged.panelPlace = DEFAULT_SETTINGS.panelPlace;
@@ -184,12 +182,12 @@ const V2_DEFAULT_PROMPT = 'Explain this step by step.';
  * optional model) because the providers need them apart, but the student
  * only ever makes one decision, in the panel's model picker or in settings.
  */
-export type AnswerChoice = 'placeholder' | 'local' | 'hosted' | `${'anthropic' | 'openai'}:${string}`;
+export type AnswerChoice = 'none' | 'local' | 'hosted' | `${'anthropic' | 'openai'}:${string}`;
 
 export function answerChoiceOf(s: Pick<Settings, 'provider' | 'vendor' | 'modelOverride'>): AnswerChoice {
   switch (s.provider) {
     case 'mock':
-      return 'placeholder';
+      return 'none';
     case 'local':
       return 'local';
     case 'gateway':
@@ -200,9 +198,10 @@ export function answerChoiceOf(s: Pick<Settings, 'provider' | 'vendor' | 'modelO
 }
 
 export function withAnswerChoice(s: Settings, choice: AnswerChoice): Settings {
-  if (choice === 'placeholder') return { ...s, provider: 'mock' };
+  if (choice === 'none') return { ...s, provider: 'mock' };
   if (choice === 'local') return { ...s, provider: 'local' };
-  if (choice === 'hosted') return { ...s, provider: 'gateway' };
+  // Hosted answers use Claude's fast model (shared/models.ts).
+  if (choice === 'hosted') return { ...s, provider: 'gateway', vendor: 'anthropic', modelOverride: null };
   const [vendor, model] = choice.split(':') as ['anthropic' | 'openai', string];
   return { ...s, provider: 'byok', vendor, modelOverride: model === 'auto' || !model ? null : { vendor, model } };
 }
@@ -231,10 +230,6 @@ export function sanitizeMacros(macros: unknown): Macro[] {
 
 function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'macro';
-}
-
-export async function getKeys(): Promise<Keys> {
-  return await keysItem.getValue();
 }
 
 /** Whether a selection should be sent without waiting for the student. */

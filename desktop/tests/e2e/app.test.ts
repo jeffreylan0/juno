@@ -4,7 +4,7 @@
  *
  *   pnpm --filter desktop test:e2e
  */
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, onTestFinished } from 'vitest';
@@ -144,6 +144,25 @@ it('the bar is compact, its modes in the middle; chats, ghost and gear leave it 
   expect(Math.abs(middle(before.chips) - middle(before.bar))).toBeLessThanOrEqual(1);
   expect(before.shown).toEqual(['.chats', '.ghost', '.gear']);
 
+  // Widened by the gear's settings: ✕ still on the left, the modes in the middle, the buttons on the right.
+  await app.eval('overlay', bar(`querySelector('.gear').click()`));
+  await waitFor('the bar widened', async () => (await barLayout()).bar.width > before.bar.width + 50);
+  await new Promise((r) => setTimeout(r, 300));
+  const wide = await app.read<{ bar: [number, number]; close: number; chips: [number, number]; gear: number }>(
+    'overlay',
+    `(() => {
+      const s = document.querySelector('selection-ai-overlay').shadowRoot;
+      const r = (q) => s.querySelector(q).getBoundingClientRect();
+      return { bar: [r('.bar').left, r('.bar').right], close: r('.close').left, chips: [r('.chips').left, r('.chips').right], gear: r('.gear').right };
+    })()`,
+  );
+  expect(Math.abs((wide.chips[0] + wide.chips[1]) / 2 - (wide.bar[0] + wide.bar[1]) / 2)).toBeLessThanOrEqual(1);
+  expect(wide.close - wide.bar[0]).toBeLessThanOrEqual(10);
+  expect(wide.bar[1] - wide.gear).toBeLessThanOrEqual(10);
+  await app.eval('overlay', bar(`querySelector('.gear').click()`));
+  await waitFor('the bar compact again', async () => Math.abs((await barLayout()).bar.width - before.bar.width) <= 1);
+  await armed();
+
   // They fold away (an animation, not a jump) once the panel opens.
   await app.eval(
     'overlay',
@@ -157,7 +176,7 @@ it('the bar is compact, its modes in the middle; chats, ghost and gear leave it 
   await selections(1);
   await waitFor('the panel', async () => (await app.window('panel'))?.visible);
   await waitFor('the bar without them', async () => (await barLayout()).shown.length === 0);
-  expect(await app.read<string[]>('overlay', 'window.__folds')).toEqual(expect.arrayContaining(['chats:width', 'gear:opacity', 'start:width']));
+  expect(await app.read<string[]>('overlay', 'window.__folds')).toEqual(expect.arrayContaining(['chats:width', 'gear:opacity', 'start:min-width']));
   // ✕ and the modes, as much room before the one as after the other.
   const pads = await app.read<{ before: number; after: number }>(
     'overlay',
@@ -232,13 +251,48 @@ it('the panel: ✕ first, then the chats menu; text at the system’s size; noti
   // Linux sizes as Windows does: 14 px body text.
   expect(await app.read('panel', `getComputedStyle(document.documentElement).fontSize`)).toBe('14px');
 
-  // Shown, the panel brings the notice back (placeholder answers, the default), over the end of the chat, on a timer.
+  // Shown, the panel brings the notice back (no AI picked yet), over the end of the chat, on a timer.
   await waitFor('the notice back', () => app.read('panel', `!!document.querySelector('[data-testid=notice]')`));
+  expect(await app.read('panel', `document.querySelector('[data-testid=notice]').textContent`)).toContain('Pick who answers');
   expect(await app.read('panel', `getComputedStyle(document.querySelector('.notices')).position`)).toBe('absolute');
   expect(await app.read('panel', `${ring}.style.animationDuration`)).toBe('9000ms');
   // The ring runs out: the notice goes.
   await app.eval('panel', `${ring}.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))`);
   await waitFor('the notice gone again', async () => !(await app.read('panel', `!!document.querySelector('[data-testid=notice]')`)));
+});
+
+it('the first time the app is opened, setup comes up instead of the bar: pick who answers, then the bar', async () => {
+  await app.close();
+  app = await App.launch({ opened: true, firstRun: true });
+  await waitFor('the setup', async () => (await app.window('settings'))?.visible && (await app.read('settings', `!!document.querySelector('[data-testid=setup]')`)), 20_000);
+  expect((await app.overlay()).visible).toBe(false);
+  // No made-up answers to pick: a key, a local model (or, in builds with accounts, an account).
+  const cards = await app.read<string[]>('settings', `[...document.querySelectorAll('[data-testid=setup] .card')].map((c) => c.dataset.testid)`);
+  expect(cards.slice(0, 3)).toEqual(['setup-claude', 'setup-chatgpt', 'setup-local']);
+  expect(await app.read('settings', `document.querySelector('[data-testid=setup-start]').disabled`)).toBe(true);
+
+  const model = await fakeModelServer();
+  onTestFinished(() => model.close());
+  await app.eval('settings', `document.querySelector('[data-testid=setup-local] input').click()`);
+  await waitFor('the local model fields', () => app.read('settings', `!!document.querySelector('[data-testid=local] input')`));
+  await app.eval(
+    'settings',
+    `(() => {
+      const input = document.querySelector('[data-testid=local] input');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(model.url)});
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`,
+  );
+  await waitFor('the address saved', async () => ((await app.storage('local')).settings as { localBaseUrl?: string })?.localBaseUrl === model.url);
+  await waitFor('Start', async () => !(await app.read('settings', `document.querySelector('[data-testid=setup-start]').disabled`)));
+  await app.eval('settings', `document.querySelector('[data-testid=setup-start]').click()`);
+  // Setup goes, the bar comes up, and setup is behind the student for good.
+  await armed('box');
+  expect((await app.window('settings'))?.visible).toBe(false);
+  expect((await app.storage('local')).settings).toMatchObject({ provider: 'local', setupDone: true });
+  await app.eval('core', `browser.runtime.openOptionsPage()`);
+  await waitFor('all of settings', () => app.read('settings', `!!document.querySelector('[data-testid=section-answers]')`));
+  expect(await app.read('settings', `!!document.querySelector('[data-testid=setup]')`)).toBe(false);
 });
 
 it('opening the app brings the bar straight up, armed, as the shortcut does', async () => {
@@ -339,14 +393,19 @@ it('freeform: the model gets the shape’s bounding box with everything outside 
   expect(chat.items[0]!.plan!.selection.kind).toBe('freeform');
 });
 
+/** Answers come from a local model at `url` (a fakeModelServer). */
+async function answerWith(url: string) {
+  await app.eval(
+    'core',
+    `browser.storage.local.get('settings').then(({ settings }) => browser.storage.local.set({ settings: { ...(settings ?? {}), version: 3, provider: 'local', localBaseUrl: ${JSON.stringify(url)}, localModel: 'fake-vision' } }))`,
+  );
+  await waitFor('settings saved', async () => ((await app.storage('local')).settings as { localBaseUrl?: string })?.localBaseUrl === url);
+}
+
 it('asking sends the screenshot to the AI, and the answer streams into the panel', async () => {
   const model = await fakeModelServer('The red square is $x^2$ wide.');
   try {
-    await app.eval(
-      'core',
-      `browser.storage.local.get('settings').then(({ settings }) => browser.storage.local.set({ settings: { ...(settings ?? {}), version: 3, provider: 'local', localBaseUrl: ${JSON.stringify(model.url)}, localModel: 'fake-vision' } }))`,
-    );
-    await waitFor('settings saved', async () => ((await app.storage('local')).settings as { provider?: string })?.provider === 'local');
+    await answerWith(model.url);
     await app.summon();
     await armed();
     await box(150, 150, 250, 250);
@@ -376,6 +435,44 @@ it('asking sends the screenshot to the AI, and the answer streams into the panel
   }
 });
 
+it('scrolling up while an answer streams stays put, by however little; back at the end, the chat follows again', async () => {
+  const model = await fakeModelServer(Array.from({ length: 160 }, (_, i) => `Line ${i + 1} of a long answer.`).join('\n\n'));
+  try {
+    await answerWith(model.url);
+    await app.summon();
+    await armed();
+    await box(150, 150, 250, 250);
+    await selections(1);
+    await waitFor('the panel', () => app.read('panel', `!!document.querySelector('[data-testid=selection] img')`));
+    await app.eval('panel', `[...document.querySelectorAll('button.macro')].find((b) => b.textContent === 'Explain').click()`);
+    const thread = `document.querySelector('[data-testid=thread]')`;
+    const gap = () => app.read<number>('panel', `(() => { const t = ${thread}; return t.scrollHeight - t.scrollTop - t.clientHeight; })()`);
+    const top = () => app.read<number>('panel', `${thread}.scrollTop`);
+    const streaming = async () => !!(await app.currentChat())?.items.at(-1)?.streaming;
+    await waitFor('the answer past the panel', () => app.read('panel', `(() => { const t = ${thread}; return t.scrollHeight > t.clientHeight + 300; })()`));
+
+    // A trackpad's smallest nudge up: the answer keeps coming, the chat stays where it was put.
+    await app.eval('panel', `(() => { const t = ${thread}; t.dispatchEvent(new WheelEvent('wheel', { deltaY: -6, bubbles: true })); t.scrollBy(0, -6); })()`);
+    const nudged = await top();
+    await new Promise((r) => setTimeout(r, 600));
+    expect(await streaming()).toBe(true);
+    expect(Math.abs((await top()) - nudged)).toBeLessThanOrEqual(1);
+    expect(await gap()).toBeGreaterThan(20);
+
+    // Back at the end, it follows; dragged up by the scroll bar (no wheel), it stays again.
+    await app.eval('panel', `${thread}.scrollTo({ top: ${thread}.scrollHeight })`);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await gap()).toBeLessThanOrEqual(4);
+    await app.eval('panel', `${thread}.scrollBy(0, -40)`);
+    const dragged = await top();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await streaming()).toBe(true);
+    expect(Math.abs((await top()) - dragged)).toBeLessThanOrEqual(1);
+  } finally {
+    await model.close();
+  }
+});
+
 /** The panel's latest answer, once it has finished. */
 async function answered(after?: string) {
   return await waitFor('the answer', async () => {
@@ -386,6 +483,9 @@ async function answered(after?: string) {
 }
 
 it('questions are rounded bubbles: copy any, and edit or retry the latest', async () => {
+  const model = await fakeModelServer('4');
+  onTestFinished(() => model.close());
+  await answerWith(model.url);
   await app.summon();
   await armed();
   await box(150, 150, 250, 250);
@@ -700,6 +800,97 @@ it('the gear on the bar opens settings: the app’s own shortcut, no blocked sit
   // A development build carries no update key.
   expect(text).toContain("Updates aren't set up in this build");
   expect(text).toContain('Quit Juno');
+
+  // Closed, settings are only hidden: opened again (at a section), they are on screen at once, there.
+  await app.eval('settings', `document.querySelector('.page').scrollTo({ top: 400, behavior: 'instant' })`);
+  await app.eval('settings', 'window.close()');
+  await waitFor('settings hidden', async () => !(await app.window('settings'))?.visible);
+  expect(await app.window('settings')).toBeTruthy();
+  const asked = Date.now();
+  await app.eval('core', `browser.runtime.openOptionsPage('privacy')`);
+  await waitFor('settings again', async () => (await app.window('settings'))?.visible, 2_000);
+  expect(Date.now() - asked).toBeLessThan(1_000);
+  // Below the sticky header, at the top of the window.
+  await waitFor('at the section', () =>
+    app.read('settings', `(() => { const top = document.getElementById('privacy').getBoundingClientRect().top; return top >= 0 && top < 150; })()`),
+  );
+  expect(await app.read('settings', 'location.hash')).toBe('#privacy');
+});
+
+it('an API key goes in once and no page can read it back: kept privately, sent by the native core only to its own company', async () => {
+  await app.eval('core', `browser.runtime.openOptionsPage('answers')`);
+  await waitFor('settings', () => app.read('settings', `!!document.querySelector('[data-testid=answer-claude]')`), 20_000);
+  await app.eval('settings', `document.querySelector('[data-testid=answer-claude] input').click()`);
+  await waitFor('the key field', () => app.read('settings', `!!document.querySelector('[data-testid=key-input]')`));
+  const key = 'sk-ant-api03-e2e-not-a-real-key-WXYZ';
+  await app.eval(
+    'settings',
+    `(() => {
+      const input = document.querySelector('[data-testid=key-input]');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(key)});
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`,
+  );
+  await app.eval('settings', `document.querySelector('[data-testid=save-key]').click()`);
+  // Shown back by its last four characters only; nothing on the page holds it.
+  await waitFor('the key kept', () => app.read('settings', `document.querySelector('[data-testid=key-saved]')?.textContent === '…WXYZ'`));
+  expect(await app.read('settings', `document.documentElement.outerHTML.includes(${JSON.stringify(key)})`)).toBe(false);
+  // Checked at once, by the native core: Anthropic turns the made-up key down (or, offline, can't be reached).
+  await waitFor('the check', () => app.read('settings', `!!document.querySelector('[data-testid=key-status]')`), 30_000);
+
+  // On disk only in the private secrets file, which only this user can read.
+  const secrets = join(app.data, 'com.humanbn.juno', 'store', 'secrets.json');
+  expect(readFileSync(secrets, 'utf8')).toContain(key);
+  expect(statSync(secrets).mode & 0o777).toBe(0o600);
+  // No page can read it: asked for by name, with everything, or straight from the native core.
+  const tried = (label: string, js: string) => app.read<string>(label, `${js}.then((v) => JSON.stringify(v), (e) => 'refused: ' + String(e))`);
+  for (const label of ['core', 'panel', 'settings', 'overlay']) {
+    expect(await tried(label, `browser.storage.local.get('keys')`)).toBe('{}');
+    expect(await tried(label, `browser.storage.local.get(null)`)).not.toContain(key);
+    expect(await tried(label, `window.__TAURI_INTERNALS__.invoke('storage_get', { area: 'local', keys: ['keys'] })`)).toBe('{}');
+  }
+  // Nor write or remove it behind settings' back.
+  expect(await tried('settings', `browser.storage.local.set({ keys: { anthropic: 'sk-x' } })`)).toMatch(/^refused/);
+  expect(await tried('core', `browser.storage.local.remove('keys')`)).toMatch(/^refused/);
+  expect(await tried('core', `window.__TAURI_INTERNALS__.invoke('key_set', { vendor: 'anthropic', key: 'sk-x' })`)).toMatch(/^refused/);
+  // Only the core sends with it, and only to ask or list models at the company's own API.
+  const send = (label: string, url: string, method = 'GET') =>
+    tried(label, `window.__TAURI_INTERNALS__.invoke('vendor_fetch', { vendor: 'anthropic', url: '${url}', method: '${method}', body: null, onBody: '__CHANNEL__:4242' })`);
+  expect(await send('settings', 'https://api.anthropic.com/v1/models')).toMatch(/^refused/);
+  expect(await send('panel', 'https://api.anthropic.com/v1/models')).toMatch(/^refused/);
+  expect(await send('core', 'https://example.com/v1/models')).toMatch(/^refused/);
+  expect(await send('core', 'https://api.anthropic.com/v1/files', 'POST')).toMatch(/^refused/);
+  expect(await send('core', 'http://api.anthropic.com/v1/models')).toMatch(/^refused/);
+  expect(readFileSync(secrets, 'utf8')).toContain(key);
+
+  // Removed, it is gone from the disk too.
+  await app.eval('settings', `document.querySelector('[data-testid=remove-key]').click()`);
+  await waitFor('the field back', () => app.read('settings', `!!document.querySelector('[data-testid=key-input]')`));
+  expect(readFileSync(secrets, 'utf8')).not.toContain(key);
+});
+
+it('the app’s windows load only its own pages: a link can’t take the panel to another site', async () => {
+  const before = await app.read<string>('panel', 'location.href');
+  await app.eval('panel', `location.href = 'https://example.com/'`);
+  await new Promise((r) => setTimeout(r, 1500));
+  expect(await app.read<string>('panel', 'location.href')).toBe(before);
+  // A link inside an SVG is no longer followed in place: even to one of the
+  // app's own pages (which the native core would allow), clicking it leaves
+  // the panel where it is. (An external one opens the browser instead.)
+  await app.eval(
+    'panel',
+    `(() => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const a = document.createElementNS('http://www.w3.org/2000/svg', 'a');
+      a.setAttribute('href', '/web/settings.html');
+      a.textContent = 'x';
+      svg.append(a);
+      document.body.append(svg);
+      a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    })()`,
+  );
+  await new Promise((r) => setTimeout(r, 1500));
+  expect(await app.read<string>('panel', 'location.href')).toBe(before);
 });
 
 it('a theme from settings colours the panel and the bar', async () => {

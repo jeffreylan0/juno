@@ -6,7 +6,7 @@
     "module": "Preserve",
     "moduleDetection": "force",
     "verbatimModuleSyntax": true,
-    "types": ["chrome", "vite/client"],
+    "types": ["vite/client"],
     "paths": {
       "@/*": ["./src/*"],
       "@shared/*": ["../shared/*"]

@@ -1,7 +1,7 @@
 /**
- * `pnpm desktop:app`: builds the app as a real .app (debug) and opens it.
+ * `pnpm app`: builds the app as a real .app (debug) and opens it.
  *
- * `pnpm desktop:dev` runs a bare binary from a terminal, so macOS asks for
+ * `pnpm dev` runs a bare binary from a terminal, so macOS asks for
  * Screen Recording on behalf of whatever started it (VS Code, Terminal) and,
  * if allowed, grants it to that app instead. Run as a bundle, the prompt
  * names Juno and the permission is the app's alone.
@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 if (process.platform !== 'darwin') {
-  console.log('Only macOS asks for a permission; on this system `pnpm desktop:dev` is the same thing.');
+  console.log('Only macOS asks for a permission; on this system `pnpm dev` is the same thing.');
   process.exit(0);
 }
 const built = spawnSync('pnpm', ['tauri', 'build', '--debug', '--bundles', 'app'], { cwd: resolve(here, '..'), stdio: 'inherit' });

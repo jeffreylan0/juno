@@ -90,9 +90,8 @@ export interface ChatSummary {
 export const chatKey = (id: string) => `chat:${id}`;
 export const INDEX_KEY = 'chatIndex';
 
-type Area = chrome.storage.StorageArea;
-const local = (): Area => (browser.storage as unknown as { local: Area }).local;
-const session = (): Area => (browser.storage as unknown as { session: Area }).session;
+const local = () => browser.storage.local;
+const session = () => browser.storage.session;
 const areaFor = (chat: Pick<Chat, 'temporary'>) => (chat.temporary ? session() : local());
 
 export function newChat(temporary = false, id: string = crypto.randomUUID()): Chat {

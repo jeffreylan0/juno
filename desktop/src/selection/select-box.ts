@@ -7,8 +7,8 @@
  * the bar's Ask button sends it. That is the difference between "roughly the
  * question" and "exactly the question, without the diagram next to it".
  *
- * The rectangle is clamped to the viewport because `captureVisibleTab` only
- * ever returns what is on screen — a box drawn past the fold would silently
+ * The rectangle is clamped to the overlay (the display) because the capture
+ * only ever has what is on screen: a box drawn past the edge would silently
  * produce a crop that does not match what the student selected. The caller is
  * told when that clamp is biting so it can say so.
  */

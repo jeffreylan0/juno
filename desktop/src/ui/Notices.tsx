@@ -1,11 +1,11 @@
 /**
  * Notices, just above the macros: anything that would make the next answer
- * fail or be fake, said before the student asks rather than after. Placeholder
- * answers, no key, a rejected key, and the chosen AI being unreachable
+ * fail, said before the student asks rather than after. No AI picked yet,
+ * no key, a rejected key, and the chosen AI being unreachable
  * ("Disconnected"); also the chat limit dropping an old chat.
  *
- * Placeholder and no-key are known here at once. The rest come from the
- * background's check (lib/status.ts), shown only when it was made for the
+ * No AI and no key are known here at once. The rest come from the
+ * core's check (lib/status.ts), shown only when it was made for the
  * choice currently picked.
  *
  * With `lasts` (the app), each notice goes by itself after that long: a ring
@@ -16,7 +16,8 @@
 import { useState } from 'react';
 import { ASSISTANT } from '@/lib/router';
 import type { AiStatus } from '@/lib/status';
-import { answerChoiceOf, type Keys, type Settings } from '@/lib/storage';
+import type { KeyStatus } from '@/lib/providers/types';
+import { answerChoiceOf, type Settings } from '@/lib/storage';
 import { Icon, type IconName } from './icons';
 
 interface Action {
@@ -52,7 +53,7 @@ export function Notices({
   /** How long each notice stays, or null: until dealt with. */
   lasts?: number | null;
   settings: Settings | null;
-  keys: Keys | null;
+  keys: KeyStatus | null;
   status: AiStatus | null;
   checking: boolean;
   onRecheck: () => void;
@@ -121,20 +122,20 @@ export function Notices({
 
 function connectionNotice(
   settings: Settings,
-  keys: Keys | null,
+  keys: KeyStatus | null,
   status: AiStatus | null,
   checking: boolean,
   onRecheck: () => void,
 ): Notice | null {
   if (settings.provider === 'mock') {
     return {
-      kind: 'placeholder',
+      kind: 'unset',
       icon: 'info',
-      text: 'Placeholder answers. No AI is connected.',
-      actions: [{ label: 'Connect an AI', onClick: openSettings, testid: 'notice-settings' }],
+      text: 'Pick who answers to start asking.',
+      actions: [{ label: 'Set up', onClick: openSettings, testid: 'notice-settings' }],
     };
   }
-  if (settings.provider === 'byok' && keys && !keys[settings.vendor].trim()) {
+  if (settings.provider === 'byok' && keys && !keys[settings.vendor]) {
     return {
       kind: 'no-key',
       icon: 'warning',
@@ -142,7 +143,7 @@ function connectionNotice(
       actions: [{ label: 'Add a key', onClick: openSettings, testid: 'notice-settings' }],
     };
   }
-  if (!status || status.choice !== answerChoiceOf(settings) || status.state === 'ok' || status.state === 'placeholder') return null;
+  if (!status || status.choice !== answerChoiceOf(settings) || status.state === 'ok' || status.state === 'unset') return null;
 
   const retry: Action = { label: 'Retry', onClick: onRecheck, testid: 'notice-retry', busy: checking };
   const fix: Action = { label: 'Settings', onClick: openSettings, testid: 'notice-settings' };

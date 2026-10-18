@@ -9,7 +9,7 @@
  * Enter, a double-click inside it or the bar's Send sends it.
  *
  * Points are viewport CSS pixels and clamped to the viewport, for the same
- * reason boxes are: `captureVisibleTab` only sees what is on screen.
+ * reason boxes are: the capture only has what is on screen.
  */
 import type { Point, Rect } from '@shared/payload';
 import { MIN_SIZE, clampToViewport, isClamped } from './select-box';

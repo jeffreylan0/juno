@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { checkStatus, statusFromAnswer } from '@/lib/status';
-import { DEFAULT_SETTINGS, type Keys, type Settings } from '@/lib/storage';
+import { keyVault } from '@/lib/providers/byok';
+import { checkStatus as check, statusFromAnswer } from '@/lib/status';
+import { DEFAULT_SETTINGS, type Settings } from '@/lib/storage';
 
-const keys = (anthropic = '', openai = ''): Keys => ({ anthropic, openai, session: '' });
+const keys = (anthropic = '', openai = '') => ({ anthropic, openai });
+/** A check with these keys, each request through `f`. */
+const checkStatus = (f: typeof fetch, settings: Settings, k: { anthropic: string; openai: string }) => check(f, settings, keyVault(k, f), '');
 const byok = (vendor: 'anthropic' | 'openai' = 'anthropic'): Settings => ({ ...DEFAULT_SETTINGS, provider: 'byok', vendor });
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 describe('checkStatus', () => {
-  it('needs no network for placeholder answers or a missing key', async () => {
+  it('needs no network with no AI picked or a missing key', async () => {
     const never = (() => {
       throw new Error('no network expected');
     }) as unknown as typeof fetch;
-    expect((await checkStatus(never, DEFAULT_SETTINGS, keys())).state).toBe('placeholder');
+    expect((await checkStatus(never, DEFAULT_SETTINGS, keys())).state).toBe('unset');
     const noKey = await checkStatus(never, byok(), keys());
     expect(noKey).toMatchObject({ state: 'no-key', who: 'Claude', choice: 'anthropic:auto' });
   });

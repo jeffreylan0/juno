@@ -121,6 +121,13 @@ button.secondary, button.danger { font: inherit; padding: 7px 14px; border-radiu
 button.secondary { border: 1px solid var(--line); background: var(--bg); color: var(--fg); transition: background-color 120ms ease, border-color 120ms ease; }
 button.secondary:hover:not(:disabled) { background: var(--hover); }
 button.danger { border: 0; background: var(--bad); color: #fff; }
+button.primary { font: inherit; font-weight: 600; padding: 9px 18px; border: 0; border-radius: var(--radius); background: var(--accent); color: var(--on-accent, #fff); cursor: pointer; }
+
+/* The first-run setup (Setup.tsx). */
+.setup .spacer { flex: 1; }
+.setup-end { display: flex; align-items: center; gap: 16px; margin-top: 20px; }
+/* A saved key, by its last four characters only. */
+.key-saved { font-size: 13px; color: var(--muted); }
 button:disabled { opacity: .5; cursor: default; }
 .confirm-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 

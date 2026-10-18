@@ -1,11 +1,11 @@
 //! Juno for the desktop: the native core.
 //!
 //! It does only what the system has to: the global shortcut, the menu bar (or
-//! tray) icon, the windows, screen capture, and keeping chats, screenshots and
-//! keys on disk. Everything else (the bar, the panel, chats, answers,
-//! accounts) is web code running in the app's windows (desktop/src). The
-//! `core` window owns the chats; the others reach it through events
-//! (desktop/src/platform).
+//! tray) icon, the windows, screen capture, keeping chats and screenshots on
+//! disk, and keeping the API keys where no page can read them (vault.rs).
+//! Everything else (the bar, the panel, chats, answers, accounts) is web code
+//! running in the app's windows (desktop/src). The `core` window owns the
+//! chats; the others reach it through events (desktop/src/platform).
 
 mod capture;
 mod crop;
@@ -15,6 +15,7 @@ mod store;
 #[cfg(feature = "test-hook")]
 mod testhook;
 mod updates;
+mod vault;
 mod wm;
 
 use std::sync::{Arc, Mutex};
@@ -63,7 +64,7 @@ fn area(name: &str) -> Res<Area> {
 
 /// Refuses a command from any window but these. Every page can invoke every
 /// command, so the ones that matter check who is asking: the overlay, drawn
-/// over whatever is on screen, never needs the keys, the capture or the
+/// over whatever is on screen, never needs the session, the capture or the
 /// login item.
 fn only(window: &WebviewWindow, allowed: &[&str]) -> Res<()> {
     if allowed.contains(&window.label()) {
@@ -73,12 +74,17 @@ fn only(window: &WebviewWindow, allowed: &[&str]) -> Res<()> {
     }
 }
 
-/// The API keys and the session: never to or from the overlay.
-fn keep_secrets_from(window: &WebviewWindow, keys: impl IntoIterator<Item = impl AsRef<str>>) -> Res<()> {
-    if window.label() == wm::OVERLAY && keys.into_iter().any(|k| store::is_secret(k.as_ref())) {
-        return Err("the overlay has no access to keys".into());
+/// Whether a window's pages may see a stored value: never the API keys
+/// (vault.rs), and the account's session not in the overlay.
+fn visible_to(label: &str, key: &str) -> bool {
+    key != vault::STORAGE_KEY && (label != wm::OVERLAY || !store::is_secret(key))
+}
+
+fn refuse_hidden(window: &WebviewWindow, keys: impl IntoIterator<Item = impl AsRef<str>>) -> Res<()> {
+    match keys.into_iter().find(|k| !visible_to(window.label(), k.as_ref())) {
+        Some(k) => Err(format!("{} is not the {} window's to change", k.as_ref(), window.label())),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// One storage write, at most: a long chat is a few MB.
@@ -88,25 +94,21 @@ const MAX_IMAGE_URL_BYTES: usize = 32 * 1024 * 1024;
 /// Regions of the overlay that take clicks (the bar, a few tooltips).
 const MAX_REGIONS: usize = 64;
 
-/// Every window hears about every change, as `storage.onChanged` does; the
-/// overlay without the secrets' values.
+/// Every window hears about every change it may see, as `storage.onChanged`
+/// does (visible_to). A secret's change (the account session) comes without
+/// its values: any page can listen to any event, so the window reads the
+/// value back through `storage_get`, which checks who asks.
 fn announce(app: &AppHandle, area: &str, changes: Changes) -> Res<()> {
-    if changes.is_empty() {
-        return Ok(());
-    }
     #[derive(Serialize, Clone)]
     struct Changed<'a> {
         area: &'a str,
         changes: Changes,
     }
-    if !changes.keys().any(|k| store::is_secret(k)) {
-        return app.emit("storage:changed", Changed { area, changes }).map_err(err);
-    }
-    let public: Changes = changes.iter().filter(|(k, _)| !store::is_secret(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let told = |(k, v): (&String, &store::Change)| (k.clone(), if store::is_secret(k) { store::Change::default() } else { v.clone() });
     for window in app.webview_windows().into_values() {
-        let to = if window.label() == wm::OVERLAY { &public } else { &changes };
-        if !to.is_empty() {
-            app.emit_to(window.label(), "storage:changed", Changed { area, changes: to.clone() }).map_err(err)?;
+        let seen: Changes = changes.iter().filter(|(k, _)| visible_to(window.label(), k)).map(told).collect();
+        if !seen.is_empty() {
+            app.emit_to(window.label(), "storage:changed", Changed { area, changes: seen }).map_err(err)?;
         }
     }
     Ok(())
@@ -116,16 +118,17 @@ fn announce(app: &AppHandle, area: &str, changes: Changes) -> Res<()> {
 
 #[tauri::command(async)]
 fn storage_get(window: WebviewWindow, state: State<Shared>, area: String, keys: Option<Vec<String>>) -> Res<Map<String, Value>> {
-    let mut found = state.store.get(self::area(&area)?, keys.as_deref()).map_err(err)?;
-    if window.label() == wm::OVERLAY {
-        found.retain(|k, _| !store::is_secret(k));
-    }
+    let area = self::area(&area)?;
+    // Asked for everything: everything this window may see.
+    let keys = keys.unwrap_or_else(|| state.store.keys(area).into_iter().filter(|k| visible_to(window.label(), k)).collect());
+    let mut found = state.store.get(area, Some(&keys)).map_err(err)?;
+    found.retain(|k, _| visible_to(window.label(), k));
     Ok(found)
 }
 
 #[tauri::command(async)]
 fn storage_set(app: AppHandle, window: WebviewWindow, state: State<Shared>, area: String, items: Map<String, Value>) -> Res<()> {
-    keep_secrets_from(&window, items.keys())?;
+    refuse_hidden(&window, items.keys())?;
     if serde_json::to_vec(&items).map_err(err)?.len() > MAX_WRITE_BYTES {
         return Err("too much to store at once".into());
     }
@@ -135,16 +138,56 @@ fn storage_set(app: AppHandle, window: WebviewWindow, state: State<Shared>, area
 
 #[tauri::command(async)]
 fn storage_remove(app: AppHandle, window: WebviewWindow, state: State<Shared>, area: String, keys: Vec<String>) -> Res<()> {
-    keep_secrets_from(&window, &keys)?;
+    refuse_hidden(&window, &keys)?;
     let changes = state.store.remove(self::area(&area)?, &keys).map_err(err)?;
     announce(&app, &area, changes)
 }
 
+// ── API keys (vault.rs) ──────────────────────────────────────────────────
+
+/// Whether there is a key for each company, by its last four characters.
 #[tauri::command(async)]
-fn storage_clear(app: AppHandle, window: WebviewWindow, state: State<Shared>, area: String) -> Res<()> {
+fn key_status(window: WebviewWindow, state: State<Shared>) -> Res<vault::KeyStatus> {
     only(&window, &[wm::CORE, wm::PANEL, wm::SETTINGS])?;
-    let changes = state.store.clear(self::area(&area)?).map_err(err)?;
-    announce(&app, &area, changes)
+    Ok(vault::status(&state.store))
+}
+
+/// Settings → Answers: keeps a key (an empty one removes it). Every window
+/// hears that the keys changed (`keys:changed`), never what they are.
+#[tauri::command(async)]
+fn key_set(app: AppHandle, window: WebviewWindow, state: State<Shared>, vendor: String, key: String) -> Res<vault::KeyStatus> {
+    only(&window, &[wm::SETTINGS])?;
+    let vendor = vault::Vendor::parse(&vendor).ok_or("no such company")?;
+    let status = vault::set(&state.store, vendor, &key)?;
+    app.emit("keys:changed", &status).map_err(err)?;
+    Ok(status)
+}
+
+/// The core asks, or checks a key: the request goes out from here, with the
+/// key (vault.rs); the answer streams back over `on_body`.
+#[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
+fn vendor_fetch(
+    window: WebviewWindow,
+    state: State<Shared>,
+    keys: State<vault::Vault>,
+    vendor: String,
+    url: String,
+    method: String,
+    body: Option<String>,
+    on_body: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+) -> Res<()> {
+    only(&window, &[wm::CORE])?;
+    let vendor = vault::Vendor::parse(&vendor).ok_or("no such company")?;
+    keys.fetch(&state.store, vendor, &method, &url, body, on_body)
+}
+
+/// Stop was pressed: the request stops.
+#[tauri::command(async)]
+fn vendor_fetch_cancel(window: WebviewWindow, keys: State<vault::Vault>, id: u32) -> Res<()> {
+    only(&window, &[wm::CORE])?;
+    keys.cancel(id);
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -178,7 +221,9 @@ fn image_chat_ids(state: State<Shared>) -> Vec<String> {
 // ── Windows ──────────────────────────────────────────────────────────────
 
 #[tauri::command(async)]
-fn overlay_show(app: AppHandle, state: State<Shared>, focus: bool) -> Res<()> {
+fn overlay_show(app: AppHandle, window: WebviewWindow, state: State<Shared>, focus: bool) -> Res<()> {
+    // Only the core brings the bar up: the overlay showing is what lets it take a screenshot.
+    only(&window, &[wm::CORE])?;
     static FIRST: std::sync::Once = std::sync::Once::new();
     FIRST.call_once(|| diag::note("overlay_show: first"));
     wm::show_overlay(&app, &state.overlay, focus).map_err(|e| {
@@ -188,19 +233,22 @@ fn overlay_show(app: AppHandle, state: State<Shared>, focus: bool) -> Res<()> {
 }
 
 #[tauri::command(async)]
-fn overlay_hide(app: AppHandle, state: State<Shared>) -> Res<()> {
+fn overlay_hide(app: AppHandle, window: WebviewWindow, state: State<Shared>) -> Res<()> {
+    only(&window, &[wm::OVERLAY])?;
     wm::hide_overlay(&app, &state.overlay).map_err(err)
 }
 
 #[tauri::command(async)]
-fn overlay_focus(app: AppHandle) -> Res<()> {
+fn overlay_focus(app: AppHandle, window: WebviewWindow) -> Res<()> {
+    only(&window, &[wm::OVERLAY])?;
     wm::focus_overlay(&app).map_err(err)
 }
 
 /// From the overlay page: whether a selection is armed (it takes every
 /// click), and otherwise which parts of it take clicks (the bar, tooltips).
 #[tauri::command(async)]
-fn overlay_pointer(state: State<Shared>, interactive: bool, mut regions: Vec<Rect>) {
+fn overlay_pointer(window: WebviewWindow, state: State<Shared>, interactive: bool, mut regions: Vec<Rect>) -> Res<()> {
+    only(&window, &[wm::OVERLAY])?;
     regions.truncate(MAX_REGIONS);
     let mut s = state.overlay.lock().unwrap();
     s.interactive = interactive;
@@ -208,21 +256,25 @@ fn overlay_pointer(state: State<Shared>, interactive: bool, mut regions: Vec<Rec
     if !interactive {
         s.scroll_anchor = None;
     }
+    Ok(())
 }
 
 /// The student scrolled over an armed selection: the scroll goes to the app
 /// beneath (the overlay lets the pointer through) until the pointer moves,
 /// when the overlay takes it back to select (wm::start_passthrough).
 #[tauri::command(async)]
-fn overlay_scroll_through(app: AppHandle, state: State<Shared>) {
+fn overlay_scroll_through(app: AppHandle, window: WebviewWindow, state: State<Shared>) -> Res<()> {
+    only(&window, &[wm::OVERLAY])?;
     let mut s = state.overlay.lock().unwrap();
     if s.interactive && s.scroll_anchor.is_none() {
         s.scroll_anchor = app.cursor_position().ok().map(|p| (p.x, p.y));
     }
+    Ok(())
 }
 
 #[tauri::command(async)]
-fn panel_open(app: AppHandle, state: State<Shared>, focus: bool, place: Option<String>, size: Option<PanelSize>) -> Res<()> {
+fn panel_open(app: AppHandle, window: WebviewWindow, state: State<Shared>, focus: bool, place: Option<String>, size: Option<PanelSize>) -> Res<()> {
+    only(&window, &[wm::CORE])?;
     let at = place.as_deref().and_then(geometry::Place::parse).unwrap_or_default();
     // A size the student gave it, within reason (wm.rs keeps it on screen).
     let size = size.filter(|s| s.width.is_finite() && s.height.is_finite()).map(|s| (s.width.clamp(320.0, 1600.0), s.height.clamp(320.0, 2400.0)));
@@ -237,18 +289,21 @@ struct PanelSize {
 
 /// The panel's page asks for the height its chat needs (CSS pixels).
 #[tauri::command(async)]
-fn panel_fit(app: AppHandle, state: State<Shared>, height: f64, animate: Option<bool>) -> Res<f64> {
+fn panel_fit(app: AppHandle, window: WebviewWindow, state: State<Shared>, height: f64, animate: Option<bool>) -> Res<f64> {
+    only(&window, &[wm::PANEL])?;
     wm::fit_panel(&app, &state.overlay, height, animate.unwrap_or(true)).map_err(err)
 }
 
-/// A card's page (the panel, settings) has drawn: its window shows.
+/// Settings' page has drawn: they show if they were asked for meanwhile.
 #[tauri::command(async)]
 fn window_show(window: WebviewWindow) -> Res<()> {
-    wm::show_window(&window).map_err(err)
+    only(&window, &[wm::SETTINGS])?;
+    wm::settings_drawn(&window).map_err(err)
 }
 
 #[tauri::command(async)]
-fn panel_close(app: AppHandle) -> Res<()> {
+fn panel_close(app: AppHandle, window: WebviewWindow) -> Res<()> {
+    only(&window, &[wm::CORE])?;
     wm::close_panel(&app).map_err(err)
 }
 
@@ -257,17 +312,13 @@ fn settings_open(app: AppHandle, hash: Option<String>) -> Res<()> {
     wm::open_settings(&app, hash.as_deref()).map_err(err)
 }
 
-/// `window.close()` from a page: the panel and settings go; the core and the
-/// overlay are never closed, only hidden.
+/// `window.close()` from settings: they are only hidden, kept for the next
+/// time (wm.rs). No other page closes its own window: the panel's ✕ asks the
+/// core, which finishes the chat first.
 #[tauri::command(async)]
 fn window_close(app: AppHandle, window: WebviewWindow) -> Res<()> {
-    match window.label() {
-        wm::CORE => Ok(()),
-        wm::OVERLAY => window.hide().map_err(err),
-        // Kept for the next selection (wm.rs).
-        wm::PANEL => wm::close_panel(&app).map_err(err),
-        _ => window.destroy().map_err(err),
-    }
+    only(&window, &[wm::SETTINGS])?;
+    wm::close_settings(&app).map_err(err)
 }
 
 // ── Capture ──────────────────────────────────────────────────────────────
@@ -614,6 +665,7 @@ pub fn run() {
             let error = app.global_shortcut().register(shortcut()).err().map(|e| e.to_string());
             diag::note(&format!("setup: shortcut {}", error.as_deref().unwrap_or("registered")));
             app.manage(Shared { store, images, overlay: overlay.clone(), shortcut: Mutex::new(ShortcutStatus { shortcut: label.into(), error }) });
+            app.manage(vault::Vault::new()?);
 
             let handle = app.handle().clone();
             wm::make_core(&handle)?;
@@ -621,6 +673,7 @@ pub fn run() {
             // the panel before the first selection, so neither is waited for.
             wm::overlay(&handle)?;
             wm::make_panel(&handle)?;
+            wm::make_settings(&handle)?;
             diag::note("setup: windows made");
             tray(&handle)?;
             diag::note("setup: tray icon made");
@@ -652,11 +705,13 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| match event {
-            // The overlay and the core live as long as the app; the system's
-            // close (Alt+F4, ⌘W) only hides them.
-            WindowEvent::CloseRequested { api, .. } if matches!(window.label(), wm::CORE | wm::OVERLAY) => {
+            // The overlay, the core and settings live as long as the app;
+            // the system's close (Alt+F4, ⌘W) only hides them. (The panel's
+            // goes, which finishes its chat, as its ✕ does; it is made again
+            // for the next.)
+            WindowEvent::CloseRequested { api, .. } if matches!(window.label(), wm::CORE | wm::OVERLAY | wm::SETTINGS) => {
                 api.prevent_close();
-                let _ = window.hide();
+                let _ = if window.label() == wm::SETTINGS { wm::close_settings(window.app_handle()) } else { window.hide() };
             }
             // A port to it is gone (the panel closing finishes the chat).
             WindowEvent::Destroyed => {
@@ -670,7 +725,10 @@ pub fn run() {
             storage_get,
             storage_set,
             storage_remove,
-            storage_clear,
+            key_status,
+            key_set,
+            vendor_fetch,
+            vendor_fetch_cancel,
             image_put,
             image_get,
             image_delete,

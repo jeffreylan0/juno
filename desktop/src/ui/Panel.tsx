@@ -31,7 +31,7 @@ import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import { autoTitle, hasUsableSelection, isRemovable, pendingSelections, type AssistantItem, type Chat } from '@/lib/chats';
 import { isTransient, needsSettings } from '@/lib/providers/errors';
-import { getKeys, getSettings, keysItem, settingsItem, type Keys, type Macro, type Settings } from '@/lib/storage';
+import { getSettings, settingsItem, type Macro, type Settings } from '@/lib/storage';
 import { splitWhatIRead } from '@shared/prompts';
 import { Answer } from './Answer';
 import { ChatMenu, TitleInput } from './ChatMenu';
@@ -40,14 +40,15 @@ import { ModelPicker } from './ModelPicker';
 import { Notices } from './Notices';
 import { IncomingSelection, SelectionCard } from './Selection';
 import { useAccount } from './useAccount';
+import { useKeyStatus } from './useKeyStatus';
 import { useAiStatus, useChat, useChatList, usePanelSession } from './useChat';
 import { MAC } from '../os';
 import { formatShortcut, useShortcut } from './useShortcut';
 
 /** How long a notice stays before it goes by itself (Notices.tsx). */
 const NOTICE_MS = 9000;
-/** Within this of the bottom, the chat counts as followed: new text keeps it at the bottom. */
-const FOLLOW_SLACK_PX = 48;
+/** Within this of the end, the chat counts as scrolled to it (fractional display scales round). */
+const AT_END_PX = 4;
 /** The new-chat key, as people say it. */
 const NEW_CHAT_KEY = MAC ? '⌘⇧O' : 'Ctrl+Shift+O';
 
@@ -60,13 +61,13 @@ const send = (msg: Record<string, unknown>) => browser.runtime.sendMessage(msg).
 const SYNC_EVERY_MS = 5 * 60_000;
 
 export function Panel() {
-  const { windowId, current } = usePanelSession();
+  const current = usePanelSession();
   const chat = useChat(current?.chatId ?? null);
   const chats = useChatList();
   const { status, recheck, checking } = useAiStatus();
   const dropped = useDropped();
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [keys, setKeys] = useState<Keys | null>(null);
+  const keys = useKeyStatus();
   const [menuOpen, setMenuOpen] = useState(false);
   const shortcut = useShortcut();
   const account = useAccount();
@@ -89,13 +90,7 @@ export function Panel() {
 
   useEffect(() => {
     void getSettings().then(setSettings);
-    void getKeys().then(setKeys);
-    const unwatch = settingsItem.watch(() => void getSettings().then(setSettings));
-    const unwatchKeys = keysItem.watch(() => void getKeys().then(setKeys));
-    return () => {
-      unwatch();
-      unwatchKeys();
-    };
+    return settingsItem.watch(() => void getSettings().then(setSettings));
   }, []);
 
   // Chats from the student's other computers (cloud storage): caught up when
@@ -180,15 +175,14 @@ export function Panel() {
   const [incoming, setIncoming] = useState<{ kind: SelectionKind; at: number } | null>(null);
   useEffect(() => {
     const onMessage = (raw: unknown) => {
-      const msg = raw as { type?: string; kind?: SelectionKind; at?: number; windowId?: number };
+      const msg = raw as { type?: string; kind?: SelectionKind; at?: number };
       if (msg?.type !== 'selection:incoming') return;
-      if (msg.windowId !== undefined && windowId !== null && msg.windowId !== windowId) return;
       setIncoming({ kind: msg.kind ?? 'box', at: msg.at ?? Date.now() });
       setMenuOpen(false);
     };
     browser.runtime.onMessage.addListener(onMessage);
     return () => browser.runtime.onMessage.removeListener(onMessage);
-  }, [windowId]);
+  }, []);
   useEffect(() => {
     if (!incoming) return;
     if (landed >= incoming.at) return setIncoming(null);
@@ -197,8 +191,9 @@ export function Panel() {
   }, [incoming, landed]);
 
   // The chat follows what comes in (an answer streaming, a new selection),
-  // unless the student scrolled up to read: then it stays where they are
-  // until they scroll back down. A new chat, or a question they ask, follows again.
+  // until the student scrolls up, by any amount and any means (wheel,
+  // trackpad, keys, scroll bar): then it stays where they are until they
+  // scroll back down to the end. A new chat, or a question they ask, follows again.
   const last = items.at(-1);
   const following = useRef(true);
   const followBottom = useCallback(() => {
@@ -208,9 +203,25 @@ export function Panel() {
   useEffect(() => {
     const thread = threadRef.current;
     if (!thread) return;
-    const onScroll = () => (following.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < FOLLOW_SLACK_PX);
+    let top = thread.scrollTop;
+    const atEnd = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight <= AT_END_PX;
+    const onScroll = () => {
+      // Up and away from the end lets go; down to the end follows again. (A
+      // chat that got shorter moves the scroll up too, but stays at the end.)
+      if (thread.scrollTop < top && !atEnd()) following.current = false;
+      else if (thread.scrollTop > top && atEnd()) following.current = true;
+      top = thread.scrollTop;
+    };
+    // Before the scroll it causes, so the next line of the answer can't pull the chat back down.
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0 && thread.scrollTop > 0) following.current = false;
+    };
     thread.addEventListener('scroll', onScroll, { passive: true });
-    return () => thread.removeEventListener('scroll', onScroll);
+    thread.addEventListener('wheel', onWheel, { passive: true });
+    return () => {
+      thread.removeEventListener('scroll', onScroll);
+      thread.removeEventListener('wheel', onWheel);
+    };
   }, []);
   useEffect(() => {
     following.current = true;
@@ -247,7 +258,7 @@ export function Panel() {
   // The latest question can be edited or asked again while nothing but its answer follows it (engine.ts).
   const redoable = !busy && last?.kind === 'assistant' && items.at(-2)?.kind === 'user' ? items.at(-2)!.id : null;
   const toggleTemporary = () => {
-    if (windowId !== null) void send({ type: 'chat:temporary', windowId, on: !temporary });
+    void send({ type: 'chat:temporary', on: !temporary });
   };
 
   const placeholder = !askable
@@ -298,7 +309,7 @@ export function Panel() {
           onClose={() => setMenuOpen(false)}
           onOpen={(id) => {
             setMenuOpen(false);
-            if (windowId !== null && id !== chatId) void send({ type: 'chat:open', windowId, chatId: id });
+            if (id !== chatId) void send({ type: 'chat:open', chatId: id });
           }}
           onRename={(id, title) => void send({ type: 'chat:rename', chatId: id, title })}
           onDelete={(id) => void send({ type: 'chat:delete', chatId: id })}

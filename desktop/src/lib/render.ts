@@ -25,7 +25,11 @@ marked.setOptions({ gfm: true, breaks: false });
  *   rest of the panel, where a click would land on the model's link.
  */
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  if (node.tagName === 'A') {
+  if (node.namespaceURI !== HTML_NS) {
+    // An SVG or MathML link is followed in place, past the link handler: none.
+    node.removeAttribute('href');
+    node.removeAttribute('xlink:href');
+  } else if (node.tagName === 'A') {
     node.setAttribute('target', '_blank');
     node.setAttribute('rel', 'noopener noreferrer');
   }
@@ -39,6 +43,7 @@ const FORBID_TAGS = ['img', 'picture', 'source', 'video', 'audio', 'track', 'ima
 /** Attributes that fetch (background, ping) on tags otherwise allowed. */
 const FORBID_ATTR = ['background', 'ping', 'poster', 'srcset', 'action', 'formaction'];
 
+const HTML_NS = 'http://www.w3.org/1999/xhtml';
 const PLACEHOLDER = (i: number) => `\u0000MATH${i}\u0000`;
 
 export function renderMath(tex: string, display: boolean): string {
@@ -50,14 +55,11 @@ export function renderMath(tex: string, display: boolean): string {
   }
 }
 
-/** Replaces math with placeholders, renders Markdown, then restores KaTeX HTML; sanitized. */
-export function renderMarkdown(src: string): string {
-  return DOMPurify.sanitize(markdownHtml(src), SANITIZE);
-}
-
 /**
- * The same, as DOM nodes ready to append: the panel never assigns HTML to an
- * element (innerHTML), it inserts what DOMPurify has already parsed and cleaned.
+ * Markdown (math replaced by placeholders, rendered, then restored as KaTeX
+ * HTML), sanitized, as DOM nodes ready to append: the panel never assigns
+ * HTML to an element (innerHTML), it inserts what DOMPurify has already
+ * parsed and cleaned.
  */
 export function renderMarkdownFragment(src: string): DocumentFragment {
   return DOMPurify.sanitize(markdownHtml(src), { ...SANITIZE, RETURN_DOM_FRAGMENT: true });

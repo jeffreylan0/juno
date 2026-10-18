@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryCacheStore, hashRequest } from '@/lib/cache';
 import { callModel, type ProviderContext } from '@/lib/providers';
-import { toAnthropicBody } from '@/lib/providers/byok';
+import { keyVault, toAnthropicBody } from '@/lib/providers/byok';
 import { sseData, toChatMessages } from '@/lib/providers/openai-compat';
 import type { AskChunk, AskRequest, Plan } from '@shared/payload';
 
@@ -22,10 +22,13 @@ function plan(): Plan {
   };
 }
 
-function ctx(over: Partial<ProviderContext> = {}): ProviderContext {
+/** A context whose requests go through `over.fetch`, with these keys. */
+function ctx(over: Partial<ProviderContext> = {}, keys = { anthropic: '', openai: '' }): ProviderContext {
+  const fetchImpl = over.fetch ?? globalThis.fetch;
   return {
-    fetch: globalThis.fetch,
-    keys: { anthropic: '', openai: '', session: '' },
+    fetch: fetchImpl,
+    vault: keyVault(keys, fetchImpl),
+    session: '',
     settings: { localBaseUrl: 'http://localhost:11434/v1', localModel: 'm', gatewayUrl: '' },
     cache: new MemoryCacheStore(),
     ...over,
@@ -211,7 +214,7 @@ describe('callModel', () => {
         '[DONE]',
       ]);
     }) as unknown as typeof fetch;
-    const c = ctx({ fetch: fetchMock, keys: { anthropic: '', openai: 'sk-test', session: '' } });
+    const c = ctx({ fetch: fetchMock }, { anthropic: '', openai: 'sk-test' });
     const opts = { provider: 'byok' as const, vendor: 'openai' as const };
     const first = await collect(callModel({ plan: plan() }, 'small', c, opts));
     expect(first.text).toBe('Read: hi\n\nAnswer: 4');
@@ -231,14 +234,14 @@ describe('callModel', () => {
       return sseResponse([JSON.stringify({ choices: [{ delta: { content: 'Answer: 4' } }] }), '[DONE]']);
     }) as unknown as typeof fetch;
     const opts = { provider: 'byok' as const, vendor: 'openai' as const };
-    const keys = { anthropic: '', openai: 'sk-test', session: '' };
+    const keys = { anthropic: '', openai: 'sk-test' };
 
-    const bare = ctx({ fetch: fetchMock, keys, cache: undefined });
+    const bare = ctx({ fetch: fetchMock, cache: undefined }, keys);
     await collect(callModel({ plan: plan() }, 'small', bare, opts));
     await collect(callModel({ plan: plan() }, 'small', bare, opts));
     expect(calls).toBe(2);
 
-    const ghost = ctx({ fetch: fetchMock, keys, ephemeral: true });
+    const ghost = ctx({ fetch: fetchMock, ephemeral: true }, keys);
     await collect(callModel({ plan: plan() }, 'small', ghost, opts));
     expect((ghost.cache as MemoryCacheStore).size).toBe(0);
   });
@@ -248,7 +251,7 @@ describe('callModel', () => {
       const body = JSON.parse(String(init.body)) as { model: string };
       return sseResponse([JSON.stringify({ choices: [{ delta: { content: body.model } }] }), '[DONE]']);
     }) as unknown as typeof fetch;
-    const c = ctx({ fetch: fetchMock, keys: { anthropic: '', openai: 'k', session: '' } });
+    const c = ctx({ fetch: fetchMock }, { anthropic: '', openai: 'k' });
     const { text } = await collect(
       callModel({ plan: plan() }, 'small', c, { provider: 'byok', vendor: 'openai', model: { vendor: 'openai', model: 'gpt-6-sol' } }),
     );

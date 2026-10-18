@@ -5,17 +5,22 @@ name: Test build
 # workflow, publishes them as a GitHub prerelease with TESTERS.md as its
 # notes; a push that changes this file only builds them, to check it works.
 #
-# Built without WXT_SUPABASE_* or WXT_GATEWAY_URL: no accounts and no hosted
-# answers, so testers answer with their own key, a local model or
-# placeholders. No key of any kind goes into a build. No caches either: a
-# build others install never restores anything an ordinary run saved. The
+# Accounts and hosted answers come from the repository's Actions variables
+# WXT_SUPABASE_URL, WXT_SUPABASE_KEY (the publishable key, public by design)
+# and WXT_GATEWAY_URL (supabase/README.md, step 7); without them the build has
+# no accounts, and says so in the run's summary. No secret of any kind goes
+# into a build. No caches either: a build others install never restores
+# anything an ordinary run saved. The
 # release carries SHA256SUMS and a signed build provenance attestation
 # (`gh attestation verify <file> --repo jeffreylan0/selectionai`).
 #
-# Updates: with the TAURI_SIGNING_PRIVATE_KEY secret set (desktop/README.md,
-# Updates), the builds also make signed update files, and a `desktop-vX.Y.Z`
-# tag (that X.Y.Z becomes the app's version) publishes latest.json to the
-# `updates` release, where installed apps look for a new version.
+# Updates (desktop/README.md, Updates): the update key's public half (the
+# TAURI_UPDATER_PUBKEY variable, or tauri.conf.json) goes into every build,
+# which turns updating on. With its private half too (the
+# TAURI_SIGNING_PRIVATE_KEY secret), a `desktop-vX.Y.Z` tag's build (that
+# X.Y.Z becomes the app's version) also makes signed update files and
+# publishes latest.json to the `updates` release, where installed apps look
+# for a new version. No other run is given the private half.
 on:
   workflow_dispatch:
   push:
@@ -72,25 +77,49 @@ jobs:
       - name: Version and update files
         shell: bash
         env:
-          SIGNED: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && startsWith(github.ref, 'refs/tags/desktop-v') }}
+          PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
         run: |
           # A desktop-vX.Y.Z tag is the version; anything else keeps tauri.conf.json's.
           version=$(node -p "require('./desktop/src-tauri/tauri.conf.json').version")
           if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" =~ ^desktop-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             version="${BASH_REMATCH[1]}"
           fi
+          pubkey=${PUBKEY:-$(node -p "require('./desktop/src-tauri/tauri.conf.json').plugins.updater.pubkey")}
+          # Update files need both halves of the key: signed with one, checked against the other.
+          SIGNED=false
+          if [ "$PRIVATE_KEY" = true ] && [ -n "$pubkey" ]; then SIGNED=true; fi
+          if [ "$PRIVATE_KEY" = true ] && [ -z "$pubkey" ]; then
+            echo "::warning::No update files: the update key's public half is missing (the TAURI_UPDATER_PUBKEY variable; desktop/README.md, Updates)."
+          fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "SIGNED=$SIGNED" >> "$GITHUB_ENV"
-          VERSION=$version node -e '
+          VERSION=$version PUBKEY=$pubkey SIGNED=$SIGNED node -e '
             const c = { version: process.env.VERSION };
+            if (process.env.PUBKEY) c.plugins = { updater: { pubkey: process.env.PUBKEY } };
             if (process.env.SIGNED === "true") c.bundle = { createUpdaterArtifacts: true };
             require("fs").writeFileSync("desktop/src-tauri/release.conf.json", JSON.stringify(c));'
           cat desktop/src-tauri/release.conf.json
+      - name: Accounts
+        shell: bash
+        env:
+          WXT_SUPABASE_URL: ${{ vars.WXT_SUPABASE_URL }}
+          WXT_SUPABASE_KEY: ${{ vars.WXT_SUPABASE_KEY }}
+        run: |
+          if [ -n "$WXT_SUPABASE_URL" ] && [ -n "$WXT_SUPABASE_KEY" ]; then
+            echo "::notice::Accounts are in this build ($WXT_SUPABASE_URL)."
+          else
+            echo "::warning::No accounts in this build: set the Actions variables WXT_SUPABASE_URL, WXT_SUPABASE_KEY and WXT_GATEWAY_URL (supabase/README.md, step 7)."
+          fi
       - name: Build
         env:
+          WXT_SUPABASE_URL: ${{ vars.WXT_SUPABASE_URL }}
+          WXT_SUPABASE_KEY: ${{ vars.WXT_SUPABASE_KEY }}
+          WXT_GATEWAY_URL: ${{ vars.WXT_GATEWAY_URL }}
           APPLE_SIGNING_IDENTITY: ${{ matrix.signing }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Only a version tag's build signs updates (and only with the public half there to check them).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: pnpm --filter desktop exec tauri build ${{ matrix.args }} --config src-tauri/release.conf.json
       - name: Name the installer
         shell: bash

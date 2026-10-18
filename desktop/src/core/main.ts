@@ -3,6 +3,8 @@
  * queue, answers, the cloud copy, the connection status); this file shows
  * the bar and the panel and keeps the chat in step with them:
  *
+ *  - the first time the app is opened, the first-run setup comes up instead
+ *    (settings/Setup.tsx), and the bar once it is done;
  *  - the shortcut (or the menu bar icon, or opening the app) brings the bar
  *    up, armed in Box, on the display under the pointer;
  *    while macOS has not let the app see the screen, the bar comes up with
@@ -25,6 +27,7 @@
 import { browser, note, transport } from '../platform/install';
 import { WINDOW_ID, type Port } from '../platform/browser';
 import { appFetch } from '../platform/net';
+import { nativeVault, watchKeys } from '../platform/vault';
 import { getChat } from '@/lib/chats';
 import { endChat, ensureCurrent, getCurrent, panelOpened, setTemporary, switchTo } from '@/lib/current';
 import { ChatEngine, reply, type KeptCapture } from '@/lib/engine';
@@ -39,7 +42,7 @@ const W = WINDOW_ID;
 const panels = new Set<Port>();
 /** Whether the panel is on screen: it is kept, hidden, between chats (wm.rs). */
 let panelShown = false;
-const engine = new ChatEngine({ fetch: appFetch, panelsOpen: () => panelShown }).start();
+const engine = new ChatEngine({ fetch: appFetch, vault: nativeVault, watchKeys, panelsOpen: () => panelShown }).start();
 const serial = <T>(task: () => Promise<T>) => engine.serial(task);
 
 /** Whether the bar is up. */
@@ -253,7 +256,7 @@ browser.runtime.onConnect.addListener((port) => {
 
 browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
   if (!isRuntimeMessage(raw)) return;
-  const msg = raw as RuntimeMessage | NoticeReply | { type: 'overlay:ready' | 'chats:open' | 'chat:new' };
+  const msg = raw as RuntimeMessage | NoticeReply | { type: 'overlay:ready' | 'chats:open' | 'chat:new' | 'setup:done' };
   if (isRuntimeMessage(msg) && engine.handles(msg)) return engine.handle(msg, sendResponse);
   switch (msg.type) {
     case 'overlay:ready':
@@ -268,6 +271,9 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
       return;
     case 'chat:new':
       void newChat();
+      return;
+    case 'setup:done':
+      void summon();
       return;
     case 'screen:later':
       void screenNotNow();
@@ -325,13 +331,15 @@ void transport.listen('app:settings', () => {
 void browser.ready.then(() => browser.tell('overlay', { type: 'overlay:ping' }));
 
 // Opening the app brings the bar up, as the shortcut does (unless it was
-// started out of sight, with --hidden). Another app holding the shortcut is
-// said once, on the bar.
+// started out of sight, with --hidden); the first time, the setup instead.
+// Another app holding the shortcut is said once, on the bar.
 void transport
   .invoke<{ hidden: boolean; shortcut: { error: string | null } }>('app_info')
   .then(async (info) => {
     shortcutUntold = !!info.shortcut.error;
     note(info.hidden ? 'ready (hidden)' : 'ready');
-    if (!info.hidden) await summon();
+    if (info.hidden) return;
+    if ((await getSettings()).setupDone) await summon();
+    else await transport.invoke('settings_open', { hash: null });
   })
   .catch((err) => note(`start failed: ${String(err)}`));

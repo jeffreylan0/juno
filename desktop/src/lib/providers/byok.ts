@@ -1,26 +1,23 @@
 /**
- * Bring-your-own-key provider: direct calls to Anthropic (Messages API, with the
- * direct-browser-access header) and OpenAI (chat.completions) using the key the
- * student typed into settings. The key never leaves the core window.
+ * Bring-your-own-key provider: Anthropic (Messages API) and OpenAI
+ * (chat.completions) with the student's own key. Requests go through the
+ * Vault (types.ts), which adds the key: in the app the native core does
+ * (src-tauri/src/vault.rs), so the key is never in a page.
  *
  * Neither vendor trains on API traffic by default. What each keeps, and what
  * a temporary chat changes, is noted at each call below.
- *
- * Only standard headers plus the ones each vendor documents are sent: the
- * background's fetch is a cross-origin request, so an unexpected header means
- * a CORS preflight the vendor may refuse.
  */
 import type { AskRequest, ModelRef } from '@shared/payload';
 import { COMPANY, estimateCostUsd } from '../router';
 import { describeStreamError, ensureVendorOk, vendorFetch } from './errors';
 import { sseData, streamOpenAIChat, toChatMessages, type ChatMessage, type ContentPart } from './openai-compat';
-import { ProviderError, type ProviderContext, type ProviderDriver, type StreamResult } from './types';
+import { ProviderError, type KeyStatus, type KeyVendor, type ProviderContext, type ProviderDriver, type StreamResult, type Vault } from './types';
 
 export const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 export const ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models';
 export const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 export const OPENAI_MODELS_URL = 'https://api.openai.com/v1/models';
-export const ANTHROPIC_VERSION = '2023-06-01';
+const ANTHROPIC_VERSION = '2023-06-01';
 /** Room for a full worked solution; most answers use a fraction of it. */
 export const MAX_OUTPUT_TOKENS = 4096;
 
@@ -35,13 +32,25 @@ interface AnthropicMessage {
   content: string | AnthropicBlock[];
 }
 
-export function anthropicHeaders(key: string): Record<string, string> {
+/** Each company's key headers (the native core adds the same: vault.rs). */
+function keyHeaders(vendor: KeyVendor, key: string): Record<string, string> {
+  return vendor === 'anthropic' ? { 'x-api-key': key, 'anthropic-version': ANTHROPIC_VERSION } : { authorization: `Bearer ${key}` };
+}
+
+/** Keys the caller holds (the eval, tests): each request carries its key itself. */
+export function keyVault(keys: Record<KeyVendor, string>, fetchImpl: typeof fetch): Vault {
+  const hint = (k: string) => (k.trim() ? `…${k.trim().slice(-4)}` : null);
   return {
-    'x-api-key': key,
-    'anthropic-version': ANTHROPIC_VERSION,
-    // Required for calls made from a web page (the app's windows are); the key is the user's own.
-    'anthropic-dangerous-direct-browser-access': 'true',
+    status: async (): Promise<KeyStatus> => ({ anthropic: hint(keys.anthropic), openai: hint(keys.openai) }),
+    fetch: (vendor, url, init) =>
+      fetchImpl(url, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), ...keyHeaders(vendor, keys[vendor].trim()) } }),
   };
+}
+
+/** fetch to `vendor` with the student's key, or a "no key" error. */
+async function keyed(vault: Vault, vendor: KeyVendor): Promise<typeof fetch> {
+  if (!(await vault.status())[vendor]) throw new ProviderError(`Add your ${COMPANY[vendor]} API key in Settings to get answers.`, 'no-key');
+  return (input, init) => vault.fetch(vendor, String(input), init ?? {});
 }
 
 function dataUrlToSource(url: string): { media_type: string; data: string } {
@@ -117,10 +126,9 @@ async function* streamAnthropic(
   model: ModelRef,
   ctx: ProviderContext,
 ): AsyncGenerator<string, StreamResult, void> {
-  if (!ctx.keys.anthropic) throw new ProviderError('Add your Anthropic API key in Settings to get answers.', 'no-key');
-  const res = await vendorFetch(ctx.fetch, 'Anthropic', ANTHROPIC_URL, {
+  const res = await vendorFetch(await keyed(ctx.vault, 'anthropic'), 'Anthropic', ANTHROPIC_URL, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...anthropicHeaders(ctx.keys.anthropic) },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify(toAnthropicBody(toChatMessages(req), model.model)),
     signal: ctx.signal,
   });
@@ -184,7 +192,7 @@ async function* streamOpenAI(
   model: ModelRef,
   ctx: ProviderContext,
 ): AsyncGenerator<string, StreamResult, void> {
-  if (!ctx.keys.openai) throw new ProviderError('Add your OpenAI API key in Settings to get answers.', 'no-key');
+  const send = await keyed(ctx.vault, 'openai');
   // OpenAI caches long prompt prefixes by itself; nothing to mark. It never
   // trains on API traffic unless the key's organisation opted in. `store:
   // false` keeps the answer out of its stored completions; a temporary chat
@@ -192,7 +200,7 @@ async function* streamOpenAI(
   const base = { model: model.model, messages: toChatMessages(req), max_completion_tokens: MAX_OUTPUT_TOKENS, store: false };
   const memoryOnly = ctx.ephemeral && !NO_MEMORY_ONLY_CACHE.has(model.model);
   const call = (body: Record<string, unknown>) =>
-    streamOpenAIChat(ctx.fetch, OPENAI_URL, 'OpenAI', { authorization: `Bearer ${ctx.keys.openai}` }, body, ctx.signal);
+    streamOpenAIChat(send, OPENAI_URL, 'OpenAI', {}, body, ctx.signal);
   let usage: { inputTokens: number; outputTokens: number; cacheRead?: number };
   try {
     usage = yield* call(memoryOnly ? { ...base, prompt_cache_retention: 'in_memory' } : base);
@@ -232,18 +240,14 @@ export interface KeyModel {
 export type KeyTestResult = { ok: true; models: KeyModel[] } | { ok: false; error: string; code: string };
 
 /**
- * Checks a key by listing the vendor's models: free, fast, and it proves the
- * key is real without spending a token.
+ * Checks the stored key by listing the vendor's models: free, fast, and it
+ * proves the key is real without spending a token.
  */
-export async function testKey(fetchImpl: typeof fetch, vendor: 'anthropic' | 'openai', key: string): Promise<KeyTestResult> {
-  const trimmed = key.trim();
-  if (!trimmed) return { ok: false, error: 'Paste a key first.', code: 'no-key' };
+export async function testKey(vault: Vault, vendor: KeyVendor, signal?: AbortSignal): Promise<KeyTestResult> {
   const name = COMPANY[vendor];
   try {
-    const res =
-      vendor === 'anthropic'
-        ? await vendorFetch(fetchImpl, name, `${ANTHROPIC_MODELS_URL}?limit=100`, { headers: anthropicHeaders(trimmed) })
-        : await vendorFetch(fetchImpl, name, OPENAI_MODELS_URL, { headers: { authorization: `Bearer ${trimmed}` } });
+    const send = await keyed(vault, vendor);
+    const res = await vendorFetch(send, name, vendor === 'anthropic' ? `${ANTHROPIC_MODELS_URL}?limit=100` : OPENAI_MODELS_URL, { signal });
     await ensureVendorOk(res, name);
     const body = (await res.json()) as { data?: unknown[] };
     const models = (body.data ?? []).map((m) => toKeyModel(vendor, m)).filter((m): m is KeyModel => m !== null);
@@ -254,7 +258,7 @@ export async function testKey(fetchImpl: typeof fetch, vendor: 'anthropic' | 'op
   }
 }
 
-function toKeyModel(vendor: 'anthropic' | 'openai', raw: unknown): KeyModel | null {
+function toKeyModel(vendor: KeyVendor, raw: unknown): KeyModel | null {
   const m = raw as { id?: string; display_name?: string; capabilities?: { image_input?: { supported?: boolean } } };
   if (!m?.id) return null;
   if (vendor === 'anthropic') {

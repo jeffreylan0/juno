@@ -141,6 +141,11 @@ function Shot {
 
 $log = Join-Path $env:LOCALAPPDATA 'com.humanbn.juno\juno.log'
 Remove-Item $log -ErrorAction SilentlyContinue
+# The first-run setup behind it, so opening it brings the bar up (as the
+# end-to-end tests do: desktop/tests/e2e/harness.ts).
+$settings = Join-Path $env:LOCALAPPDATA 'com.humanbn.juno\store\local'
+New-Item -ItemType Directory -Force -Path $settings | Out-Null
+Set-Content -Path (Join-Path $settings 'settings.json') -Value '{"version":6,"setupDone":true}' -Encoding ascii -NoNewline
 Write-Host "Screen: $([System.Windows.Forms.Screen]::PrimaryScreen.Bounds)"
 $before = $null
 try { $before = Shot } catch { Write-Host "No screenshot before: $_" }

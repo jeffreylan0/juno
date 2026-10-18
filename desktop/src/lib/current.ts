@@ -8,7 +8,7 @@
  *    chat; every later one joins it, whichever app it comes from.
  *  - The ghost (on the bar or the panel) makes the next selection start a
  *    temporary chat, which is never saved.
- *  - ✕ on the bar, ✕ on the side panel, or Escape while the bar is waiting
+ *  - ✕ on the bar, ✕ on the panel, or Escape while the bar is waiting
  *    hides both and finishes the chat: a saved chat stays in the menu, a
  *    temporary one is deleted. The next selection starts a new chat.
  *
@@ -29,7 +29,7 @@ export interface Current {
 const PREFIX = 'current:';
 export const currentKey = (windowId: number) => `${PREFIX}${windowId}`;
 
-const session = () => (browser.storage as unknown as { session: chrome.storage.StorageArea }).session;
+const session = () => browser.storage.session;
 
 export async function getCurrent(windowId: number): Promise<Current | null> {
   const key = currentKey(windowId);

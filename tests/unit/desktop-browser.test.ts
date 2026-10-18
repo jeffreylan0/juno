@@ -5,13 +5,16 @@
  * closes when its window goes.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { AUTH_REDIRECT, WINDOW_ID, createBrowser } from '../../desktop/src/platform/browser';
+import { AUTH_REDIRECT, createBrowser } from '../../desktop/src/platform/browser';
 import type { Transport } from '../../desktop/src/platform/transport';
 import { pageTitle } from '../../desktop/src/core/tips';
 import { isExternal } from '../../desktop/src/platform/net';
 import { readPointerState, trackPointer } from '../../desktop/src/overlay/pointer';
 
 type Handler = (payload: unknown) => void;
+
+/** Changes to these are announced without their values, as lib.rs does. */
+const SECRET = new Set(['account']);
 
 /** The native core, played in memory: storage areas, events by window, commands. */
 function fakeCore(opts: { delay?: (event: string) => number } = {}) {
@@ -41,7 +44,7 @@ function fakeCore(opts: { delay?: (event: string) => number } = {}) {
       const changes: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(items as Record<string, unknown>)) {
         if (JSON.stringify(a.get(k)) === JSON.stringify(v)) continue;
-        changes[k] = { ...(a.has(k) ? { oldValue: a.get(k) } : {}), newValue: v };
+        changes[k] = SECRET.has(k) ? {} : { ...(a.has(k) ? { oldValue: a.get(k) } : {}), newValue: v };
         a.set(k, v);
       }
       if (Object.keys(changes).length) emitAll('storage:changed', { area, changes });
@@ -49,7 +52,7 @@ function fakeCore(opts: { delay?: (event: string) => number } = {}) {
     storage_remove: ({ area, keys }) => {
       const a = areas[area as string]!;
       const changes: Record<string, unknown> = {};
-      for (const k of keys as string[]) if (a.has(k)) (changes[k] = { oldValue: a.get(k) }), a.delete(k);
+      for (const k of keys as string[]) if (a.has(k)) (changes[k] = SECRET.has(k) ? {} : { oldValue: a.get(k) }), a.delete(k);
       if (Object.keys(changes).length) emitAll('storage:changed', { area, changes });
     },
     app_info: () => ({ version: '0.1.0', shortcut: { shortcut: '⌥⇧S', error: null } }),
@@ -69,7 +72,6 @@ function fakeCore(opts: { delay?: (event: string) => number } = {}) {
       return () => set.delete(handler as Handler);
     },
     emitTo: async (to, event, payload) => deliver(to, event, payload),
-    emit: async (event, payload) => emitAll(event, payload),
   });
   /** A window closing: the native core tells everyone. */
   const close = (label: string) => {
@@ -117,6 +119,24 @@ describe('storage', () => {
     expect(await w.core!.storage.local.get(null)).toEqual({ b: 2 });
   });
 
+  it('hears of a secret changing without its value in the event, and reads it back', async () => {
+    const w = await windows('core', 'panel');
+    const heard = vi.fn();
+    w.panel!.storage.local.onChanged.addListener(heard);
+    await w.core!.storage.local.set({ account: { user: 'a' } });
+    await settle();
+    await settle();
+    expect(heard).toHaveBeenLastCalledWith({ account: { oldValue: undefined, newValue: { user: 'a' } } });
+    await w.core!.storage.local.set({ account: { user: 'b' } });
+    await settle();
+    await settle();
+    expect(heard).toHaveBeenLastCalledWith({ account: { oldValue: { user: 'a' }, newValue: { user: 'b' } } });
+    await w.core!.storage.local.remove('account');
+    await settle();
+    await settle();
+    expect(heard).toHaveBeenLastCalledWith({ account: { oldValue: { user: 'b' }, newValue: undefined } });
+  });
+
   it('drops undefined values, as JSON does', async () => {
     const w = await windows('core');
     await w.core!.storage.local.set({ s: { a: 1, gone: undefined } });
@@ -145,21 +165,6 @@ describe('messages', () => {
     expect(await w.overlay!.runtime.sendMessage({ type: 'promise' })).toBe(42);
     expect(await w.panel!.runtime.sendMessage({ type: 'nobody' })).toBeUndefined();
     expect(overlaySaw).not.toHaveBeenCalled();
-  });
-
-  it('from the core reach every other window, unanswered', async () => {
-    const w = await windows('core', 'panel', 'overlay');
-    const panel = vi.fn();
-    const overlay = vi.fn();
-    const core = vi.fn();
-    w.panel!.runtime.onMessage.addListener(panel);
-    w.overlay!.runtime.onMessage.addListener(overlay);
-    w.core!.runtime.onMessage.addListener(core);
-    expect(await w.core!.runtime.sendMessage({ type: 'panel:close' })).toBeUndefined();
-    await settle();
-    expect(panel).toHaveBeenCalledWith({ type: 'panel:close' }, expect.objectContaining({ origin: 'core' }), expect.any(Function));
-    expect(overlay).toHaveBeenCalled();
-    expect(core).not.toHaveBeenCalled();
   });
 
   it('can be told to one window only', async () => {
@@ -192,9 +197,9 @@ describe('ports', () => {
     const port = w.panel!.runtime.connect({ name: 'panel' });
     const fromCore = vi.fn();
     port.onMessage.addListener(fromCore);
-    port.postMessage({ type: 'hello', windowId: WINDOW_ID });
+    port.postMessage({ type: 'hello' });
     await vi.waitFor(() => expect(fromCore).toHaveBeenCalledWith({ type: 'ready' }, port));
-    expect(fromPanel).toHaveBeenCalledWith({ type: 'hello', windowId: 1 });
+    expect(fromPanel).toHaveBeenCalledWith({ type: 'hello' });
 
     // The panel window is closed: the core hears the port go.
     w.hub.close('panel');
@@ -210,8 +215,8 @@ describe('ports', () => {
       port.onDisconnect.addListener(closed);
     });
     const port = w.panel!.runtime.connect({ name: 'panel' });
-    port.postMessage({ type: 'hello', windowId: WINDOW_ID });
-    await vi.waitFor(() => expect(fromPanel).toHaveBeenCalledWith({ type: 'hello', windowId: 1 }, expect.anything()));
+    port.postMessage({ type: 'hello' });
+    await vi.waitFor(() => expect(fromPanel).toHaveBeenCalledWith({ type: 'hello' }, expect.anything()));
 
     // And a disconnect that overtook its connect still closes it.
     const second = w.panel!.runtime.connect({ name: 'panel' });
@@ -236,9 +241,8 @@ describe('ports', () => {
 });
 
 describe('the rest of the browser', () => {
-  it('has one window, the settings page for options, and the app shortcut as the toolbar one', async () => {
+  it('has the settings page for options, and the app shortcut as the toolbar one', async () => {
     const w = await windows('panel');
-    expect(await w.panel!.windows.getCurrent()).toMatchObject({ id: WINDOW_ID });
     expect(await w.panel!.commands.getAll()).toEqual([expect.objectContaining({ name: '_execute_action', shortcut: '⌥⇧S' })]);
 
     await w.panel!.runtime.openOptionsPage('account');

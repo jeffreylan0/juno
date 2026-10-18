@@ -6,7 +6,7 @@
  */
 import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import { hardenLibraries } from './harden-libs';
 
 const here = (p: string) => resolve(__dirname, p);
@@ -20,13 +20,24 @@ const pages: Record<string, string> = {
 // The end-to-end tests select over a page with known pixels; it never ships.
 if (process.env.SAI_E2E === '1') pages.fixture = here('web/fixture.html');
 
-export default defineConfig({
+/** The account and hosted-answer addresses: https, or this computer while developing. */
+function checkAddresses(mode: string): void {
+  const env = loadEnv(mode, here('..'), 'WXT_');
+  for (const name of ['WXT_SUPABASE_URL', 'WXT_GATEWAY_URL']) {
+    const url = env[name]?.trim();
+    if (url && !/^https:\/\//.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(url)) {
+      throw new Error(`${name} must be an https:// address (it is ${url})`);
+    }
+  }
+}
+
+export default defineConfig(({ mode }) => (checkAddresses(mode), {
   // The package is the root, so the pages' /src/… scripts resolve alike in
   // development and in a build; the pages themselves are under web/.
   root: here('.'),
   // The repository's .env.local (see .env.example).
   envDir: here('..'),
-  envPrefix: ['WXT_', 'VITE_'],
+  envPrefix: ['WXT_'],
   // React and DOMPurify without their HTML-string and eval paths (harden-libs.ts).
   plugins: [react(), hardenLibraries()],
   resolve: {
@@ -45,4 +56,4 @@ export default defineConfig({
     target: ['es2022', 'safari17', 'chrome120'],
     rollupOptions: { input: pages },
   },
-});
+}));

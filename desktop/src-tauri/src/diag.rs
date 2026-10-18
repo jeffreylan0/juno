@@ -42,15 +42,22 @@ pub fn start() {
             let _ = fs::create_dir_all(dir);
         }
         if fs::metadata(&path).map(|m| m.len() > MAX_BYTES).unwrap_or(false) {
-            if let Ok(text) = fs::read_to_string(&path) {
-                let keep = &text[text.len() / 2..];
-                let from = keep.find('\n').map(|i| i + 1).unwrap_or(0);
-                let _ = fs::write(&path, &keep[from..]);
+            if let Ok(bytes) = fs::read(&path) {
+                let _ = fs::write(&path, newer_half(&bytes));
             }
         }
     }
     note(&format!("start: Juno {} on {} {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH));
     std::panic::set_hook(Box::new(|info| note(&format!("panic: {info}"))));
+}
+
+/// The newer half of a log, from a line's start. In bytes: a line is never
+/// cut inside a character (a localized error message), which would stop
+/// every start.
+fn newer_half(log: &[u8]) -> &[u8] {
+    let half = &log[log.len() / 2..];
+    let from = half.iter().position(|&b| b == b'\n').map_or(half.len(), |i| i + 1);
+    &half[from..]
 }
 
 /// Adds a line (and says it on stderr, for a terminal or a test).
@@ -95,6 +102,15 @@ pub fn fatal(what: &str) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_log_keeps_its_newer_half_from_a_line_start_whatever_the_text() {
+        // Lines of two-byte characters: the middle falls inside one.
+        let log = "é".repeat(7) + "\nderniers échecs\nmise à jour impossible\n";
+        let kept = newer_half(log.as_bytes());
+        assert_eq!(std::str::from_utf8(kept).unwrap(), "mise à jour impossible\n");
+        assert_eq!(newer_half(b"no line end"), b"");
+    }
 
     #[test]
     fn notes_are_single_bounded_lines() {

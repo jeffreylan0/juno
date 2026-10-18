@@ -50,23 +50,26 @@ export const BAR_STYLE = `
 /* A note or the settings widen the bar while open. */
 .bar.wide { width: min(460px, calc(100vw - 32px)); }
 .bar button { font: inherit; }
-/* ✕ | the modes | chats, ghost, gear (and Send). The two sides are as wide
-   as each other (buttons are 32 px, 2 px apart; Send 6 px off), so the modes
-   sit in the middle. While the panel has the chats, ghost and gear, they fold
-   away and the bar narrows with them, to ✕ and the modes, evenly padded. */
+/* ✕ on the left | the modes in the middle | chats, ghost, gear (and Send) on
+   the right, however wide the bar is (a note or the settings widen it). The
+   two sides share any room equally and are at least as wide as each other
+   (buttons are 32 px, 2 px apart; Send 6 px off), so the modes stay centred.
+   While the panel has the chats, ghost and gear, they fold away and the bar
+   narrows with them, to ✕ and the modes, evenly padded. */
 .row { display: flex; align-items: center; min-height: 52px; box-sizing: border-box; padding: 8px; }
-.start { display: flex; flex: none; width: 100px; }
-.bar:has(.ask.on) .start { width: 138px; }
+.start, .end { display: flex; flex: 1 1 0; align-items: center; }
+.start { min-width: 100px; justify-content: flex-start; }
+.end { justify-content: flex-end; }
+.bar:has(.ask.on) .start { min-width: 138px; }
 .chips { margin: 0 6px; }
-.end { display: flex; flex: none; align-items: center; }
 .end > * + * { margin-left: 2px; }
 .end > .ask { margin-left: 6px; }
-.bar.panel-open .start { width: 32px; }
-.bar.panel-open:has(.ask.on) .start { width: 38px; }
+.bar.panel-open .start { min-width: 32px; }
+.bar.panel-open:has(.ask.on) .start { min-width: 38px; }
 .bar.panel-open:not(:has(.ask.on)) .chips { margin-right: 0; }
 .bar.panel-open :is(.chats, .ghost, .gear) { width: 0; margin-left: 0; opacity: 0; visibility: hidden; pointer-events: none; }
 /* Folding takes as long as unfolding; a folded button is out of reach only once folded. */
-.start, .chips, .chats, .ghost, .gear { transition: width 220ms ease, margin 220ms ease, opacity 160ms ease, visibility 0s; }
+.start, .chips, .chats, .ghost, .gear { transition: min-width 220ms ease, width 220ms ease, margin 220ms ease, opacity 160ms ease, visibility 0s; }
 .bar.panel-open :is(.chats, .ghost, .gear) { transition: width 220ms ease, margin 220ms ease, opacity 120ms ease, visibility 0s 220ms; }
 @media (prefers-reduced-motion: reduce) { .start, .chips, .chats, .ghost, .gear { transition: none; } }
 /* Quiet round controls: the close on the left, chats, ghost and gear on the right. */

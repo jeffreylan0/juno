@@ -28,6 +28,6 @@ export const browser = createBrowser(transport, { openUrl: (url) => void openUrl
 setImageStore(new FileImageStore(transport));
 installFetch();
 installLinks();
-// window.close() closes the panel or settings window; the core and the
-// overlay are only ever hidden.
+// window.close() hides settings (the panel's own ✕ goes through the core:
+// panel/main.tsx); the other windows never close themselves.
 window.close = () => void transport.invoke('window_close').catch(() => {});

@@ -21,7 +21,7 @@ export const MAJOR_MODELS: Record<'anthropic' | 'openai', string[]> = {
 
 /**
  * Short names for the panel's picker, which shares a row with the macros in
- * a side panel that can be ~340 px wide. The vendor is the option group.
+ * a panel that can be ~340 px wide. The vendor is the option group.
  */
 export const SHORT_NAMES: Record<string, string> = {
   'claude-haiku-5-5': 'Haiku 5.5',

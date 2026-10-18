@@ -11,7 +11,7 @@
  * is the code macOS and Windows run.
  */
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -66,7 +66,7 @@ export class App {
     readonly port: number,
     private xvfb: ChildProcess,
     readonly app: ChildProcess,
-    private data: string,
+    readonly data: string,
   ) {
     for (const stream of [app.stdout, app.stderr]) stream?.on('data', (b: Buffer) => this.outputs.push(b.toString()));
   }
@@ -74,9 +74,10 @@ export class App {
   /**
    * A fresh app on a fresh display, with its core, overlay and panel pages loaded.
    * Started with --hidden unless `opened` (as the student opens it, when the
-   * bar comes straight up); `env` adds to its environment.
+   * bar comes straight up); `env` adds to its environment. The first-run
+   * setup is behind it unless `firstRun`.
    */
-  static async launch(opts: { opened?: boolean; env?: Record<string, string> } = {}): Promise<App> {
+  static async launch(opts: { opened?: boolean; firstRun?: boolean; env?: Record<string, string> } = {}): Promise<App> {
     const display = displays++;
     const xvfb = spawn('Xvfb', [`:${display}`, '-screen', '0', `${SCREEN.width}x${SCREEN.height}x24`, '-nolisten', 'tcp'], { stdio: 'ignore' });
     // Answering, not just there: a socket left by an X server killed earlier
@@ -87,6 +88,12 @@ export class App {
       return true;
     });
     const data = mkdtempSync(join(tmpdir(), 'sai-desktop-'));
+    if (!opts.firstRun) {
+      // Where the native core keeps settings (store.rs): <data>/<identifier>/store/local/settings.json.
+      const local = join(data, 'com.humanbn.juno', 'store', 'local');
+      mkdirSync(local, { recursive: true });
+      writeFileSync(join(local, 'settings.json'), JSON.stringify({ version: 6, setupDone: true }));
+    }
     const port = 47000 + display;
     const app = spawn(BINARY, opts.opened ? [] : ['--hidden'], {
       env: {
@@ -129,7 +136,8 @@ export class App {
     this.xvfb.kill('SIGTERM');
     await Promise.race([new Promise((r) => this.xvfb.once('exit', r)), sleep(2000)]);
     this.xvfb.kill('SIGKILL');
-    rmSync(this.data, { recursive: true, force: true });
+    // Retried: something the app started (a browser for a link) may still be writing there.
+    rmSync(this.data, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 
   get log(): string {
@@ -183,10 +191,6 @@ export class App {
     }
     await sleep(60);
     await this.xdo('mouseup', '1');
-  }
-
-  async screenshot(file: string): Promise<void> {
-    await run('import', ['-window', 'root', file], { env: { ...process.env, DISPLAY: `:${this.display}` } });
   }
 
   /** The current chat, saved or temporary. */

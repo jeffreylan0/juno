@@ -1,6 +1,6 @@
 /**
  * The selection modes as the student sees them: a name and an icon, shared by
- * the in-page bar and the panel so they always match.
+ * the bar and the panel so they always match.
  */
 import type { SelectionKind } from '@shared/payload';
 import type { Shapes } from './icons';
