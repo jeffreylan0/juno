@@ -13,11 +13,13 @@
 //!   smoothly; or as big as they last made it. Made hidden at start and kept: a selection only has to
 //!   show it, never wait for it to load. Closing it hides it and finishes
 //!   the chat.
-//! - `settings`: the settings page, a card in the middle of the screen. Made
-//!   hidden at start and kept, like the panel, so opening it only has to
-//!   show it; closing it hides it. Asked for before its page has drawn, it
-//!   waits for that (`window_show`), so it never flashes white or empty.
-//!   Opening it takes the bar away.
+//! - `settings`: the settings page, a card in the middle of the screen,
+//!   floating like the panel and opened above it. Made hidden at start and
+//!   kept, so opening it only has to show it; closing it hides it, and so
+//!   does summoning the bar (left open behind other apps, it would come
+//!   forward with the app). Asked for before its page has drawn, it waits
+//!   for that (`window_show`), so it never flashes white or empty. Opening
+//!   it takes the bar away.
 //!
 //! The panel and settings are cards like the bar, with no title bar to see
 //! (their top bar drags them): on macOS ordinary windows whose title bar is
@@ -44,7 +46,7 @@ pub const PANEL_WIDTH: f64 = 420.0;
 /// The panel's height before it is placed on a display (it starts at most of the display's: geometry.rs).
 pub const PANEL_HEIGHT: f64 = 560.0;
 /// Settings, CSS pixels (less on a small screen).
-const SETTINGS_SIZE: (f64, f64) = (760.0, 680.0);
+const SETTINGS_SIZE: (f64, f64) = (860.0, 700.0);
 
 /// Where the overlay is and what of it takes clicks.
 #[derive(Clone, Debug, Default)]
@@ -197,6 +199,7 @@ pub fn show_overlay(app: &AppHandle, state: &SharedOverlay, focus: bool) -> taur
         return Ok(());
     };
     unhide(app);
+    hide_settings(app);
     let window = overlay(app)?;
     let moved = state.lock().unwrap().display.as_ref() != Some(&display);
     if moved || !window.is_visible().unwrap_or(false) {
@@ -439,8 +442,12 @@ pub fn make_settings(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let window = card(app, SETTINGS, "web/settings.html", "Juno Settings")
         .inner_size(SETTINGS_SIZE.0, SETTINGS_SIZE.1)
         .min_inner_size(520.0, 420.0)
+        // At the panel's level: opened after it, so above it.
+        .always_on_top(true)
         .build()?;
     finish_card(&window);
+    #[cfg(target_os = "macos")]
+    mac::float_above_everything(&window, false);
     Ok(window)
 }
 
@@ -460,12 +467,17 @@ pub fn open_settings(app: &AppHandle, hash: Option<&str>) -> tauri::Result<()> {
     show_settings_soon(&window)
 }
 
-/// Hides settings; they are kept, and their page starts afresh for next time.
-pub fn close_settings(app: &AppHandle) -> tauri::Result<()> {
-    if let Some(w) = app.get_webview_window(SETTINGS) {
-        w.hide()?;
+/// Hides settings if they are open; they are kept, and their page starts afresh for next time.
+fn hide_settings(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(SETTINGS).filter(|w| w.is_visible().unwrap_or(false)) {
+        let _ = w.hide();
         let _ = app.emit_to(SETTINGS, "settings:closed", ());
     }
+}
+
+/// Settings' ✕ (or the system's close).
+pub fn close_settings(app: &AppHandle) -> tauri::Result<()> {
+    hide_settings(app);
     yield_focus(app);
     Ok(())
 }

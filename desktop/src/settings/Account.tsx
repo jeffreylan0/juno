@@ -1,13 +1,15 @@
 /**
  * Account: optional. Signing in (Google, or a code sent by email) is what
  * plans hang on: hosted answers and cloud storage, bought with Stripe
- * (lib/account/billing.ts) or given by hand (supabase/README.md). The
- * section is the account's dashboard: the plan and what is next for it,
- * hosted answers used this month, buying or managing it, cloud storage,
+ * (lib/account/billing.ts) or given by hand (supabase/README.md). At the
+ * top of settings (Dashboard.tsx), the account: signing in, or who is
+ * signed in, the plan and what is next for it, hosted answers used this
+ * month, buying or managing it. Further down, its settings: cloud storage,
  * deleting the account. Without a Supabase project in the build there is
- * no section at all.
+ * no account at all.
  */
 import { useEffect, useState, type FormEvent } from 'react';
+import { BRAND } from '@/brand';
 import { offers, openPortal, priceLabel, startCheckout, type Offer } from '@/lib/account/billing';
 import { ACCOUNTS } from '@/lib/account/config';
 import {
@@ -26,12 +28,19 @@ import type { AccountState } from '@/ui/useAccount';
 type Save = (patch: Partial<Settings>) => Promise<void>;
 
 
-export function AccountSection({ account, settings, save }: { account: AccountState; settings: Settings; save: Save }) {
+/** The dashboard's account card: signing in, or the account and its plan. */
+export function AccountCard({ account }: { account: AccountState }) {
   if (!ACCOUNTS || !account.ready) return null;
+  return account.user ? <SignedIn account={account} /> : <SignIn />;
+}
+
+/** Settings → Account: cloud storage and deleting the account, once signed in. */
+export function AccountSection({ account, settings, save }: { account: AccountState; settings: Settings; save: Save }) {
+  if (!ACCOUNTS || !account.user) return null;
   return (
-    <section id="account" data-testid="section-account">
+    <section id="account-settings" data-testid="section-account">
       <h2>Account</h2>
-      {account.user ? <SignedIn account={account} settings={settings} save={save} /> : <SignIn />}
+      <AccountSettings account={account} settings={settings} save={save} />
     </section>
   );
 }
@@ -138,16 +147,25 @@ export function SignIn() {
           {error}
         </p>
       )}
+      <small className="help">
+        By signing in, you agree to the{' '}
+        <a className="link" href={BRAND.terms} target="_blank" rel="noopener noreferrer">
+          terms
+        </a>{' '}
+        and the{' '}
+        <a className="link" href={BRAND.privacy} target="_blank" rel="noopener noreferrer">
+          privacy policy
+        </a>
+        .
+      </small>
     </div>
   );
 }
 
-export function SignedIn({ account, settings, save }: { account: AccountState; settings: Settings; save: Save }) {
+/** Who is signed in, the plan, hosted answers left, and buying or managing it. */
+function SignedIn({ account }: { account: AccountState }) {
   const user = account.user!;
   const ent = account.entitlement;
-  const [confirming, setConfirming] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState('');
   const [checkError, setCheckError] = useState('');
 
   // What the account gets changes on the server (a payment, a cancellation,
@@ -170,6 +188,36 @@ export function SignedIn({ account, settings, save }: { account: AccountState; s
     };
   }, [user.id]);
 
+  return (
+    <>
+      <div className="field" data-testid="signed-in">
+        <span className="key-row shortcut-row">
+          <span>
+            Signed in as <b data-testid="account-email">{user.email}</b>
+          </span>
+          <button type="button" className="secondary" onClick={() => void signOut()} data-testid="sign-out">
+            Sign out
+          </button>
+        </span>
+      </div>
+      {ent ? (
+        <PlanField ent={ent} />
+      ) : (
+        <p className={`help${checkError ? ' bad' : ''}`} data-testid="account-checking">
+          {checkError ? `Couldn't check your account: ${checkError}` : 'Checking…'}
+        </p>
+      )}
+    </>
+  );
+}
+
+/** Cloud storage (if the plan has it) and deleting the account. */
+function AccountSettings({ account, settings, save }: { account: AccountState; settings: Settings; save: Save }) {
+  const ent = account.entitlement;
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
+
   const remove = async () => {
     setDeleting(true);
     setError('');
@@ -183,43 +231,24 @@ export function SignedIn({ account, settings, save }: { account: AccountState; s
 
   return (
     <>
-      <div className="field" data-testid="signed-in">
-        <span className="key-row shortcut-row">
-          <span>
-            Signed in as <b data-testid="account-email">{user.email}</b>
-          </span>
-          <button type="button" className="secondary" onClick={() => void signOut()} data-testid="sign-out">
-            Sign out
-          </button>
-        </span>
-      </div>
-
-      {!ent ? (
-        <p className={`help${checkError ? ' bad' : ''}`} data-testid="account-checking">
-          {checkError ? `Couldn't check your account: ${checkError}` : 'Checking…'}
-        </p>
-      ) : (
-        <>
-          <PlanField ent={ent} />
-
-          <div className="field" data-testid="cloud">
-            <span className="field-label">Cloud storage</span>
-            {ent.cloud ? (
-              <>
-                <label className="check">
-                  <input type="checkbox" checked={settings.cloudSync} data-testid="cloud-sync" onChange={(e) => void save({ cloudSync: e.target.checked })} />
-                  Keep my chats in the cloud too
-                </label>
-                <small className="help">On every computer you sign in on.</small>
-                {settings.cloudSync && <SyncLine status={account.sync} />}
-              </>
-            ) : (
-              <p className="help" data-testid="no-cloud">
-                Not included in your plan.
-              </p>
-            )}
-          </div>
-        </>
+      {ent && (
+        <div className="field" data-testid="cloud">
+          <span className="field-label">Cloud storage</span>
+          {ent.cloud ? (
+            <>
+              <label className="check">
+                <input type="checkbox" checked={settings.cloudSync} data-testid="cloud-sync" onChange={(e) => void save({ cloudSync: e.target.checked })} />
+                Keep my chats in the cloud too
+              </label>
+              <small className="help">On every computer you sign in on.</small>
+              {settings.cloudSync && <SyncLine status={account.sync} />}
+            </>
+          ) : (
+            <p className="help" data-testid="no-cloud">
+              Not included in your plan.
+            </p>
+          )}
+        </div>
       )}
 
       <div className="field">
@@ -230,7 +259,7 @@ export function SignedIn({ account, settings, save }: { account: AccountState; s
         ) : (
           <div className="confirm-row">
             <span>
-              Delete your account and everything in the cloud?{ent?.billing?.active ? ' Your subscription ends now, without a refund.' : ''} Chats on this
+              Delete your account and everything in the cloud?{ent?.billing?.active ? ' Your plan ends now, without a refund.' : ''} Chats on this
               computer stay.
             </span>
             <button type="button" className="danger" disabled={deleting} onClick={() => void remove()} data-testid="confirm-delete-account">

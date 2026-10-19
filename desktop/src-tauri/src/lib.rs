@@ -11,6 +11,7 @@ mod capture;
 mod crop;
 mod diag;
 mod geometry;
+mod oauth;
 mod store;
 #[cfg(feature = "test-hook")]
 mod testhook;
@@ -152,13 +153,29 @@ fn key_status(window: WebviewWindow, state: State<Shared>) -> Res<vault::KeyStat
     Ok(vault::status(&state.store))
 }
 
-/// Settings → Answers: keeps a key (an empty one removes it). Every window
-/// hears that the keys changed (`keys:changed`), never what they are.
+#[derive(Serialize)]
+struct KeyKept {
+    /// Whose key it was ("anthropic", "openai"), from the key itself.
+    vendor: &'static str,
+    status: vault::KeyStatus,
+}
+
+/// Settings → Answers: keeps a key, for the company that issued it (vault.rs).
+/// Every window hears that the keys changed (`keys:changed`), never what they are.
 #[tauri::command(async)]
-fn key_set(app: AppHandle, window: WebviewWindow, state: State<Shared>, vendor: String, key: String) -> Res<vault::KeyStatus> {
+fn key_set(app: AppHandle, window: WebviewWindow, state: State<Shared>, key: String) -> Res<KeyKept> {
+    only(&window, &[wm::SETTINGS])?;
+    let (vendor, status) = vault::set(&state.store, &key)?;
+    app.emit("keys:changed", &status).map_err(err)?;
+    Ok(KeyKept { vendor: vendor.name(), status })
+}
+
+/// Settings → Answers → Remove.
+#[tauri::command(async)]
+fn key_remove(app: AppHandle, window: WebviewWindow, state: State<Shared>, vendor: String) -> Res<vault::KeyStatus> {
     only(&window, &[wm::SETTINGS])?;
     let vendor = vault::Vendor::parse(&vendor).ok_or("no such company")?;
-    let status = vault::set(&state.store, vendor, &key)?;
+    let status = vault::remove(&state.store, vendor)?;
     app.emit("keys:changed", &status).map_err(err)?;
     Ok(status)
 }
@@ -496,6 +513,14 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
+/// Settings → Account → Continue with Google: a one-time listener for
+/// Google's return, on this computer's own address (oauth.rs); its port.
+#[tauri::command(async)]
+fn auth_listen(app: AppHandle, window: WebviewWindow) -> Res<u16> {
+    only(&window, &[wm::SETTINGS])?;
+    oauth::listen(app).map_err(err)
+}
+
 /// Settings → Juno: where updating stands (updates.rs).
 #[tauri::command]
 fn update_status(window: WebviewWindow, updates: State<updates::Updates>) -> Res<updates::Status> {
@@ -727,6 +752,7 @@ pub fn run() {
             storage_remove,
             key_status,
             key_set,
+            key_remove,
             vendor_fetch,
             vendor_fetch_cancel,
             image_put,
@@ -756,6 +782,7 @@ pub fn run() {
             login_item_set,
             update_status,
             update_check,
+            auth_listen,
             diag_note,
         ])
         .build(tauri::generate_context!())

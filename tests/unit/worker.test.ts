@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { verifySession } from '../../worker/src/auth';
 import { readBody } from '../../worker/src/body';
 import { checkout, form, prices, webhook } from '../../worker/src/billing';
+import { googleToken } from '../../worker/src/google';
 import { LIMITS, anthropicToOpenAI, cacheScope, callVendor, parseAsk, scoped, toAnthropic } from '../../worker/src/models';
 import type { Env } from '../../worker/src/index';
 
@@ -413,6 +414,23 @@ describe('billing', () => {
     expect(await prices(billingEnv({ STRIPE_SECRET_KEY: '' }))).toEqual([]);
   });
 
+  it('takes a pass’s length from STRIPE_PRICES, so Stripe needs no metadata for it', async () => {
+    fakeServices({
+      'GET stripe/v1/prices': () => ({
+        data: [
+          { id: 'p_s', lookup_key: 'plus_semester', unit_amount: 499, currency: 'usd', type: 'one_time', recurring: null, metadata: {}, product: { name: 'Juno Plus', metadata: {} } },
+          { id: 'p_y', lookup_key: 'plus_year', unit_amount: 1199, currency: 'usd', type: 'one_time', recurring: null, metadata: {}, product: { name: 'Juno Plus', metadata: {} } },
+        ],
+      }),
+      'GET db/rest/v1/plans': () => [{ id: 'plus', name: 'Plus', monthly_questions: 3000, cloud: true }],
+    });
+    const list = await prices(billingEnv({ STRIPE_PRICES: 'plus_semester:120, plus_year:365' }));
+    expect(list.map((o) => [o.key, o.passDays, o.plan.id])).toEqual([
+      ['plus_semester', 120, 'plus'],
+      ['plus_year', 365, 'plus'],
+    ]);
+  });
+
   it('checks out a subscription for the signed-in account, once', async () => {
     let active = false;
     const calls = fakeServices({
@@ -442,5 +460,46 @@ describe('billing', () => {
     await expect(buy('not_offered')).rejects.toMatchObject({ status: 404 });
     active = true;
     await expect(buy('c_monthly')).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describe('Google sign-in for the app', () => {
+  const googleEnv = { GOOGLE_CLIENT_ID: 'id.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'GOCSPX-x' } as Env;
+  const ask = (body: unknown, e: Env = googleEnv) => googleToken(new Request('https://w/auth/google', { method: 'POST', body: JSON.stringify(body) }), e);
+  const good = { code: '4/0Ab-code_123', verifier: 'v'.repeat(43), redirect_uri: 'http://127.0.0.1:53682' };
+
+  it('turns a code sent back to this computer into an ID token, and nothing more', async () => {
+    const sent: URLSearchParams[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      expect(url).toBe('https://oauth2.googleapis.com/token');
+      sent.push(new URLSearchParams(String(init.body)));
+      return new Response(JSON.stringify({ id_token: 'eyJ.id.token', access_token: 'ya29.secret', refresh_token: '1//r' }), { status: 200 });
+    });
+    expect(await ask(good)).toEqual({ id_token: 'eyJ.id.token' });
+    expect(Object.fromEntries(sent[0]!)).toEqual({
+      client_id: 'id.apps.googleusercontent.com',
+      client_secret: 'GOCSPX-x',
+      code: good.code,
+      code_verifier: good.verifier,
+      redirect_uri: good.redirect_uri,
+      grant_type: 'authorization_code',
+    });
+  });
+
+  it('takes no code meant for anywhere but this computer, and nothing malformed', async () => {
+    const fetched = vi.fn();
+    vi.stubGlobal('fetch', fetched);
+    for (const redirect_uri of ['https://evil.example', 'http://localhost:53682', 'http://127.0.0.1:53682/x', 'http://127.0.0.2:1']) {
+      await expect(ask({ ...good, redirect_uri })).rejects.toMatchObject({ status: 400 });
+    }
+    await expect(ask({ ...good, verifier: 'short' })).rejects.toMatchObject({ status: 400 });
+    await expect(ask({ ...good, code: '' })).rejects.toMatchObject({ status: 400 });
+    await expect(ask(good, {} as Env)).rejects.toMatchObject({ status: 404 });
+    expect(fetched).not.toHaveBeenCalled();
+  });
+
+  it('says so when Google turns the code down', async () => {
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }));
+    await expect(ask(good)).rejects.toMatchObject({ status: 400, code: 'google' });
   });
 });

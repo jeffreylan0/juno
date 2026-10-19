@@ -25,12 +25,12 @@ Everything on the coding side is built: sign-in (Google, or a code sent by email
 | --- | --- |
 | Supabase project | sign-in, plans, the cloud copy, hosted-answer counts |
 | An email sender (SMTP) | the 6-digit sign-in codes |
-| Google Cloud OAuth client | "Continue with Google" |
+| Google Cloud OAuth clients (desktop, web) | "Continue with Google" |
 | Cloudflare Worker (`worker/`) | hosted answers, Stripe checkout, portal and webhook |
 | Stripe account | plans, payment, invoices, tax |
 | A domain (recommended) | the email sender (SPF/DKIM), the Worker's address, the privacy policy |
 
-Before starting, have ready: the business's legal details for Stripe (humanbn, its address, a bank account for payouts, a tax id), the outward contact address (info@humanbn.com: support, the stores, Stripe, Google's sign-in screen), and a privacy policy and terms of service at public URLs (for example `https://humanbn.com/privacy` and `https://humanbn.com/terms`). Open every service account below with the management address instead, which never appears in the apps, the store listings or this public repository (Stripe and the stores ask for them).
+Before starting, have ready: the business's legal details for Stripe (humanbn, its address, a bank account for payouts, a tax id), the outward contact address (info@humanbn.com: support, the stores, Stripe, Google's sign-in screen), and the privacy policy and terms of service at public URLs (`legal/` in this repository, published at `https://humanbn.com/privacy` and `https://humanbn.com/terms`). Open every service account below with the management address instead, which never appears in the apps, the store listings or this public repository (Stripe and the stores ask for them).
 
 ## 1. Supabase project
 
@@ -48,22 +48,23 @@ Before starting, have ready: the business's legal details for Stripe (humanbn, i
 
 1. **Authentication → Sign In / Providers → Email**: enabled; *Email OTP length* **8** (the apps accept 6–10; each digit makes guessing ten times harder); *Email OTP expiration* **600** s (10 minutes, NIST SP 800-63B's limit for a one-time code); *Confirm email* on; *Secure password change* on. The apps never use passwords: leave *Allow new users to sign up* on (codes create accounts) but don't add a password sign-in anywhere. **Allow anonymous sign-ins** stays off.
    **Authentication → Rate Limits**: keep the defaults or lower them: emails sent per hour (codes), token verifications per 5 minutes per IP, token refreshes. They are what stops someone guessing codes or burning your email quota.
-2. **Authentication → Emails → Templates**: in both **Magic link** and **Confirm signup**, put the code in the message, for example:
-
-   ```html
-   <h2>Your Juno code</h2>
-   <p>Enter this code in Juno's settings: <strong>{{ .Token }}</strong></p>
-   <p>It works once and expires within an hour. If you didn't ask for it, ignore this email.</p>
-   ```
-
-   Without `{{ .Token }}` the email carries only a link, which the apps do not use. Add a line such as *Never share this code. Juno will never ask you for it.*: a code is the whole sign-in.
+2. ★ **Authentication → Emails → Templates**: open **Magic link**, set the subject to *Your Juno sign-in code*, and replace the whole message body with the contents of [`templates/code.html`](templates/code.html). Save, then do the same for **Confirm signup** (a new address gets that one; an address that has signed in before gets Magic link). Supabase sends a code and a link from the same template, and the default template shows only the link (`{{ .ConfirmationURL }}`), which the app can't use: the code appears only where the template says `{{ .Token }}`. Send yourself a code to check: the email should show eight digits and no link.
 3. **Authentication → Emails → SMTP Settings**: a real sender (Resend, Postmark, Amazon SES, …), sending as `Juno <info@humanbn.com>` (or a `no-reply@humanbn.com` that replies go nowhere from) with humanbn.com's SPF, DKIM and DMARC records set. Supabase's built-in sender only reaches members of your Supabase team, a few emails an hour.
 
 ## 3. Google sign-in
 
-1. Google Cloud Console → **Google Auth Platform → Branding / Audience**: an External app named Juno, with info@humanbn.com as the support email, the privacy policy and terms URLs, and `humanbn.com` as an authorized domain; scopes `openid`, `email`, `profile`. While it is in *Testing* only the test users you list can sign in; publish it for everyone (basic scopes need no review).
-2. **Clients → Create client → Web application**. Authorized redirect URI: `https://<ref>.supabase.co/auth/v1/callback`.
-3. Supabase → **Authentication → Sign In / Providers → Google**: enable, paste the client ID and secret.
+Google's sign-in page names whoever it sends the student back to. Sent back to Supabase, it says *Sign in to `<ref>.supabase.co`*. So the app runs Google's sign-in itself with its own **desktop client**: Google sends the browser back to a one-time listener on the student's own computer (`http://127.0.0.1:<port>`, RFC 8252), the Worker trades the code for Google's ID token (the client secret lives there), and Supabase signs in with that token. Nothing on Google's page names supabase.co. Without the desktop client (no `WXT_GOOGLE_CLIENT_ID` in the build), the app falls back to Supabase's own Google page.
+
+1. Google Cloud Console → **Google Auth Platform**:
+   - **Branding**: app name *Juno*, a logo, info@humanbn.com as the support email, the home page (`https://humanbn.com`), privacy policy and terms URLs (`legal/`, published at `https://humanbn.com/privacy` and `/terms`), and `humanbn.com` as an authorized domain (add it first).
+   - **Audience**: External. While it is in *Testing* only the test users you list can sign in; **Publish app** for everyone (the scopes below need no review).
+   - **Data access**: `openid` and `email` (the app asks for nothing else; Supabase's own page, the fallback, also asks for `profile`).
+2. **Clients → Create client → Desktop app**, named Juno. Keep its client ID and secret:
+   - In `worker/`: put the client ID in `GOOGLE_CLIENT_ID` in `wrangler.toml`, then `npx wrangler secret put GOOGLE_CLIENT_SECRET` and `npx wrangler deploy` (after step 5's first deploy).
+   - The build: the same client ID as `WXT_GOOGLE_CLIENT_ID` (step 7). It is public by design; the secret never goes into a build.
+3. **Clients → Create client → Web application**, for Supabase (and the fallback). Authorized redirect URI: `https://<ref>.supabase.co/auth/v1/callback`.
+4. Supabase → **Authentication → Sign In / Providers → Google**: enable; paste the **web** client's ID and secret; and in **Client IDs** add the desktop client's ID after the web one (comma separated), so Supabase takes ID tokens Google issued to the app. Leave *Skip nonce checks* off: the app sends a nonce, and Supabase checks it.
+5. **Branding → Verify branding**: Google shows the name *Juno* and its logo only once it has checked that humanbn.com is yours (verify it in Google Search Console with the same Google account) and that the home page names *Juno* and links the same privacy policy. It usually takes minutes, sometimes a few business days. Until then Google's page shows less (no logo).
 
 ## 4. Redirect URLs
 
@@ -75,9 +76,7 @@ Supabase only sends a sign-in back to addresses on its list. **Authentication �
 
 Use this exact address, not a wildcard. It is safe to list: sign-in uses PKCE, so a code that reached another program would be useless without the secret the app kept. If the list still has the retired browser extension's addresses (`…chromiumapp.org/**`, `…extensions.allizom.org/**`), remove them.
 
-In the app, *Continue with Google* opens Google in the student's browser; at the end the browser asks to open Juno, and the app finishes signing in. macOS learns the `com.humanbn.juno://` link from the app bundle (`pnpm app` or a release build, not `pnpm dev`); Windows registers it when the app first runs.
-
-Safari has no `identity` API: there, email codes are the way in.
+This address is the fallback's (step 3): *Continue with Google* opens Supabase's Google page in the student's browser; at the end the browser asks to open Juno, and the app finishes signing in. macOS learns the `com.humanbn.juno://` link from the app bundle (`pnpm app` or a release build, not `pnpm dev`); Windows registers it when the app first runs. With the desktop client, the browser comes back to the app's own listener instead and says *Signed in. You can close this tab.*
 
 ## 5. The Worker
 
@@ -100,14 +99,14 @@ Optional: an **AI Gateway** named `juno` (Cloudflare → AI → AI Gateway) give
 Do all of this in **test mode** first (the toggle at the top of the dashboard), try it end to end, then repeat the starred steps in live mode.
 
 1. **Activate the account** for humanbn: business details, bank account, and under **Settings → Public details** the name students see (Juno), info@humanbn.com as the support email, and the privacy policy and terms URLs. **Settings → Branding**: icon and colours (the checkout page uses them).
-2. ★ **The product and its prices** (Product catalog → Add product): *Juno Plus*, with metadata `plan` = `plus`. Add two prices, each with a **lookup key** (under *More options*):
+2. ★ **The product and its prices** (Product catalog → Add product): *Juno Plus*. Add two prices, each **One-time**, each with a **lookup key** (under *More options* or *Advanced*; it can also be added afterwards from the price's page):
 
-   | Price | Type | Lookup key | Metadata |
-   | --- | --- | --- | --- |
-   | $4.99 for a semester | One-time | `plus_semester` | `pass_days` = `120` |
-   | $11.99 for a year | One-time | `plus_year` | `pass_days` = `365` |
+   | Price | Type | Lookup key |
+   | --- | --- | --- |
+   | $4.99 for a semester | One-time | `plus_semester` |
+   | $11.99 for a year | One-time | `plus_year` |
 
-   Both are passes: paid once, Plus for `pass_days` days, nothing renews, so a student never meets a charge they forgot. Why these prices: README.md, *Plans*. The apps show whatever prices these keys name, in the order of `STRIPE_PRICES` in `worker/wrangler.toml`. To change a price later, make a new price and move the lookup key to it (*Transfer lookup key*). The Worker still handles subscriptions (a recurring price with a lookup key, added to `STRIPE_PRICES`), should you ever want one.
+   No metadata is needed: the Worker gives Plus for any of them, and how long each pass lasts is written next to its key in `worker/wrangler.toml` (`STRIPE_PRICES = "plus_semester:120,plus_year:365"`). Both are passes: paid once, Plus for that many days, nothing renews, so a student never meets a charge they forgot. Why these prices: README.md, *Plans*. The apps show whatever prices these keys name, in the order of `STRIPE_PRICES` in `worker/wrangler.toml`. To change a price later, make a new price and move the lookup key to it (*Transfer lookup key*). The Worker still handles subscriptions (a recurring price with a lookup key, added to `STRIPE_PRICES`), should you ever want one.
 3. **Settings → Billing → Customer portal**: allow *Update payment methods* and *View invoice history* (receipts for passes). Save.
 4. **Settings → Billing → Subscriptions and emails**: turn on Smart Retries, and the emails for failed payments and expiring cards, so a declined card is retried before anything ends. Set what happens *if all retries for a payment fail* to **Cancel the subscription** (not "leave it past due", which would keep Plus on unpaid for a whole period). (While Stripe retries, the account keeps Plus and Settings tells the student to update their card.)
 5. **Tax**: Stripe Tax (**Tax → Set up**) registers where you must collect sales tax or VAT and adds it at checkout; then set `STRIPE_TAX = "on"` in `worker/wrangler.toml` and deploy. If you would rather not handle sales tax and VAT registrations yourself, a merchant of record (Paddle, Lemon Squeezy) does it for a larger fee, but that would replace `worker/src/billing.ts`; decide before launch.
@@ -131,11 +130,12 @@ Create `.env.local` at the root of the repository (gitignored):
 WXT_SUPABASE_URL=https://<ref>.supabase.co
 WXT_SUPABASE_KEY=sb_publishable_...
 WXT_GATEWAY_URL=https://api.<your domain>      # the Worker (step 5)
+WXT_GOOGLE_CLIENT_ID=<id>.apps.googleusercontent.com   # the desktop client (step 3)
 ```
 
 Then build as usual (`pnpm build`). The publishable key is public by design; row level security protects each account's data.
 
-**The test builds made on GitHub** (the *Test build* workflow) don't read `.env.local`. Give them the same three values as **Actions variables** (not secrets: they are public): GitHub → the repository → Settings → Secrets and variables → Actions → *Variables* → *New repository variable*, once each for `WXT_SUPABASE_URL`, `WXT_SUPABASE_KEY` and `WXT_GATEWAY_URL`. Then run *Test build* again (or push a `desktop-v…` tag): the run's summary says *Accounts are in this build*, and Settings shows an **Account** section. A build without them has no accounts at all. Both addresses must be `https://` (the build refuses anything else but `localhost`).
+**The test builds made on GitHub** (the *Test build* workflow) don't read `.env.local`. Give them the same four values as **Actions variables** (not secrets: they are public): GitHub → the repository → Settings → Secrets and variables → Actions → *Variables* → *New repository variable*, once each for `WXT_SUPABASE_URL`, `WXT_SUPABASE_KEY`, `WXT_GATEWAY_URL` and `WXT_GOOGLE_CLIENT_ID`. Then run *Test build* again (or push a `desktop-v…` tag): the run's summary says *Accounts are in this build*, and Settings shows an **Account** section. A build without the first two has no accounts at all, and one without the Google client ID signs in with Google through Supabase's page. Both addresses must be `https://` (the build refuses anything else but `localhost`).
 
 ## 8. Giving an account a plan by hand
 
@@ -164,13 +164,12 @@ Cloud storage copies saved chats and their screenshots both ways; temporary chat
 
 ## 10. Before launch
 
-- **Legal**: privacy policy (what is stored, where, for how long; who processes it: Supabase, Cloudflare, Stripe, Anthropic, OpenAI), terms of service with the refund policy, and 13+ in the terms (COPPA); a data agreement path if schools buy (FERPA). Any app store's data disclosures must match.
+- **Legal**: the privacy policy and terms in `legal/`, with their blanks filled (`legal/README.md`: the email sender, the Supabase region, backup retention, the refund window, the governing state), read by a lawyer and published; a data agreement path if schools buy (FERPA). Any app store's data disclosures must match.
 - **Abuse**: free accounts are one email away. Before giving `free` any hosted answers, turn on **Authentication → Attack Protection → CAPTCHA** (Cloudflare Turnstile) in Supabase (the apps' sign-in will need to pass the token: a small change, not built yet) and rate limits in the AI Gateway. The Worker already limits each account to 10 hosted answers a minute and refuses requests bigger than a long chat (`worker/src/models.ts`); the database caps what one account may keep in the cloud (`cloud_limits()` in the migration: 5,000 chats, 20,000 screenshots).
 - **Database**: **Project Settings → Database → SSL Configuration**: *Enforce SSL* on. **Network Restrictions**: the apps and the Worker use only the Data API, so allow direct Postgres connections from nowhere (or only your own address while you work). **Advisors → Security Advisor**: run it after every migration; it should flag nothing but the functions signed-in students are meant to call (`my_account`, `push_chats`, `delete_all_chats`, `delete_me`, `has_cloud`, `screenshot_room`), which check `auth.uid()` themselves.
 - **Money**: a monthly spend limit on the Anthropic and OpenAI workspaces the Worker uses; Stripe Radar's default rules on.
 - **Operations**: Supabase Pro (daily backups) and its usage alerts; the Worker's logs (Cloudflare → Workers → juno → Logs) for failed webhooks; Stripe → Developers → Webhooks shows every delivery and can resend one.
 - **Keys**: rotate any secret that was ever pasted anywhere but `wrangler secret put` and the Supabase dashboard. The Worker's secret key is all-powerful outside the tables it was granted (Supabase Auth's admin API, every screenshot): if it may have leaked, make a new one in **Project Settings → API Keys**, `wrangler secret put SUPABASE_SECRET_KEY`, then delete the old one. The same for the Stripe restricted key and webhook secret, and the AI keys.
-- **Privacy policy**: say that backups (and Supabase's auth audit log, which keeps emails and IP addresses) hold a deleted account for their retention period, and how long that is on your plan.
 
 ## Checking it locally
 

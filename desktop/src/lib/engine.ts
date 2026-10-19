@@ -42,6 +42,7 @@ import { deletePartImages, hydrateParts } from './images';
 import type { RuntimeMessage, SelectionDoneMsg } from './messages';
 import { buildPlan, type CaptureResult } from './planner';
 import { ProviderError, callModel, type ProviderContext, type Vault } from './providers';
+import { countAnswer } from './usage';
 import { testKey } from './providers/byok';
 import { chooseRoute } from './router';
 import { STATUS_KEY, STATUS_TTL_MS, checkStatus, statusFromAnswer, type AiStatus } from './status';
@@ -430,6 +431,8 @@ export class ChatEngine {
         clearInterval(timer);
       }
       await finish(done, { touch: true, index: true });
+      // Counted for this month's numbers in settings (lib/usage.ts): only answers that came, and only a key's cost.
+      if (!done.error && text.trim()) void this.serial(() => countAnswer(current.provider === 'byok' ? done.usage?.costUsd : 0)).catch(() => {});
     } catch (err) {
       console.warn('[selection-ai] ask failed', err);
       if (answerId) await finish({ streaming: false, error: (err as Error).message }, { touch: true, index: true });

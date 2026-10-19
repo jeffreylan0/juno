@@ -13,9 +13,12 @@ compatibility_flags = ["nodejs_compat"]
 AI_GATEWAY_ID = ""
 # The prices on offer: Stripe lookup keys, in the order the apps show them
 # (supabase/README.md). Empty: no plans are offered.
-STRIPE_PRICES = "plus_semester,plus_year"
+STRIPE_PRICES = "plus_semester:120,plus_year:365"
 # "on" once Stripe Tax is set up in the Stripe dashboard.
 STRIPE_TAX = ""
+# Google sign-in's desktop client id (public; supabase/README.md, step 3).
+# Its secret: npx wrangler secret put GOOGLE_CLIENT_SECRET.
+GOOGLE_CLIENT_ID = ""
 
 # Hosted answers a minute per account (Workers Rate Limiting): a script
 # can't spend a month's answers in an afternoon. The id is any number unique

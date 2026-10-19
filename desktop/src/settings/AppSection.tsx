@@ -1,8 +1,8 @@
 /**
  * Settings → Juno: the version and updating (src-tauri/src/updates.rs),
- * opening at login, and Quit. The menu bar icon starts a selection when
- * clicked, so quitting lives here (and in that icon's right-click menu, and
- * ⌘Q in the app's windows).
+ * opening at login, the privacy policy and terms, and Quit. The menu bar
+ * icon starts a selection when clicked, so quitting lives here (and in that
+ * icon's right-click menu, and ⌘Q in the app's windows).
  */
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
@@ -94,10 +94,26 @@ export function AppSection({ settings, save }: { settings: Settings; save: (patc
         </label>
       )}
       {loginError && <small className="help bad">Couldn't change this. Try again.</small>}
+      <Legal />
       <button type="button" className="secondary" data-testid="quit" onClick={() => void invoke('quit')}>
         Quit {BRAND.name}
         {MAC && <kbd className="quit-key">⌘Q</kbd>}
       </button>
     </div>
+  );
+}
+
+/** The privacy policy and terms (legal/ in the repository), on the maker's site. */
+function Legal() {
+  return (
+    <small className="help" data-testid="legal">
+      <a className="link" href={BRAND.privacy} target="_blank" rel="noopener noreferrer">
+        Privacy policy
+      </a>{' '}
+      ·{' '}
+      <a className="link" href={BRAND.terms} target="_blank" rel="noopener noreferrer">
+        Terms
+      </a>
+    </small>
   );
 }

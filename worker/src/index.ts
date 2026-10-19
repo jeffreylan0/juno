@@ -6,6 +6,7 @@
  * security).
  *
  * Routes:
+ *   POST /auth/google       Google sign-in's code → an ID token (google.ts)
  *   GET  /me                what the account gets (plan, cloud storage, hosted answers, billing)
  *   POST /ask               a streamed answer (OpenAI-compatible SSE), counted against the plan
  *   GET  /billing/prices    plans on offer          (billing.ts, as are the next five)
@@ -21,9 +22,11 @@
  *   ANTHROPIC_API_KEY, OPENAI_API_KEY
  *   STRIPE_SECRET_KEY     a restricted key (supabase/README.md)
  *   STRIPE_WEBHOOK_SECRET the webhook endpoint's signing secret (whsec_…)
+ *   GOOGLE_CLIENT_SECRET  the Google desktop sign-in client's secret (supabase/README.md, step 3)
  */
 import { stillSignedIn, verifySession, type Session } from './auth';
 import { BillingError, checkout, close, donePage, portal, prices, webhook } from './billing';
+import { googleToken } from './google';
 import { readBody } from './body';
 import { BadRequest, cacheScope, callVendor, parseAsk } from './models';
 import { refundAnswer, useAnswer } from './quota';
@@ -42,6 +45,9 @@ export interface Env {
   STRIPE_PRICES: string;
   /** "on": Stripe Tax works out and adds sales tax / VAT at checkout. */
   STRIPE_TAX: string;
+  /** Google sign-in's desktop client (wrangler.toml) and its secret; empty: the app uses Supabase's sign-in page. */
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
   /** Hosted answers a minute per account (wrangler.toml [[ratelimits]]); absent in tests. */
   ASK_LIMIT?: RateLimit;
 }
@@ -67,6 +73,7 @@ export default {
       if (url.pathname === '/stripe/webhook' && request.method === 'POST') return await webhook(request, env);
       if (url.pathname === '/billing/prices' && request.method === 'GET') return json(await prices(env));
       if (url.pathname === '/billing/done' && request.method === 'GET') return donePage(request);
+      if (url.pathname === '/auth/google' && request.method === 'POST') return json(await googleToken(request, env));
 
       const session = await verifySession(request, env);
       if (!session) return error(401, 'Sign in again.', 'signed-out');

@@ -3,7 +3,6 @@
  * warm paper, near-black ink, clay for what acts). Tokens live at the top.
  */
 :root {
-  color-scheme: light dark;
   --bg: #faf9f5;
   --fg: #141413;
   --muted: #73726c;
@@ -19,20 +18,18 @@
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
   font-size: 14px;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #262624;
-    --fg: #f5f4ef;
-    --muted: #a6a39b;
-    --line: #3d3d3a;
-    --accent: #d97757;
-    --accent-bg: #3b2c25;
-    --surface: #30302e;
-    --hover: #3a3a37;
-    --ok: #8fc88a;
-    --bad: #f2998b;
-    --warn: #e7c46a;
-  }
+:root[data-scheme='dark'] {
+  --bg: #262624;
+  --fg: #f5f4ef;
+  --muted: #a6a39b;
+  --line: #3d3d3a;
+  --accent: #d97757;
+  --accent-bg: #3b2c25;
+  --surface: #30302e;
+  --hover: #3a3a37;
+  --ok: #8fc88a;
+  --bad: #f2998b;
+  --warn: #e7c46a;
 }
 
 * { box-sizing: border-box; }
@@ -42,11 +39,9 @@ body { margin: 0; background: var(--bg); color: var(--fg); font-size: 1rem; }
 
 /* A sticky header: the name, the sections, and "Saved". */
 .top { position: sticky; top: 0; z-index: 2; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
-.top-inner { max-width: 680px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.top-inner { max-width: 860px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 h1 { font-size: 15px; font-weight: 600; margin: 0; }
-.tabs { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
-.tabs a { color: var(--muted); text-decoration: none; font-size: 13px; padding: 5px 10px; border-radius: 8px; transition: background-color 120ms ease, color 120ms ease; }
-.tabs a:hover { color: var(--fg); background: var(--hover); }
+.top .spacer { flex: 1; }
 .close {
   display: flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px; padding: 0;
   border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer;
@@ -56,7 +51,29 @@ h1 { font-size: 15px; font-weight: 600; margin: 0; }
 .saved { font-size: 12px; color: var(--ok); opacity: 0; transition: opacity 200ms ease; min-width: 3em; text-align: right; }
 .saved.on { opacity: 1; }
 
-.options { max-width: 680px; margin: 0 auto; padding: 20px 20px 80px; }
+.options { max-width: 860px; margin: 0 auto; padding: 20px 20px 80px; }
+
+/* The dashboard: the account and this month's answers, side by side. */
+.dashboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 0; padding: 0; background: none; border: 0; }
+.dash-card { display: flex; flex-direction: column; gap: 12px; padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.dash-big { font-size: 26px; font-weight: 600; margin: 0; }
+.dash-who { margin-top: auto; }
+
+/* The settings, with a menu of them at the side once they are reached. */
+.layout { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 20px; align-items: start; }
+.side { position: sticky; top: 64px; margin-top: 20px; display: flex; flex-direction: column; gap: 2px; opacity: 0; transform: translateY(-6px); pointer-events: none; transition: opacity 220ms ease, transform 220ms ease; }
+.side.on { opacity: 1; transform: none; pointer-events: auto; }
+.side a { color: var(--muted); text-decoration: none; font-size: 13px; padding: 6px 10px; border-radius: 8px; transition: background-color 120ms ease, color 120ms ease; }
+.side a:hover { color: var(--fg); background: var(--hover); }
+.side a.here { color: var(--fg); background: var(--accent-bg); }
+@media (max-width: 720px) { .layout { grid-template-columns: minmax(0, 1fr); } .side { display: none; } }
+@media (prefers-reduced-motion: reduce) { .side { transition: none; } }
+
+/* Light, dark or as the system is. */
+.segments { display: inline-flex; align-self: flex-start; padding: 2px; gap: 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.segments button { font: inherit; font-size: 13px; padding: 5px 14px; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; }
+.segments button:hover { color: var(--fg); }
+.segments button[aria-checked='true'] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
 
 section {
   display: flex; flex-direction: column; gap: 16px;
@@ -124,7 +141,6 @@ button.danger { border: 0; background: var(--bad); color: #fff; }
 button.primary { font: inherit; font-weight: 600; padding: 9px 18px; border: 0; border-radius: var(--radius); background: var(--accent); color: var(--on-accent, #fff); cursor: pointer; }
 
 /* The first-run setup (Setup.tsx). */
-.setup .spacer { flex: 1; }
 .setup-end { display: flex; align-items: center; gap: 16px; margin-top: 20px; }
 /* A saved key, by its last four characters only. */
 .key-saved { font-size: 13px; color: var(--muted); }

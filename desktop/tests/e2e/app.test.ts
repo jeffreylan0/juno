@@ -47,17 +47,22 @@ async function waiting() {
 /**
  * The waiting bar once the panel is open, as the native core knows it: it
  * narrows then (chats, ghost and gear are the panel's), so a position read
- * before that misses it.
+ * before that misses it. The narrowing is animated, so the bar's width is
+ * read again each time, and taken once the core has had it for two looks
+ * running (a slow machine can be mid-animation when the buttons are gone).
  */
 async function settledBar() {
   await waitFor('the panel', async () => (await app.window('panel'))?.visible);
-  const width = await waitFor('the bar without chats, ghost and gear', async () => {
-    const l = await barLayout();
-    return l.shown.length === 0 ? l.bar.width : null;
-  });
+  let before = '';
   const o = await waitFor('the narrower bar told to the core', async () => {
+    const l = await barLayout();
     const o = await app.overlay();
-    return o.visible && !o.interactive && o.regions[0] && Math.abs(o.regions[0].width - width) <= 2 ? o : null;
+    const r = o.regions[0];
+    const told = l.shown.length === 0 && o.visible && !o.interactive && !!r && Math.abs(r.width - l.bar.width) <= 2;
+    const now = told ? JSON.stringify(r) : '';
+    const settled = told && now === before;
+    before = now;
+    return settled ? o : null;
   });
   return o.regions[0]!;
 }
@@ -268,7 +273,7 @@ it('the first time the app is opened, setup comes up instead of the bar: pick wh
   expect((await app.overlay()).visible).toBe(false);
   // No made-up answers to pick: a key, a local model (or, in builds with accounts, an account).
   const cards = await app.read<string[]>('settings', `[...document.querySelectorAll('[data-testid=setup] .card')].map((c) => c.dataset.testid)`);
-  expect(cards.slice(0, 3)).toEqual(['setup-claude', 'setup-chatgpt', 'setup-local']);
+  expect(cards.slice(0, 2)).toEqual(['setup-key', 'setup-local']);
   expect(await app.read('settings', `document.querySelector('[data-testid=setup-start]').disabled`)).toBe(true);
 
   const model = await fakeModelServer();
@@ -815,25 +820,34 @@ it('the gear on the bar opens settings: the app’s own shortcut, no blocked sit
     app.read('settings', `(() => { const top = document.getElementById('privacy').getBoundingClientRect().top; return top >= 0 && top < 150; })()`),
   );
   expect(await app.read('settings', 'location.hash')).toBe('#privacy');
+
+  // Left open, settings go when the bar is summoned (the menu bar icon, the
+  // shortcut): they come back only from a settings button.
+  await app.summon();
+  await armed();
+  expect((await app.window('settings'))?.visible).toBe(false);
 });
 
 it('an API key goes in once and no page can read it back: kept privately, sent by the native core only to its own company', async () => {
   await app.eval('core', `browser.runtime.openOptionsPage('answers')`);
-  await waitFor('settings', () => app.read('settings', `!!document.querySelector('[data-testid=answer-claude]')`), 20_000);
-  await app.eval('settings', `document.querySelector('[data-testid=answer-claude] input').click()`);
+  await waitFor('settings', () => app.read('settings', `!!document.querySelector('[data-testid=answer-key]')`), 20_000);
+  await app.eval('settings', `document.querySelector('[data-testid=answer-key] input').click()`);
   await waitFor('the key field', () => app.read('settings', `!!document.querySelector('[data-testid=key-input]')`));
+  const type = (text: string) =>
+    app.eval(
+      'settings',
+      `(() => {
+        const input = document.querySelector('[data-testid=key-input]');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(text)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        document.querySelector('[data-testid=save-key]').click();
+      })()`,
+    );
+  const saved = () => app.read<string | null>('settings', `document.querySelector('[data-testid=key-saved]')?.textContent ?? null`);
   const key = 'sk-ant-api03-e2e-not-a-real-key-WXYZ';
-  await app.eval(
-    'settings',
-    `(() => {
-      const input = document.querySelector('[data-testid=key-input]');
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(key)});
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    })()`,
-  );
-  await app.eval('settings', `document.querySelector('[data-testid=save-key]').click()`);
-  // Shown back by its last four characters only; nothing on the page holds it.
-  await waitFor('the key kept', () => app.read('settings', `document.querySelector('[data-testid=key-saved]')?.textContent === '…WXYZ'`));
+  await type(key);
+  // Told apart by the key itself, and shown back by its last four characters only; nothing on the page holds it.
+  await waitFor('the key kept', async () => (await saved()) === 'Anthropic …WXYZ');
   expect(await app.read('settings', `document.documentElement.outerHTML.includes(${JSON.stringify(key)})`)).toBe(false);
   // Checked at once, by the native core: Anthropic turns the made-up key down (or, offline, can't be reached).
   await waitFor('the check', () => app.read('settings', `!!document.querySelector('[data-testid=key-status]')`), 30_000);
@@ -852,7 +866,7 @@ it('an API key goes in once and no page can read it back: kept privately, sent b
   // Nor write or remove it behind settings' back.
   expect(await tried('settings', `browser.storage.local.set({ keys: { anthropic: 'sk-x' } })`)).toMatch(/^refused/);
   expect(await tried('core', `browser.storage.local.remove('keys')`)).toMatch(/^refused/);
-  expect(await tried('core', `window.__TAURI_INTERNALS__.invoke('key_set', { vendor: 'anthropic', key: 'sk-x' })`)).toMatch(/^refused/);
+  expect(await tried('core', `window.__TAURI_INTERNALS__.invoke('key_set', { key: 'sk-ant-api03-x' })`)).toMatch(/^refused/);
   // Only the core sends with it, and only to ask or list models at the company's own API.
   const send = (label: string, url: string, method = 'GET') =>
     tried(label, `window.__TAURI_INTERNALS__.invoke('vendor_fetch', { vendor: 'anthropic', url: '${url}', method: '${method}', body: null, onBody: '__CHANNEL__:4242' })`);
@@ -863,9 +877,27 @@ it('an API key goes in once and no page can read it back: kept privately, sent b
   expect(await send('core', 'http://api.anthropic.com/v1/models')).toMatch(/^refused/);
   expect(readFileSync(secrets, 'utf8')).toContain(key);
 
-  // Removed, it is gone from the disk too.
+  // An OpenAI key in the same field is kept as OpenAI's, and answers come from OpenAI; the Anthropic one stays, offered.
+  const openaiKey = 'sk-proj-e2e-not-a-real-key-1234';
+  await app.eval('settings', `document.querySelector('[data-testid=add-key]').click()`);
+  await type(openaiKey);
+  await waitFor('the OpenAI key kept', async () => (await saved()) === 'OpenAI …1234');
+  expect(((await app.storage('local')).settings as { vendor?: string }).vendor).toBe('openai');
+  expect(await app.read('settings', `document.querySelector('[data-testid=other-key]').textContent`)).toContain('Anthropic …WXYZ');
+  const kept = JSON.parse(readFileSync(secrets, 'utf8')) as { keys: Record<string, string> };
+  expect(kept.keys).toEqual({ anthropic: key, openai: openaiKey });
+  // An admin key can't answer: refused, and nothing changes.
+  await app.eval('settings', `document.querySelector('[data-testid=add-key]').click()`);
+  await type('sk-ant-admin01-e2e-x');
+  await waitFor('the refusal', async () => (await app.read<string>('settings', `document.querySelector('[data-testid=key-status]')?.textContent ?? ''`)).includes('admin key'));
+  expect(JSON.parse(readFileSync(secrets, 'utf8')).keys).toEqual({ anthropic: key, openai: openaiKey });
+
+  // Removed, each is gone from the disk too, and answers move to the one left.
   await app.eval('settings', `document.querySelector('[data-testid=remove-key]').click()`);
-  await waitFor('the field back', () => app.read('settings', `!!document.querySelector('[data-testid=key-input]')`));
+  await waitFor('back to Anthropic', async () => (await saved()) === 'Anthropic …WXYZ');
+  expect(readFileSync(secrets, 'utf8')).not.toContain(openaiKey);
+  await app.eval('settings', `document.querySelector('[data-testid=remove-key]').click()`);
+  await waitFor('the field back', async () => (await saved()) === null && (await app.read('settings', `!!document.querySelector('[data-testid=key-input]')`)));
   expect(readFileSync(secrets, 'utf8')).not.toContain(key);
 });
 
@@ -891,6 +923,43 @@ it('the app’s windows load only its own pages: a link can’t take the panel t
   );
   await new Promise((r) => setTimeout(r, 1500));
   expect(await app.read<string>('panel', 'location.href')).toBe(before);
+});
+
+it('settings open on a dashboard: this month’s answers and who answers; the settings’ menu comes in once they are reached', async () => {
+  await app.eval('core', `browser.runtime.openOptionsPage()`);
+  await waitFor('the dashboard', () => app.read('settings', `!!document.querySelector('[data-testid=dashboard]')`), 20_000);
+  expect(await app.read('settings', `document.querySelector('[data-testid=answers-this-month]').textContent`)).toBe('0 answers');
+  expect(await app.read('settings', `document.querySelector('[data-testid=who-answers]').textContent`)).toContain('No one yet');
+  // The settings follow the dashboard, the most used first.
+  expect(await app.read('settings', `[...document.querySelectorAll('.sections > section')].map((s) => s.id).slice(0, 5)`)).toEqual([
+    'answers',
+    'asking',
+    'appearance',
+    'selecting',
+    'privacy',
+  ]);
+  const shown = () => app.read<boolean>('settings', `document.querySelector('[data-testid=side-menu]').classList.contains('on')`);
+  expect(await shown()).toBe(false);
+  await app.eval('settings', `document.getElementById('selecting').scrollIntoView({ behavior: 'instant' })`);
+  await waitFor('the side menu', shown);
+  await app.eval('settings', `document.querySelector('.page').scrollTo({ top: 0, behavior: 'instant' })`);
+  await waitFor('the side menu gone', async () => !(await shown()));
+});
+
+it('light or dark, as chosen, whatever the system shows; or as the system is', async () => {
+  await app.eval('core', `browser.runtime.openOptionsPage('appearance')`);
+  await waitFor('the choice', () => app.read('settings', `!!document.querySelector('[data-scheme-choice=dark]')`), 20_000);
+  const scheme = (label: string) => app.read<string>(label, 'document.documentElement.dataset.scheme');
+  const bg = (label: string) => app.read<string>(label, `getComputedStyle(document.body).backgroundColor`);
+  await app.eval('settings', `document.querySelector('[data-scheme-choice=dark]').click()`);
+  await waitFor('the panel dark', async () => (await scheme('panel')) === 'dark');
+  expect(await scheme('settings')).toBe('dark');
+  expect(await bg('panel')).toBe('rgb(38, 38, 36)');
+  await app.eval('settings', `document.querySelector('[data-scheme-choice=light]').click()`);
+  await waitFor('the panel light', async () => (await scheme('panel')) === 'light');
+  expect(await bg('panel')).toBe('rgb(250, 249, 245)');
+  await app.eval('settings', `document.querySelector('[data-scheme-choice=system]').click()`);
+  await waitFor('as the system is', async () => ((await app.storage('local')).settings as { scheme?: string }).scheme === 'system');
 });
 
 it('a theme from settings colours the panel and the bar', async () => {
@@ -936,6 +1005,11 @@ it('Open at login is off until turned on; on, the app starts hidden in the menu 
   await app.eval('overlay', bar(`querySelector('.more').click()`));
   await waitFor('the setting', () => app.read('settings', `!!document.querySelector('[data-testid=open-at-login]')`));
   expect(await app.read('settings', `document.querySelector('[data-testid=open-at-login]').checked`)).toBe(false);
+  // The privacy policy and terms are a click away.
+  expect(await app.read('settings', `[...document.querySelectorAll('[data-testid=legal] a')].map((a) => a.href)`)).toEqual([
+    'https://humanbn.com/privacy',
+    'https://humanbn.com/terms',
+  ]);
 
   const dir = join(home, '.config', 'autostart');
   const entries = () => (existsSync(dir) ? readdirSync(dir) : []);

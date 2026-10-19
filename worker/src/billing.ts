@@ -9,10 +9,11 @@
  * checkouts this Worker made give a plan.
  *
  * Prices are made in the Stripe dashboard and found by their lookup keys
- * (STRIPE_PRICES, in the order shown), so a new price never needs a new
- * Worker. A price names the plan it gives in its metadata (`plan`, default
- * plus); a one-time price is a pass for `pass_days` days (default 120, a
- * semester).
+ * (STRIPE_PRICES, in the order shown), so a new price never needs new code.
+ * A one-time price is a pass, for the days written after its key there
+ * (`plus_year:365`; else its `pass_days` metadata; else 120, a semester). A
+ * price gives Plus unless its (or its product's) `plan` metadata names
+ * another plan.
  *
  * Routes (index.ts):
  *   GET  /billing/prices    what is on offer, and what each plan gives
@@ -124,15 +125,18 @@ export interface Offer {
 
 let offers: { key: string; at: number; list: Offer[] } | null = null;
 
-const lookupKeys = (env: Env) =>
+/** STRIPE_PRICES: lookup keys, each with a pass's days if it is one (`plus_semester:120,plus_year:365`). */
+const onOffer = (env: Env): { key: string; days: number | null }[] =>
   (env.STRIPE_PRICES ?? '')
     .split(',')
-    .map((k) => k.trim())
-    .filter(Boolean);
+    .map((entry) => entry.trim().split(':'))
+    .filter(([key]) => key)
+    .map(([key, days]) => ({ key: key!, days: Number(days) > 0 ? Math.round(Number(days)) : null }));
 
 /** The prices on offer, in STRIPE_PRICES order, with what their plans give. None when billing is not set up. */
 export async function prices(env: Env): Promise<Offer[]> {
-  const keys = lookupKeys(env);
+  const entries = onOffer(env);
+  const keys = entries.map((e) => e.key);
   if (!env.STRIPE_SECRET_KEY || !keys.length) return [];
   const cacheKey = keys.join(',');
   if (offers && offers.key === cacheKey && Date.now() - offers.at < PRICES_TTL_MS) return offers.list;
@@ -141,7 +145,7 @@ export async function prices(env: Env): Promise<Offer[]> {
     rest(env, 'plans?select=id,name,monthly_questions,cloud').then((r) => r.json() as Promise<Plan[]>),
   ]);
   const list: Offer[] = [];
-  for (const key of keys) {
+  for (const { key, days } of entries) {
     const p = found.data.find((x) => x.lookup_key === key);
     if (!p || p.unit_amount === null) continue;
     const product = typeof p.product === 'string' ? { name: '', metadata: {} } : p.product;
@@ -157,7 +161,7 @@ export async function prices(env: Env): Promise<Offer[]> {
       currency: p.currency,
       interval,
       intervalCount: p.recurring?.interval_count ?? 1,
-      passDays: p.type === 'one_time' ? Number(p.metadata.pass_days || product.metadata.pass_days) || DEFAULT_PASS_DAYS : null,
+      passDays: p.type === 'one_time' ? days ?? (Number(p.metadata.pass_days || product.metadata.pass_days) || DEFAULT_PASS_DAYS) : null,
       plan,
     });
   }

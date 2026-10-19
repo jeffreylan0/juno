@@ -1,5 +1,4 @@
 :root {
-  color-scheme: light dark;
   /* Claude's palette: warm paper, near-black ink, clay for what acts. */
   --bg: #faf9f5;
   --surface: #ffffff;
@@ -23,26 +22,24 @@
   /* Chat text size. Everything else is relative to it. */
   font-size: 15px;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #262624;
-    --surface: #30302e;
-    --fg: #f5f4ef;
-    --muted: #a6a39b;
-    --line: #3d3d3a;
-    --accent: #d97757;
-    --accent-bg: #3b2c25;
-    --on-accent: #ffffff;
-    --user-bg: #141413;
-    --hover: #30302e;
-    --error: #f2998b;
-    --warn-bg: #33302a;
-    --warn-line: #4a4436;
-    --warn-fg: #ece2c8;
-    --warn-strong: #e7c46a;
-    --scrim: rgba(0, 0, 0, .45);
-    --drawer-bg: #1f1e1d;
-  }
+:root[data-scheme='dark'] {
+  --bg: #262624;
+  --surface: #30302e;
+  --fg: #f5f4ef;
+  --muted: #a6a39b;
+  --line: #3d3d3a;
+  --accent: #d97757;
+  --accent-bg: #3b2c25;
+  --on-accent: #ffffff;
+  --user-bg: #141413;
+  --hover: #30302e;
+  --error: #f2998b;
+  --warn-bg: #33302a;
+  --warn-line: #4a4436;
+  --warn-fg: #ece2c8;
+  --warn-strong: #e7c46a;
+  --scrim: rgba(0, 0, 0, .45);
+  --drawer-bg: #1f1e1d;
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }

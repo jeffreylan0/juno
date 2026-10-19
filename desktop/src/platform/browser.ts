@@ -288,6 +288,26 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
     t.emitTo(label, 'rt:msg', { id: uid(), from: t.label, msg, reply: false } satisfies Wire['msg']).catch(() => {});
 
   let shortcut: Promise<string> | null = null;
+  /** Opens `url` in the student's browser; resolves with the first `event` that `take` makes something of. */
+  const authFlow = <T>(url: string, event: string, take: (payload: T) => string | null) =>
+    new Promise<string>((resolve, reject) => {
+      let off = () => {};
+      const timer = setTimeout(() => {
+        off();
+        reject(new Error('Sign-in timed out'));
+      }, AUTH_WAIT_MS);
+      void t
+        .listen<T>(event, (payload) => {
+          const back = take(payload);
+          if (back === null) return;
+          clearTimeout(timer);
+          off();
+          resolve(back);
+        })
+        .then((unlisten) => (off = unlisten));
+      opts.openUrl?.(url);
+    });
+
   const browser = {
     /** Resolves once this window hears events (tests wait for it). */
     ready,
@@ -304,27 +324,21 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
     },
     /**
      * Sign-in (lib/account/session.ts): the page opens in the student's
-     * browser, and the answer comes back through the app's link.
+     * browser, and the answer comes back through the app's link, or to a
+     * one-time listener on this computer (src-tauri/src/oauth.rs).
      */
     identity: {
       getRedirectURL: () => AUTH_REDIRECT,
       launchWebAuthFlow: ({ url }: { url: string; interactive?: boolean }) =>
-        new Promise<string>((resolve, reject) => {
-          let off = () => {};
-          const timer = setTimeout(() => {
-            off();
-            reject(new Error('Sign-in timed out'));
-          }, AUTH_WAIT_MS);
-          void t
-            .listen<string>('app:deep-link', (back) => {
-              if (!back.startsWith(AUTH_REDIRECT)) return;
-              clearTimeout(timer);
-              off();
-              resolve(back);
-            })
-            .then((unlisten) => (off = unlisten));
-          opts.openUrl?.(url);
-        }),
+        authFlow(url, 'app:deep-link', (back: string) => (back.startsWith(AUTH_REDIRECT) ? back : null)),
+      /** `url` is given the listener's address to come back to; resolves with the address it came back on. */
+      launchLoopbackFlow: async (url: (redirectUri: string) => string) => {
+        const port = await t.invoke<number>('auth_listen');
+        const redirect = `http://127.0.0.1:${port}`;
+        return await authFlow(url(redirect), 'auth:returned', (back: { port: number; query: string }) =>
+          back.port === port ? `${redirect}/?${back.query}` : null,
+        );
+      },
     },
     commands: {
       /** The shortcut the app registered (ui/useShortcut.ts). */

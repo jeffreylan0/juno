@@ -1,9 +1,10 @@
 /**
  * The first-run setup: what settings show until it is done
  * (settings.setupDone; the core opens it when the app first starts). One
- * choice, who answers, and only what that needs: an API key (Claude,
- * ChatGPT), a local model's address, or an account with hosted answers.
- * Then, on a Mac, Screen Recording. Starting puts the bar up.
+ * choice, who answers, and only what that needs: an API key (Anthropic's
+ * or OpenAI's, told apart by the key), a local model's address, or an
+ * account with hosted answers. Then, on a Mac, Screen Recording. Starting
+ * puts the bar up.
  */
 import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
@@ -12,15 +13,14 @@ import type { Settings } from '@/lib/storage';
 import { Icon } from '@/ui/icons';
 import { hasHosted, type AccountState } from '@/ui/useAccount';
 import { MAC } from '../os';
-import { SignedIn, SignIn } from './Account';
-import { VENDOR_OF, choiceOf, patchFor, type Choice } from './choices';
+import { AccountCard } from './Account';
+import { choiceOf, keyPatch, patchFor, type Choice } from './choices';
 import { KeyField } from './KeyField';
 import { LocalServer } from './LocalServer';
 import { Permissions } from './Permissions';
 
 const CHOICES: { id: Choice; name: string; sub: string }[] = [
-  { id: 'claude', name: 'Claude', sub: 'Your Anthropic API key' },
-  { id: 'chatgpt', name: 'ChatGPT', sub: 'Your OpenAI API key' },
+  { id: 'key', name: 'API key', sub: 'Claude or ChatGPT, your own key' },
   { id: 'local', name: 'Local model', sub: 'On this computer' },
   ...(ACCOUNTS ? [{ id: 'hosted' as const, name: `${BRAND.name} account`, sub: 'Hosted answers' }] : []),
 ];
@@ -37,10 +37,9 @@ export function Setup({
   save: (patch: Partial<Settings>) => Promise<void>;
 }) {
   const choice = choiceOf(settings);
-  const vendor = choice ? VENDOR_OF[choice] : undefined;
   const hosted = hasHosted(account);
   // Ready once the choice can answer: a key kept, an address given, or a plan with hosted answers.
-  const ready = vendor ? !!keys[vendor] : choice === 'local' ? !!settings.localBaseUrl.trim() && !!settings.localModel.trim() : choice === 'hosted' && hosted;
+  const ready = choice === 'key' ? !!keys[settings.vendor] : choice === 'local' ? !!settings.localBaseUrl.trim() && !!settings.localModel.trim() : choice === 'hosted' && hosted;
 
   const start = async () => {
     await save({ setupDone: true });
@@ -66,18 +65,18 @@ export function Setup({
           <div className="cards" role="radiogroup" aria-label="Who answers">
             {CHOICES.map((c) => (
               <label key={c.id} className={`card${choice === c.id ? ' on' : ''}`} data-testid={`setup-${c.id}`}>
-                <input type="radio" name="setup" checked={choice === c.id} onChange={() => void save(patchFor(c.id, settings))} />
+                <input type="radio" name="setup" checked={choice === c.id} onChange={() => void save(patchFor(c.id, settings, keys))} />
                 <b>{c.name}</b>
                 <small>{c.sub}</small>
               </label>
             ))}
           </div>
 
-          {vendor && <KeyField key={vendor} vendor={vendor} hint={keys[vendor]} />}
+          {choice === 'key' && <KeyField keys={keys} current={settings.vendor} onUse={(v) => void save(keyPatch(v, settings))} />}
           {choice === 'local' && <LocalServer settings={settings} save={save} />}
           {choice === 'hosted' && (
             <div className="sub" data-testid="setup-account">
-              {account.user ? <SignedIn account={account} settings={settings} save={save} /> : <SignIn />}
+              <AccountCard account={account} />
             </div>
           )}
           {!choice && <p className="help">You can change this any time in Settings.</p>}

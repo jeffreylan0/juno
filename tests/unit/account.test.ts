@@ -37,6 +37,15 @@ import {
 import { MemoryImageStore, setImageStore, storePlanImages } from '@/lib/images';
 import { DEFAULT_SETTINGS, settingsItem } from '@/lib/storage';
 
+// The app's own Google client, when a test sets one (lib/account/config.ts).
+const google = vi.hoisted(() => ({ clientId: '' }));
+vi.mock('@/lib/account/config', async (real) => ({
+  ...(await real<typeof import('@/lib/account/config')>()),
+  get GOOGLE_CLIENT_ID() {
+    return google.clientId;
+  },
+}));
+
 const realFetch = globalThis.fetch;
 let fake: FakeSupabase;
 let store: MemoryImageStore;
@@ -45,6 +54,7 @@ const gone: string[] = [];
 
 beforeEach(() => {
   fakeBrowser.reset();
+  google.clientId = '';
   store = new MemoryImageStore();
   setImageStore(store);
   fake = new FakeSupabase();
@@ -129,6 +139,54 @@ describe('signing in', () => {
     // Closing Google's window is not an error worth more than a sentence.
     identity.launchWebAuthFlow.mockRejectedValueOnce(new Error('The user did not approve access.'));
     await expect(signInWithGoogle()).rejects.toMatchObject({ code: 'cancelled' });
+  });
+
+  it('signs in with Google on its own page when the app has its own client, back to this computer', async () => {
+    google.clientId = 'desktop.apps.googleusercontent.com';
+    const back = 'http://127.0.0.1:50123';
+    let sent: URLSearchParams | null = null;
+    let answer = (q: URLSearchParams) => `${back}/?state=${q.get('state')}&code=g-code`;
+    const identity = {
+      launchLoopbackFlow: vi.fn(async (url: (redirectUri: string) => string) => {
+        const u = new URL(url(back));
+        expect(`${u.origin}${u.pathname}`).toBe('https://accounts.google.com/o/oauth2/v2/auth');
+        sent = u.searchParams;
+        return answer(u.searchParams);
+      }),
+    };
+    (fakeBrowser as unknown as { identity: typeof identity }).identity = identity;
+    // The Worker (worker/src/google.ts): the code and the PKCE verifier, for Google's ID token.
+    const worker = vi.fn(async (body: { code: string; verifier: string; redirect_uri: string }) => {
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body.verifier)));
+      expect(btoa(String.fromCharCode(...digest)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')).toBe(sent!.get('code_challenge'));
+      expect(body).toMatchObject({ code: 'g-code', redirect_uri: back });
+      fake.idTokens.set('id-token-1', { nonceHash: sent!.get('nonce')!, email: 'g@example.com' });
+      return Response.json({ id_token: 'id-token-1' });
+    });
+    const toFake = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const req = new Request(input, init);
+      return req.url === 'http://localhost:8787/auth/google' ? await worker(await req.json()) : await toFake(input, init);
+    });
+
+    const s = await signInWithGoogle();
+    expect(s.user.email).toBe('g@example.com');
+    expect(Object.fromEntries(sent!)).toMatchObject({
+      client_id: 'desktop.apps.googleusercontent.com',
+      redirect_uri: back,
+      response_type: 'code',
+      scope: 'openid email',
+      code_challenge_method: 'S256',
+    });
+    // Google is given the nonce's hash, never the nonce Supabase checks it with.
+    expect(sent!.get('nonce')).toMatch(/^[0-9a-f]{64}$/);
+
+    // An answer that isn't this sign-in's goes no further.
+    answer = () => `${back}/?state=someone-else&code=g-code`;
+    await expect(signInWithGoogle()).rejects.toMatchObject({ code: 'server' });
+    answer = () => `${back}/?state=${sent!.get('state')}&error=access_denied`;
+    await expect(signInWithGoogle()).rejects.toMatchObject({ code: 'server' });
+    expect(worker).toHaveBeenCalledOnce();
   });
 
   it('refuses an address that is not one before asking the server', async () => {

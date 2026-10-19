@@ -41,7 +41,7 @@ Windows asks for no permissions.
 
 The first time you open Juno, it asks who should answer. Pick one, then **Start using Juno**:
 
-- **Claude** or **ChatGPT**: paste an API key and press **Save**; it is checked at once. Get one at [console.anthropic.com](https://console.anthropic.com/settings/keys) or [platform.openai.com](https://platform.openai.com/api-keys). API use is pay-as-you-go and is billed separately from a Claude or ChatGPT subscription. If you were given a key for testing, paste that.
+- **API key** (Claude or ChatGPT): paste an Anthropic or OpenAI API key and press **Save**; Juno tells from the key whose it is, and checks it at once. Get one at [console.anthropic.com](https://console.anthropic.com/settings/keys) or [platform.openai.com](https://platform.openai.com/api-keys). API use is pay-as-you-go and is billed separately from a Claude or ChatGPT subscription. If you were given a key for testing, paste that.
 - **Local model**: a model running on your own computer, such as one served by Ollama. It must be a model that reads images. (In the app, a server on another computer needs an `https://` address or a `.local` name.)
 - **Juno account**: sign in with Google or an emailed code, for hosted answers if your plan includes them.
 
@@ -66,7 +66,9 @@ In the panel:
 
 Settings → **Selecting** → *Where the bar and the panel go* picks a part of the screen for each: click one of the nine squares. The bar sits at that part's outer edge (the bottom of the screen to start), and the panel in its corner or side (top right to start).
 
-Settings → **Appearance** has seven colour themes. Each follows your computer's light or dark mode.
+Settings → **Appearance** has seven colour themes, and *Light or dark*: always light, always dark, or following your computer.
+
+Settings opens from the gear on the bar, always in front of the panel, and goes away when you close it. Its top shows your account (if you signed in), how many answers you got this month (and, with your own key, roughly what they cost), and who answers. The settings follow, the most used first; once you scroll down to them, a list of them appears at the side to jump between.
 
 ## What to look for
 

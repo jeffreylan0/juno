@@ -19,6 +19,9 @@ export type { Macro } from '@shared/prompts';
  */
 export type SendBehavior = 'prefill' | 'auto';
 
+export type Scheme = 'system' | 'light' | 'dark';
+export const SCHEMES: readonly Scheme[] = ['system', 'light', 'dark'];
+
 /** How many saved chats this computer keeps; the oldest goes first. */
 export const CHAT_LIMITS = [1, 5, 10, 25, 50, 100] as const;
 export const DEFAULT_CHAT_LIMIT = 10;
@@ -61,6 +64,8 @@ export interface Settings {
   panelPlace: Place;
   /** The colour theme (lib/themes.ts). */
   theme: string;
+  /** Light or dark, or as the system is (theme.ts). */
+  scheme: Scheme;
   /** Install new versions by itself (core/updates.ts). */
   autoUpdate: boolean;
   /**
@@ -87,6 +92,7 @@ export const DEFAULT_SETTINGS: Settings = {
   barPlace: 'bottom-center',
   panelPlace: 'top-right',
   theme: DEFAULT_THEME,
+  scheme: 'system',
   autoUpdate: true,
   cloudSync: false,
   localBaseUrl: 'http://localhost:11434/v1',
@@ -159,6 +165,7 @@ export function migrateSettings(stored: unknown): Settings {
   if (!isPlace(merged.barPlace)) merged.barPlace = DEFAULT_SETTINGS.barPlace;
   if (!isPlace(merged.panelPlace)) merged.panelPlace = DEFAULT_SETTINGS.panelPlace;
   if (!isThemeId(merged.theme)) merged.theme = DEFAULT_THEME;
+  if (!SCHEMES.includes(merged.scheme)) merged.scheme = 'system';
   merged.autoUpdate = merged.autoUpdate !== false;
   merged.macros = sanitizeMacros(merged.macros);
   if (!(CHAT_LIMITS as readonly number[]).includes(merged.chatLimit)) merged.chatLimit = DEFAULT_CHAT_LIMIT;
