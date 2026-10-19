@@ -94,7 +94,9 @@ export class App {
       mkdirSync(local, { recursive: true });
       writeFileSync(join(local, 'settings.json'), JSON.stringify({ version: 6, setupDone: true }));
     }
-    const port = 47000 + display;
+    // Below the ports the system hands out for outgoing connections (32768
+    // and up on Linux), so none of this machine's own sockets already has it.
+    const port = 21000 + display;
     const app = spawn(BINARY, opts.opened ? [] : ['--hidden'], {
       env: {
         ...process.env,
