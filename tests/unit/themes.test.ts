@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, migrateSettings } from '@/lib/storage';
 import { THEMES, applyTheme, barTokens, contrast, mix, themeById, tokens } from '@/lib/themes';
+import { isDark } from '@/theme';
 
 describe('colour themes', () => {
   it('are all readable: text on the window, quieter text, and what sits on the accent', () => {
@@ -36,6 +37,14 @@ describe('colour themes', () => {
     expect(root.style.getPropertyValue('--accent')).toBe('');
     applyTheme(root, themeById('claude'), false);
     expect(root.getAttribute('style') ?? '').toBe('');
+  });
+
+  it('is light or dark as chosen, or as the system is', () => {
+    expect(DEFAULT_SETTINGS.scheme).toBe('system');
+    expect([isDark('system', true), isDark('system', false)]).toEqual([true, false]);
+    expect([isDark('dark', false), isDark('light', true)]).toEqual([true, false]);
+    expect(migrateSettings({ scheme: 'dark' }).scheme).toBe('dark');
+    expect(migrateSettings({ scheme: 'sepia' }).scheme).toBe('system');
   });
 
   it('is a setting: Claude to start, and an unknown theme falls back to it', () => {

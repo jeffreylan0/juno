@@ -1,21 +1,14 @@
 /**
  * Settings → Appearance: the colour themes (lib/themes.ts), each a small
- * preview in the system's current appearance: the window, a question, an
- * answer line and the accent.
+ * preview in the page's current scheme, light or dark: the window, a
+ * question, an answer line and the accent.
  */
-import { useEffect, useState, type CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import { THEMES, type Palette } from '@/lib/themes';
-
-const dark = () => matchMedia('(prefers-color-scheme: dark)');
+import { usePageDark } from '../theme';
 
 export function ThemePicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-  const [isDark, setDark] = useState(() => dark().matches);
-  useEffect(() => {
-    const scheme = dark();
-    const follow = () => setDark(scheme.matches);
-    scheme.addEventListener('change', follow);
-    return () => scheme.removeEventListener('change', follow);
-  }, []);
+  const isDark = usePageDark();
   return (
     <div className="themes" role="radiogroup" aria-label="Theme" data-testid="themes">
       {THEMES.map((t) => {

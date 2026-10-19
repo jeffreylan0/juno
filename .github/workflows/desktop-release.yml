@@ -7,8 +7,9 @@ name: Test build
 #
 # Accounts and hosted answers come from the repository's Actions variables
 # WXT_SUPABASE_URL, WXT_SUPABASE_KEY (the publishable key, public by design)
-# and WXT_GATEWAY_URL (supabase/README.md, step 7); without them the build has
-# no accounts, and says so in the run's summary. No secret of any kind goes
+# and WXT_GATEWAY_URL (supabase/README.md, step 7), and WXT_GOOGLE_CLIENT_ID
+# (step 3, also public); without the first two the build has no accounts, and
+# says so in the run's summary. No secret of any kind goes
 # into a build. No caches either: a build others install never restores
 # anything an ordinary run saved. The
 # release carries SHA256SUMS and a signed build provenance attestation
@@ -116,6 +117,7 @@ jobs:
           WXT_SUPABASE_URL: ${{ vars.WXT_SUPABASE_URL }}
           WXT_SUPABASE_KEY: ${{ vars.WXT_SUPABASE_KEY }}
           WXT_GATEWAY_URL: ${{ vars.WXT_GATEWAY_URL }}
+          WXT_GOOGLE_CLIENT_ID: ${{ vars.WXT_GOOGLE_CLIENT_ID }}
           APPLE_SIGNING_IDENTITY: ${{ matrix.signing }}
           # Only a version tag's build signs updates (and only with the public half there to check them).
           TAURI_SIGNING_PRIVATE_KEY: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}

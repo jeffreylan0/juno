@@ -2,9 +2,11 @@
  * Signing in, staying signed in, and signing out, against Supabase Auth's
  * REST API directly (no SDK: a few calls, and nothing to bundle).
  *
- *  - Google: the PKCE flow through browser.identity.launchWebAuthFlow, which
- *    the app opens in the student's browser and hears back through its link
- *    (platform/browser.ts).
+ *  - Google, in the student's browser (platform/browser.ts). With the app's
+ *    own Google client (GOOGLE_CLIENT_ID), the app runs Google's sign-in
+ *    itself: back to a one-time listener on this computer, the Worker trades
+ *    the code for Google's ID token, and Supabase signs in with that. Without
+ *    it, Supabase runs it and the answer comes back through the app's link.
  *  - Email: a one-time code (6–10 digits) sent by Supabase, typed back here.
  *
  * The session (access and refresh tokens) is kept like the API keys, in the
@@ -17,7 +19,8 @@
  * student out.
  */
 import { storage } from '@wxt-dev/storage';
-import { ACCOUNTS, SUPABASE_KEY, SUPABASE_URL } from './config';
+import { GATEWAY_URL } from '../storage';
+import { ACCOUNTS, GOOGLE_CLIENT_ID, SUPABASE_KEY, SUPABASE_URL } from './config';
 
 export interface AccountUser {
   id: string;
@@ -150,40 +153,87 @@ async function keep(session: AccountSession): Promise<AccountSession> {
 
 const b64url = (bytes: Uint8Array) =>
   btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const random = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
+const sha256 = async (s: string) => new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
+const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 
-/** Where Google sends the browser back to; must be in Supabase's redirect allow-list. */
-export function redirectUrl(): string {
-  return browser.identity.getRedirectURL();
-}
+const unfinished = () => new AccountError("Google sign-in didn't finish. Try again.", 'server');
 
 export async function signInWithGoogle(): Promise<AccountSession> {
   need();
-  const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
-  const challenge = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
-  const url = `${SUPABASE_URL}/auth/v1/authorize?${new URLSearchParams({
-    provider: 'google',
-    redirect_to: redirectUrl(),
-    code_challenge: challenge,
-    code_challenge_method: 's256',
-  })}`;
-  let back: string | undefined;
+  return await keep(toSession(GOOGLE_CLIENT_ID ? await googleItself() : await googleBySupabase()));
+}
+
+/** The browser's part; closing it, or waiting too long, is no more than a sentence. */
+async function inBrowser(flow: () => Promise<string>): Promise<URLSearchParams> {
+  let back: string;
   try {
-    back = await browser.identity.launchWebAuthFlow({ url, interactive: true });
+    back = await flow();
   } catch {
     throw new AccountError('Google sign-in was closed before it finished.', 'cancelled');
   }
-  const returned = new URL(back ?? 'about:blank');
+  const returned = new URL(back);
   const params = new URLSearchParams(returned.search);
   for (const [k, v] of new URLSearchParams(returned.hash.slice(1))) if (!params.has(k)) params.set(k, v);
+  // What came back is not shown: a web page can send the browser to the
+  // app's link, or to the listener, while a sign-in waits, with any text.
+  if (params.get('error')) console.warn('[selection-ai] Google sign-in failed:', params.get('error'));
+  return params;
+}
+
+/**
+ * Google's page with the app's own client (RFC 8252: PKCE, back to this
+ * computer). The state ties the answer to this sign-in; Google puts the
+ * nonce's hash in the ID token and Supabase checks it against the nonce.
+ */
+async function googleItself(): Promise<Record<string, unknown>> {
+  const [verifier, state, nonce] = [random(), random(), random()];
+  const query = {
+    client_id: GOOGLE_CLIENT_ID,
+    response_type: 'code',
+    scope: 'openid email',
+    code_challenge: b64url(await sha256(verifier)),
+    code_challenge_method: 'S256',
+    state,
+    nonce: hex(await sha256(nonce)),
+    prompt: 'select_account',
+  };
+  let redirect = '';
+  const params = await inBrowser(() =>
+    browser.identity.launchLoopbackFlow((redirectUri) => {
+      redirect = redirectUri;
+      return `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({ ...query, redirect_uri: redirectUri })}`;
+    }),
+  );
   const code = params.get('code');
-  if (!code) {
-    // The redirect's own words are not shown: in the app, any web page can
-    // open com.humanbn.juno://auth/callback?error_description=… while a sign-in
-    // waits, and would get its text into Settings.
-    if (params.get('error')) console.warn('[selection-ai] Google sign-in failed:', params.get('error'));
-    throw new AccountError("Google sign-in didn't finish. Try again.", 'server');
+  if (!code || params.get('state') !== state) throw unfinished();
+  let res: Response;
+  try {
+    res = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/auth/google`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code, verifier, redirect_uri: redirect }),
+    });
+  } catch {
+    throw new AccountError("Couldn't reach the account service. Check your connection.", 'network');
   }
-  return await keep(toSession(await auth('token?grant_type=pkce', { auth_code: code, code_verifier: verifier })));
+  const got = (await res.json().catch(() => ({}))) as { id_token?: unknown };
+  if (!res.ok || typeof got.id_token !== 'string') throw unfinished();
+  return await auth('token?grant_type=id_token', { provider: 'google', id_token: got.id_token, nonce });
+}
+
+/** Supabase's sign-in page, back through the app's link (on Supabase's redirect allow-list). */
+async function googleBySupabase(): Promise<Record<string, unknown>> {
+  const verifier = random();
+  const url = `${SUPABASE_URL}/auth/v1/authorize?${new URLSearchParams({
+    provider: 'google',
+    redirect_to: browser.identity.getRedirectURL(),
+    code_challenge: b64url(await sha256(verifier)),
+    code_challenge_method: 's256',
+  })}`;
+  const code = (await inBrowser(() => browser.identity.launchWebAuthFlow({ url, interactive: true }))).get('code');
+  if (!code) throw unfinished();
+  return await auth('token?grant_type=pkce', { auth_code: code, code_verifier: verifier });
 }
 
 // ── Email code ───────────────────────────────────────────────────────────

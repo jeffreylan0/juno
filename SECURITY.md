@@ -32,12 +32,12 @@ The design doesn't defend against malware running as the student's own user acco
 - **Permissions:** Screen Recording is the only OS permission, and only on macOS.
 - **Model answers fetch nothing:** answers are sanitized with DOMPurify and inserted as nodes. No images, CSS `url()`, `background` attributes, SVG or MathML images, or fixed layers get through. Links open in the student's browser, only on a click.
 - **API keys, by construction (src-tauri/src/vault.rs):** what keeps a key safe is how it is handled, not a promise.
-  - Settings hands a key to the native core (`key_set`, Settings only) and keeps nothing; pages learn only whether there is one, by its last four characters (`key_status`). The storage commands refuse to read, write or remove `keys` for every window, and never announce it.
+  - Settings hands a key to the native core (`key_set`, Settings only) and keeps nothing; pages learn only whose it is and its last four characters (`key_status`). Whose it is comes from the key itself (`sk-ant-` Anthropic, any other `sk-` OpenAI), so a page can't file an Anthropic key under OpenAI and have it sent there; admin keys (`sk-ant-admin…`, `sk-admin-…`), which manage an organization rather than answer, are refused. The storage commands refuse to read, write or remove `keys` for every window, and never announce it.
   - Only the core can send with a key (`vendor_fetch`), and only to four endpoints: `POST /v1/messages` and `GET /v1/models` at `https://api.anthropic.com`, `POST /v1/chat/completions` and `GET /v1/models` at `https://api.openai.com`. The URL is parsed, and anything else (another host, port, path, method, query beyond `limit`, a login or fragment in the URL, plain HTTP) is refused. The client is HTTPS-only and follows no redirect, so no response can carry the key elsewhere. The key header is marked sensitive and never logged; errors name only how the request failed.
   - So even a page that was taken over (a crafted answer getting past the sanitizer, a malicious package) can't read a key or send it anywhere but to its own company, asking a question.
   - On disk: `secrets.json`, mode 0600 from the moment it is written; on Windows also encrypted for the user with DPAPI, so a copy of the file is useless on another computer or account.
   - Tested: Rust tests pin the allowlist and the file; an end-to-end test saves a key, then tries from every window to read it (by name, with everything, straight from the native core), write it, remove it, and send it from the wrong window or to another address, and checks that each attempt fails.
-- **Commands check their caller:** only the hidden core window can take a screenshot (only while the bar is up), bring up the bar, open the panel or send with a key; only the overlay steers its own pointer handling, and only the panel resizes itself. Only Settings can put a key in or change "Open at login". The overlay can't read the account session: `storage_get` refuses it, and changes to it are announced without their values (any page can listen to any event), so each window reads it back through that check.
+- **Commands check their caller:** only the hidden core window can take a screenshot (only while the bar is up), bring up the bar, open the panel or send with a key; only the overlay steers its own pointer handling, and only the panel resizes itself. Only Settings can put a key in or remove one, start Google's sign-in listener, or change "Open at login". The overlay can't read the account session: `storage_get` refuses it, and changes to it are announced without their values (any page can listen to any event), so each window reads it back through that check.
 - **Only the app's own pages, in every window:** each window refuses to navigate anywhere but the app's own pages (`wm.rs` `own_page`), so no link, whatever got it into an answer, can turn the panel into another site asking for a key. SVG and MathML links lose their `href` when an answer is sanitized, and a click on any other link opens the student's browser.
 - **Network:** the HTTP allowlist covers `https://*`, plus plain HTTP to `localhost`, `127.0.0.1` and `*.local`. Nothing else is reachable, not even the cloud metadata address.
 - **CSP:** `script-src 'self'`, no objects or frames, and no remote images, media or fonts.
@@ -47,6 +47,7 @@ The design doesn't defend against malware running as the student's own user acco
 - **Windows start-at-login:** the Run entry's path is quoted, so Windows can't run a different program planted in the install folder's parent.
 - **Deep links:** they are accepted only while a sign-in is pending, and show only fixed text.
 - **Sign-in:** Google sign-in uses PKCE. Sign-out revokes the session on the server.
+- **Google's return (src-tauri/src/oauth.rs, RFC 8252):** with the app's own Google client, Google sends the browser back to a listener the app opens for one sign-in on `127.0.0.1` (never other addresses on the network), on a port the system picks, for ten minutes at most. It takes only `GET /?code=…` or `/?error=…`, answers with a fixed page under `default-src 'none'`, and hands the query to Settings with its port, so an older sign-in's listener isn't mistaken for this one. Settings checks the `state` it sent, and the code is useless without the PKCE verifier it kept. The ID token Google issues carries the hash of a nonce only Settings knows, and Supabase checks it. Google's error text is never shown.
 - **Cloud copies:** chats already on a computer are never copied into another account that signs in there.
 - **Test hook:** the test-only HTTP hook isn't compiled into releases, and it refuses any request that comes from a browser.
 - **Screen capture on Windows:** the app's windows are left out of captures (display affinity) only while the app takes its own screenshot, so recordings, screen sharing and remote desktops show the app like any other window.
@@ -72,6 +73,7 @@ The design doesn't defend against malware running as the student's own user acco
   - Only checkouts the Worker made give a plan.
   - Subscriptions and passes are read back fresh from Stripe, so refunds and chargebacks end a pass.
   - Events for deleted accounts are acknowledged instead of retried.
+- **Google sign-in (`/auth/google`):** the Worker holds the Google client secret (a desktop app can't keep one), takes only a code meant for `http://127.0.0.1:<port>` with a well-formed PKCE verifier, and returns only the ID token: no access or refresh token for the student's Google account leaves Google. A stolen code is useless without the verifier.
 - **Responses:** JSON is sent `nosniff`, and the one HTML page has a strict CSP. Logs carry no prompt text.
 
 **Prompt caching**
@@ -208,7 +210,7 @@ Beyond strong passwords and business accounts:
   - Never in `.env` files, chat messages, screenshots or tickets.
   - `.env.local` (at the repository root) holds only the publishable Supabase key and the service addresses.
 - **The update key** (desktop/README.md, *Updates*): the private key and its password live only in your password manager and the `TAURI_SIGNING_PRIVATE_KEY*` Actions secrets. Never rotate it casually: installed copies trust only the public key they shipped with, so a new key needs one release signed with the old key that carries the new public key. If it leaks, publish nothing more with it and tell users to reinstall.
-- **Rotate:** at least yearly, immediately when someone leaves, and whenever a secret might have been seen: the AI keys, the Stripe restricted key and webhook secret, and the Supabase secret key. `supabase/README.md` § Before launch describes the order.
+- **Rotate:** at least yearly, immediately when someone leaves, and whenever a secret might have been seen: the AI keys, the Stripe restricted key and webhook secret, the Google client secret, and the Supabase secret key. `supabase/README.md` § Before launch describes the order.
 - **Cap the money:**
   - Monthly spending limits and alerts on the Anthropic and OpenAI workspaces the Worker uses.
   - Billing alerts on Cloudflare.
@@ -251,7 +253,7 @@ Beyond strong passwords and business accounts:
 
 ### 7. Privacy and legal
 
-- **Privacy policy:** it must match what the apps do: what is sent where, how long each processor keeps it, and that backups keep deleted accounts for their retention period.
-- **Processors:** sign the data processing agreements of Supabase, Cloudflare, Stripe, Anthropic and OpenAI.
-- **Age and schools:** set 13+ in the terms (COPPA). Have a FERPA-ready data agreement before schools buy.
+- **Privacy policy and terms:** `legal/privacy.md` and `legal/terms.md`, to publish at humanbn.com/privacy and /terms once the blanks are filled (`legal/README.md`) and a lawyer has read them. They must keep matching what the apps do: what is sent where, how long each processor keeps it, and that backups keep deleted accounts for their retention period.
+- **Processors:** sign the data processing agreements of Supabase, Cloudflare, Stripe, Anthropic, OpenAI and the email sender.
+- **Age and schools:** the terms say 13+ (COPPA). Have a FERPA-ready data agreement before schools buy.
 - **Data requests:** answer access and deletion requests within 30 days. Account deletion in Settings covers deletion.

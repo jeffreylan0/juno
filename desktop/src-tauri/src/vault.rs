@@ -3,8 +3,11 @@
 //!
 //! - A key goes in once, from settings (`key_set`), into the private secrets
 //!   file (store.rs) under `keys`, which the storage commands never read,
-//!   write or announce to any page (lib.rs). Pages learn only whether there
-//!   is one, and its last four characters (`key_status`).
+//!   write or announce to any page (lib.rs). Whose key it is comes from the
+//!   key itself (each company writes its keys its own way), never from the
+//!   page, so it can only ever be kept for, and sent to, that company. Pages
+//!   learn only whether there is one, and its last four characters
+//!   (`key_status`).
 //! - Asking uses it here, not in a page: the core hands over a request
 //!   (`vendor_fetch`), and this adds the key and sends it, but only to one of
 //!   four endpoints — asking and listing models, at Anthropic and at OpenAI —
@@ -48,7 +51,25 @@ impl Vendor {
         }
     }
 
-    fn name(self) -> &'static str {
+    /// Whose key this is: Anthropic's start `sk-ant-`, OpenAI's `sk-`. An
+    /// admin key manages an organisation and can't answer, so it is refused.
+    pub fn of_key(key: &str) -> Result<Vendor, String> {
+        let key = key.trim();
+        let admin = |company: &str| Err(format!("That's an {company} admin key, which can't answer questions. Make an API key instead."));
+        if key.starts_with("sk-ant-admin") {
+            admin("Anthropic")
+        } else if key.starts_with("sk-ant-") {
+            Ok(Vendor::Anthropic)
+        } else if key.starts_with("sk-admin-") {
+            admin("OpenAI")
+        } else if key.starts_with("sk-") {
+            Ok(Vendor::OpenAi)
+        } else {
+            Err("That doesn't look like an Anthropic or OpenAI API key.".into())
+        }
+    }
+
+    pub fn name(self) -> &'static str {
         match self {
             Vendor::Anthropic => "anthropic",
             Vendor::OpenAi => "openai",
@@ -98,7 +119,7 @@ fn is_limit(param: &str) -> bool {
 }
 
 /// A key as it may be kept: what the companies issue, printable and without spaces.
-pub fn clean_key(key: &str) -> Result<String, String> {
+fn clean_key(key: &str) -> Result<String, String> {
     let key = key.trim();
     if key.len() > 512 || !key.bytes().all(|b| b.is_ascii_graphic()) {
         return Err("That doesn't look like an API key.".into());
@@ -132,16 +153,26 @@ pub fn status(store: &Store) -> KeyStatus {
     KeyStatus { anthropic: hint(Vendor::Anthropic), openai: hint(Vendor::OpenAi) }
 }
 
-/// Keeps `key` for `vendor` (an empty one removes it).
-pub fn set(store: &Store, vendor: Vendor, key: &str) -> Result<KeyStatus, String> {
+/// Keeps `key` for the company that issued it; says which, and what is kept now.
+pub fn set(store: &Store, key: &str) -> Result<(Vendor, KeyStatus), String> {
     let key = clean_key(key)?;
+    let vendor = Vendor::of_key(&key)?;
+    Ok((vendor, keep(store, vendor, &key)?))
+}
+
+/// Forgets `vendor`'s key.
+pub fn remove(store: &Store, vendor: Vendor) -> Result<KeyStatus, String> {
+    keep(store, vendor, "")
+}
+
+fn keep(store: &Store, vendor: Vendor, key: &str) -> Result<KeyStatus, String> {
     let mut keys = stored_keys(store);
     // Only the two keys; anything else an earlier build kept there goes.
     keys.retain(|k, _| Vendor::parse(k).is_some());
     if key.is_empty() {
         keys.remove(vendor.name());
     } else {
-        keys.insert(vendor.name().into(), Value::String(key));
+        keys.insert(vendor.name().into(), Value::String(key.to_string()));
     }
     let mut items = Map::new();
     items.insert(STORAGE_KEY.into(), Value::Object(keys));
@@ -328,17 +359,32 @@ mod tests {
         let store = Store::open(&dir, Box::new(Memory(secrets.clone()))).unwrap();
         assert_eq!(status(&store), KeyStatus::default());
 
-        let shown = set(&store, Vendor::Anthropic, "  sk-ant-api03-abcdWXYZ \n").unwrap();
+        let (vendor, shown) = set(&store, "  sk-ant-api03-abcdWXYZ \n").unwrap();
+        assert_eq!(vendor, Vendor::Anthropic);
         assert_eq!(shown, KeyStatus { anthropic: Some("…WXYZ".into()), openai: None });
         assert_eq!(secrets.lock().unwrap()["keys"]["anthropic"], "sk-ant-api03-abcdWXYZ");
         // Not among the ordinary files every value goes to.
         assert!(std::fs::read_dir(dir.join("local")).unwrap().next().is_none());
 
-        set(&store, Vendor::OpenAi, "sk-proj-1234").unwrap();
-        assert_eq!(set(&store, Vendor::Anthropic, "").unwrap(), KeyStatus { anthropic: None, openai: Some("…1234".into()) });
-        assert!(set(&store, Vendor::OpenAi, "sk with spaces").is_err());
-        assert!(set(&store, Vendor::OpenAi, "sk-é").is_err());
+        assert_eq!(set(&store, "sk-proj-1234").unwrap().0, Vendor::OpenAi);
+        assert_eq!(remove(&store, Vendor::Anthropic).unwrap(), KeyStatus { anthropic: None, openai: Some("…1234".into()) });
+        assert!(set(&store, "sk with spaces").is_err());
+        assert!(set(&store, "sk-é").is_err());
+        assert!(set(&store, "").is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_key_is_kept_for_the_company_that_issued_it_and_no_other() {
+        assert_eq!(Vendor::of_key("sk-ant-api03-x"), Ok(Vendor::Anthropic));
+        assert_eq!(Vendor::of_key("sk-proj-x"), Ok(Vendor::OpenAi));
+        assert_eq!(Vendor::of_key("sk-svcacct-x"), Ok(Vendor::OpenAi));
+        assert_eq!(Vendor::of_key("sk-0123456789abcdef"), Ok(Vendor::OpenAi));
+        // Admin keys can't answer; anything else is no one's.
+        assert!(Vendor::of_key("sk-ant-admin01-x").unwrap_err().contains("admin key"));
+        assert!(Vendor::of_key("sk-admin-x").unwrap_err().contains("admin key"));
+        assert!(Vendor::of_key("AIzaSyExample").is_err());
+        assert!(Vendor::of_key("ant-sk-x").is_err());
     }
 
     #[test]

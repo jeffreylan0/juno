@@ -10,8 +10,11 @@ import type { KeyStatus, KeyVendor, Vault } from '@/lib/providers/types';
 
 export const keyStatus = (): Promise<KeyStatus> => invoke<KeyStatus>('key_status');
 
-/** Keeps `key` for `vendor` (empty removes it); says what is kept now. */
-export const setKey = (vendor: KeyVendor, key: string): Promise<KeyStatus> => invoke<KeyStatus>('key_set', { vendor, key });
+/** Keeps `key` for the company that issued it (the native core tells which from the key); says which, and what is kept now. */
+export const setKey = (key: string): Promise<{ vendor: KeyVendor; status: KeyStatus }> => invoke('key_set', { key });
+
+/** Forgets `vendor`'s key. */
+export const removeKey = (vendor: KeyVendor): Promise<KeyStatus> => invoke<KeyStatus>('key_remove', { vendor });
 
 /** Calls `fn` whenever a key is put in or taken out; returns the way to stop. */
 export function watchKeys(fn: (status: KeyStatus) => void): () => void {

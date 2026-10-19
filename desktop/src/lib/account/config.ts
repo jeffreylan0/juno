@@ -13,5 +13,13 @@ export const SUPABASE_URL = ((import.meta.env.WXT_SUPABASE_URL as string | undef
 export const SUPABASE_KEY = ((import.meta.env.WXT_SUPABASE_KEY as string | undefined) ?? '').trim();
 export const ACCOUNTS = !!(SUPABASE_URL && SUPABASE_KEY);
 
+/**
+ * WXT_GOOGLE_CLIENT_ID: the app's own Google client (a desktop one, public by
+ * design; supabase/README.md, step 3), so Google's sign-in page names the app.
+ * Without it, Google sign-in goes through Supabase's, which names the
+ * project's supabase.co address.
+ */
+export const GOOGLE_CLIENT_ID = ((import.meta.env.WXT_GOOGLE_CLIENT_ID as string | undefined) ?? '').trim();
+
 /** The private bucket screenshots go to, as <user id>/<chat id>/<image id>. */
 export const SCREENSHOT_BUCKET = 'screenshots';

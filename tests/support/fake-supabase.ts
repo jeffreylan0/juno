@@ -50,6 +50,8 @@ export class FakeSupabase {
   objects = new Map<string, { type: string; bytes: Uint8Array }>();
   /** Google sign-ins in flight: the code handed back, and the challenge it was asked with. */
   pkce = new Map<string, { challenge: string; email: string }>();
+  /** Google ID tokens it takes (signInWithIdToken), with the hash of the nonce each carries. */
+  idTokens = new Map<string, { nonceHash: string; email: string }>();
   /** Every request, for assertions: "METHOD path". */
   log: string[] = [];
   private n = 0;
@@ -212,6 +214,13 @@ export class FakeSupabase {
       if (!flow || flow.challenge !== challenge) return this.json(400, { code: 400, error_code: 'flow_state_not_found', msg: 'invalid flow state' });
       this.pkce.delete(body.auth_code!);
       return this.json(200, this.session(this.userByEmail(flow.email) ?? this.addUser(flow.email)));
+    }
+    if (path === 'token' && url.searchParams.get('grant_type') === 'id_token') {
+      const token = this.idTokens.get(body.id_token ?? '');
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body.nonce ?? '')));
+      const hash = Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+      if (body.provider !== 'google' || !token || token.nonceHash !== hash) return this.json(400, { code: 400, error_code: 'bad_jwt', msg: 'Invalid ID token' });
+      return this.json(200, this.session(this.userByEmail(token.email) ?? this.addUser(token.email)));
     }
     if (path === 'logout') return new Response(null, { status: 204, headers: CORS });
     return this.json(404, { msg: 'no route' });

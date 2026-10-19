@@ -21,6 +21,7 @@ function fakeCore(opts: { delay?: (event: string) => number } = {}) {
   const listeners = new Map<string, Map<string, Set<Handler>>>();
   const areas: Record<string, Map<string, unknown>> = { local: new Map(), session: new Map() };
   const invoked: Array<[string, string, Record<string, unknown> | undefined]> = [];
+  let port = 50000;
   const deliver = (label: string, event: string, payload: unknown) => {
     // Through JSON, as the real IPC does.
     const copy = payload === undefined ? undefined : JSON.parse(JSON.stringify(payload));
@@ -56,6 +57,7 @@ function fakeCore(opts: { delay?: (event: string) => number } = {}) {
       if (Object.keys(changes).length) emitAll('storage:changed', { area, changes });
     },
     app_info: () => ({ version: '0.1.0', shortcut: { shortcut: '⌥⇧S', error: null } }),
+    auth_listen: () => ++port,
   };
   const transport = (label: string): Transport => ({
     label,
@@ -267,6 +269,21 @@ describe('Google sign-in in the app', () => {
     await send('com.humanbn.juno://something-else');
     await send(`${AUTH_REDIRECT}?code=abc`);
     expect(await flow).toBe(`${AUTH_REDIRECT}?code=abc`);
+  });
+
+  it('or to a one-time listener on this computer, taking only what came back to its own port', async () => {
+    const hub = fakeCore();
+    const opened: string[] = [];
+    const settings = createBrowser(hub.transport('settings'), { origin: 'tauri://localhost', openUrl: (u) => opened.push(u) });
+    await settings.ready;
+    const flow = settings.identity.launchLoopbackFlow((r) => `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({ redirect_uri: r })}`);
+    await settle();
+    expect(opened).toEqual(['https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=http%3A%2F%2F127.0.0.1%3A50001']);
+    // What oauth.rs emits when Google sends the browser back: an older sign-in's listener is not this one.
+    const send = (port: number, query: string) => hub.transport('core').emitTo('settings', 'auth:returned', { port, query });
+    await send(50000, 'code=old');
+    await send(50001, 'code=abc&state=s');
+    expect(await flow).toBe('http://127.0.0.1:50001/?code=abc&state=s');
   });
 });
 

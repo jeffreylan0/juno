@@ -14,4 +14,7 @@ export const BRAND = {
   iconName: MAC ? 'the menu bar icon' : 'the tray icon',
   /** The maker's site. */
   homepage: 'https://humanbn.com',
+  /** Published from legal/ in the repository. */
+  privacy: 'https://humanbn.com/privacy',
+  terms: 'https://humanbn.com/terms',
 } as const;

@@ -1,16 +1,18 @@
 /**
- * Settings, in the order a student meets them (until the first-run setup is
- * done, Setup.tsx instead):
+ * Settings, as a dashboard first (until the first-run setup is done,
+ * Setup.tsx instead): the account and this month's answers at the top
+ * (Dashboard.tsx), then the settings, the most used first, with a menu of
+ * them at the side once they are reached:
  *
- *  1. Answers: who answers (Claude, ChatGPT, hosted or a local model), and
+ *  1. Answers: who answers (your API key, hosted or a local model), and
  *     only what that choice needs below it.
  *  2. Asking: the macros, the default prompt, and whether a selection is
  *     asked about straight away.
- *  3. Selecting: the shortcut, adjusting a box, where the bar and panel go.
- *  4. Appearance: the colour theme.
+ *  3. Appearance: light or dark, and the colour theme.
+ *  4. Selecting: the shortcut, adjusting a box, where the bar and panel go.
  *  5. Chats & privacy: how many chats are kept, deleting them, what is sent.
- *  6. Permissions (macOS), Juno (version, updates, login, Quit), and
- *     Account in builds with accounts (Account.tsx).
+ *  6. Account (signed in: cloud storage, deleting it), Permissions (macOS),
+ *     and Juno (version, updates, login, the privacy policy and terms, Quit).
  *
  * Text is kept short: a label, and a line of help only where the choice
  * isn't clear without it. Every change saves as it is made, and a small
@@ -24,7 +26,7 @@ import { ACCOUNTS } from '@/lib/account/config';
 import { listChats } from '@/lib/chats';
 import { MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
 import type { KeyModel } from '@/lib/providers/byok';
-import type { KeyStatus } from '@/lib/providers/types';
+import type { KeyStatus, KeyVendor as Vendor } from '@/lib/providers/types';
 import {
   CHAT_LIMITS,
   getSettings,
@@ -33,6 +35,7 @@ import {
   settingsItem,
   type Macro,
   type PanelSize,
+  type Scheme,
   type SendBehavior,
   type Settings,
 } from '@/lib/storage';
@@ -41,8 +44,9 @@ import { hasHosted, useAccount, type AccountState } from '@/ui/useAccount';
 import { useKeyStatus } from '@/ui/useKeyStatus';
 import { MAC } from '../os';
 import { AppSection } from './AppSection';
-import { VENDOR_OF, choiceOf, patchFor, type Choice } from './choices';
-import { KeyField, type Vendor } from './KeyField';
+import { choiceOf, keyPatch, patchFor, type Choice } from './choices';
+import { Dashboard } from './Dashboard';
+import { KeyField } from './KeyField';
 import { LocalServer } from './LocalServer';
 import { Permissions } from './Permissions';
 import { PlacePicker } from './PlacePicker';
@@ -53,10 +57,15 @@ import { useDebounced } from './useDebounced';
 import { AccountSection } from './Account';
 
 const CHOICES: { id: Choice; name: string; sub: string }[] = [
-  { id: 'claude', name: 'Claude', sub: 'Your key' },
-  { id: 'chatgpt', name: 'ChatGPT', sub: 'Your key' },
+  { id: 'key', name: 'API key', sub: 'Claude or ChatGPT' },
   { id: 'hosted', name: 'Hosted', sub: 'Your plan' },
   { id: 'local', name: 'Local model', sub: 'This computer' },
+];
+
+const SCHEME_LABELS: { id: Scheme; label: string }[] = [
+  { id: 'system', label: 'System' },
+  { id: 'light', label: 'Light' },
+  { id: 'dark', label: 'Dark' },
 ];
 
 
@@ -65,15 +74,16 @@ const SEND: { id: SendBehavior; label: string; help?: string }[] = [
   { id: 'auto', label: 'Ask right away', help: 'With the default prompt, or the first macro.' },
 ];
 
-const SECTIONS = [
+/** The settings, the most used first; the side menu lists them. */
+const SECTIONS = (signedIn: boolean) => [
   { id: 'answers', title: 'Answers' },
   { id: 'asking', title: 'Asking' },
-  { id: 'selecting', title: 'Selecting' },
   { id: 'appearance', title: 'Appearance' },
+  { id: 'selecting', title: 'Selecting' },
   { id: 'privacy', title: 'Chats & privacy' },
+  ...(ACCOUNTS && signedIn ? [{ id: 'account-settings', title: 'Account' }] : []),
   ...(MAC ? [{ id: 'permissions', title: 'Permissions' }] : []),
   { id: 'app', title: BRAND.name },
-  ...(ACCOUNTS ? [{ id: 'account', title: 'Account' }] : []),
 ];
 
 export function Options() {
@@ -129,18 +139,13 @@ export function Options() {
   if (!settings || !keys) return <main className="options" />;
   if (!settings.setupDone) return <Setup settings={settings} keys={keys} account={account} save={save} />;
 
+  const sections = SECTIONS(!!account.user);
   return (
     <div className="page">
       <header className="top">
         <div className="top-inner">
           <h1>{BRAND.name}</h1>
-          <nav className="tabs" aria-label="Sections">
-            {SECTIONS.map((s) => (
-              <a key={s.id} href={`#${s.id}`}>
-                {s.title}
-              </a>
-            ))}
-          </nav>
+          <span className="spacer" />
           <span className={`saved${saved ? ' on' : ''}`} data-testid="saved" aria-live="polite">
             {saved ? 'Saved' : ''}
           </span>
@@ -151,32 +156,98 @@ export function Options() {
       </header>
 
       <main className="options">
-        <AnswersSection
-          settings={settings}
-          keys={keys}
-          models={models}
-          account={account}
-          save={save}
-          onKeySaved={() => setSaved(Date.now())}
-          rememberModels={rememberModels}
-        />
-        <AskingSection settings={settings} save={save} />
-        <SelectingSection settings={settings} save={save} />
-        <Section id="appearance" title="Appearance">
-          <ThemePicker value={settings.theme} onChange={(theme) => void save({ theme })} />
-        </Section>
-        <PrivacySection settings={settings} save={save} account={account} />
-        {MAC && (
-          <Section id="permissions" title="Permissions">
-            <Permissions />
-          </Section>
-        )}
-        <Section id="app" title={BRAND.name}>
-          <AppSection settings={settings} save={save} />
-        </Section>
-        <AccountSection account={account} settings={settings} save={save} />
+        <Dashboard settings={settings} keys={keys} account={account} />
+        <div className="layout">
+          <SideMenu sections={sections} />
+          <div className="sections">
+            <AnswersSection
+              settings={settings}
+              keys={keys}
+              models={models}
+              account={account}
+              save={save}
+              onKeySaved={() => setSaved(Date.now())}
+              rememberModels={rememberModels}
+            />
+            <AskingSection settings={settings} save={save} />
+            <Section id="appearance" title="Appearance">
+              <div className="field">
+                <span className="field-label">Light or dark</span>
+                <div className="segments" role="radiogroup" aria-label="Light or dark" data-testid="scheme">
+                  {SCHEME_LABELS.map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={settings.scheme === o.id}
+                      data-scheme-choice={o.id}
+                      onClick={() => void save({ scheme: o.id })}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <ThemePicker value={settings.theme} onChange={(theme) => void save({ theme })} />
+            </Section>
+            <SelectingSection settings={settings} save={save} />
+            <PrivacySection settings={settings} save={save} account={account} />
+            <AccountSection account={account} settings={settings} save={save} />
+            {MAC && (
+              <Section id="permissions" title="Permissions">
+                <Permissions />
+              </Section>
+            )}
+            <Section id="app" title={BRAND.name}>
+              <AppSection settings={settings} save={save} />
+            </Section>
+          </div>
+        </div>
       </main>
     </div>
+  );
+}
+
+/**
+ * The settings, at the side: it fades in once the dashboard has scrolled
+ * away (the settings are reached), and marks the one being read.
+ */
+function SideMenu({ sections }: { sections: { id: string; title: string }[] }) {
+  const [shown, setShown] = useState(false);
+  const [here, setHere] = useState(sections[0]?.id ?? '');
+  const ids = sections.map((s) => s.id).join(' ');
+  useEffect(() => {
+    const page = document.querySelector('.page');
+    const dashboard = document.getElementById('dashboard');
+    if (!page || !dashboard) return;
+    // Shown once less than a third of the dashboard is left on screen.
+    const away = new IntersectionObserver(([e]) => setShown(!!e && e.intersectionRatio < 0.34), { root: page, threshold: [0, 0.34, 1] });
+    away.observe(dashboard);
+    // The section crossing the upper part of the window is the one being read.
+    const reading = new IntersectionObserver(
+      (entries) => {
+        const top = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (top) setHere(top.target.id);
+      },
+      { root: page, rootMargin: '-15% 0px -70% 0px' },
+    );
+    for (const id of ids.split(' ')) {
+      const el = document.getElementById(id);
+      if (el) reading.observe(el);
+    }
+    return () => {
+      away.disconnect();
+      reading.disconnect();
+    };
+  }, [ids]);
+  return (
+    <nav className={`side${shown ? ' on' : ''}`} aria-label="Settings" aria-hidden={!shown} data-testid="side-menu">
+      {sections.map((s) => (
+        <a key={s.id} href={`#${s.id}`} className={here === s.id ? 'here' : undefined} tabIndex={shown ? 0 : -1}>
+          {s.title}
+        </a>
+      ))}
+    </nav>
   );
 }
 
@@ -239,9 +310,8 @@ function AnswersSection({
   rememberModels: (vendor: Vendor, list: KeyModel[]) => Promise<void>;
 }) {
   const choice = choiceOf(settings);
-  const vendor = choice ? VENDOR_OF[choice] : undefined;
 
-  const choose = (next: Choice) => void save(patchFor(next, settings));
+  const choose = (next: Choice) => void save(patchFor(next, settings, keys));
   // Offered once the account's plan includes hosted answers (or already picked).
   const hosted = hasHosted(account);
   const offered = CHOICES.filter((c) => c.id !== 'hosted' || hosted || choice === 'hosted');
@@ -269,13 +339,11 @@ function AnswersSection({
           </p>
         ))}
 
-      {vendor && (
+      {choice === 'key' && (
         <KeyAndModel
-          key={vendor}
-          vendor={vendor}
           settings={settings}
-          hint={keys[vendor]}
-          listed={models[vendor]}
+          keys={keys}
+          listed={models[settings.vendor]}
           save={save}
           onKeySaved={onKeySaved}
           rememberModels={rememberModels}
@@ -287,23 +355,21 @@ function AnswersSection({
 }
 
 function KeyAndModel({
-  vendor,
   settings,
-  hint,
+  keys,
   listed,
   save,
   onKeySaved,
   rememberModels,
 }: {
-  vendor: Vendor;
   settings: Settings;
-  /** The saved key's last four characters, if there is one. */
-  hint: string | null;
+  keys: KeyStatus;
   listed: KeyModel[] | undefined;
   save: (patch: Partial<Settings>) => Promise<void>;
   onKeySaved: () => void;
   rememberModels: (vendor: Vendor, list: KeyModel[]) => Promise<void>;
 }) {
+  const vendor = settings.vendor;
   const table = MODEL_TABLE[vendor];
   const override = settings.modelOverride?.vendor === vendor ? settings.modelOverride.model : '';
   // Selections are screenshots: only models that read images are offered (one picked before stays, marked).
@@ -313,8 +379,15 @@ function KeyAndModel({
 
   return (
     <div className="sub" data-testid="keys">
-      <KeyField vendor={vendor} hint={hint} onSaved={onKeySaved} onChecked={(models) => void rememberModels(vendor, models)} />
+      <KeyField
+        keys={keys}
+        current={vendor}
+        onUse={(v) => void save(keyPatch(v, settings))}
+        onSaved={onKeySaved}
+        onChecked={(v, models) => void rememberModels(v, models)}
+      />
 
+      {keys[vendor] && (
       <label className="field">
         <span className="field-label">Model</span>
         <select
@@ -335,6 +408,7 @@ function KeyAndModel({
         </select>
         {!listed && <small className="help">Check your key to see every model.</small>}
       </label>
+      )}
     </div>
   );
 }
