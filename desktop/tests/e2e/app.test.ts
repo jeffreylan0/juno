@@ -47,17 +47,22 @@ async function waiting() {
 /**
  * The waiting bar once the panel is open, as the native core knows it: it
  * narrows then (chats, ghost and gear are the panel's), so a position read
- * before that misses it.
+ * before that misses it. The narrowing is animated, so the bar's width is
+ * read again each time, and taken once the core has had it for two looks
+ * running (a slow machine can be mid-animation when the buttons are gone).
  */
 async function settledBar() {
   await waitFor('the panel', async () => (await app.window('panel'))?.visible);
-  const width = await waitFor('the bar without chats, ghost and gear', async () => {
-    const l = await barLayout();
-    return l.shown.length === 0 ? l.bar.width : null;
-  });
+  let before = '';
   const o = await waitFor('the narrower bar told to the core', async () => {
+    const l = await barLayout();
     const o = await app.overlay();
-    return o.visible && !o.interactive && o.regions[0] && Math.abs(o.regions[0].width - width) <= 2 ? o : null;
+    const r = o.regions[0];
+    const told = l.shown.length === 0 && o.visible && !o.interactive && !!r && Math.abs(r.width - l.bar.width) <= 2;
+    const now = told ? JSON.stringify(r) : '';
+    const settled = told && now === before;
+    before = now;
+    return settled ? o : null;
   });
   return o.regions[0]!;
 }
