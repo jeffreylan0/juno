@@ -260,7 +260,7 @@ it('the panel: ✕ first, then the chats menu; text at the system’s size; noti
   await waitFor('the notice back', () => app.read('panel', `!!document.querySelector('[data-testid=notice]')`));
   expect(await app.read('panel', `document.querySelector('[data-testid=notice]').textContent`)).toContain('Pick who answers');
   expect(await app.read('panel', `getComputedStyle(document.querySelector('.notices')).position`)).toBe('absolute');
-  expect(await app.read('panel', `${ring}.style.animationDuration`)).toBe('9000ms');
+  expect(await app.read('panel', `${ring}.style.animationDuration`)).toBe('5000ms');
   // The ring runs out: the notice goes.
   await app.eval('panel', `${ring}.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))`);
   await waitFor('the notice gone again', async () => !(await app.read('panel', `!!document.querySelector('[data-testid=notice]')`)));
