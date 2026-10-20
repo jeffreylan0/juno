@@ -243,23 +243,35 @@ pub const EARLIER_IDENTIFIER: &str = "org.humanbn.selectionai";
 /// The first start after the rename to Juno: the earlier build's `store`
 /// folder (settings, keys, chats, screenshots) moves into Juno's, so nothing
 /// has to be entered again. Tried under each base in turn (on Windows, the
-/// earlier builds kept it in the roaming profile); nothing happens once Juno
-/// has a folder of its own, or if there is no earlier one.
+/// earlier builds kept it in the roaming profile).
+///
+/// Once Juno has a store of its own, an earlier build's secrets file that is
+/// still there (a second copy, or one that could not be moved) is deleted:
+/// nothing reads it again, and the earliest builds kept API keys in it
+/// unencrypted.
 pub fn adopt_earlier_store(dir: &Path, bases: &[PathBuf]) {
-    if dir.exists() {
-        return;
+    if !dir.exists() {
+        for base in bases {
+            let earlier = base.join(EARLIER_IDENTIFIER).join("store");
+            if !earlier.is_dir() {
+                continue;
+            }
+            if let Some(parent) = dir.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            match fs::rename(&earlier, dir) {
+                Ok(()) => break,
+                Err(e) => eprintln!("[juno] could not move the earlier build's data: {e}"),
+            }
+        }
     }
-    for base in bases {
-        let earlier = base.join(EARLIER_IDENTIFIER).join("store");
-        if !earlier.is_dir() {
-            continue;
-        }
-        if let Some(parent) = dir.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        match fs::rename(&earlier, dir) {
-            Ok(()) => return,
-            Err(e) => eprintln!("[juno] could not move the earlier build's data: {e}"),
+    if dir.exists() {
+        for base in bases {
+            let stale = base.join(EARLIER_IDENTIFIER).join("store").join("secrets.json");
+            match fs::remove_file(&stale) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => eprintln!("[juno] could not delete the earlier build's secrets: {e}"),
+                _ => {}
+            }
         }
     }
 }
@@ -596,10 +608,14 @@ mod tests {
         assert!(dir.join("secrets.json").is_file());
         assert!(!earlier.exists());
 
-        // Juno has its own folder now: a later earlier-build folder is left alone.
+        // Juno has its own folder now: a second earlier copy is not moved, but its keys go.
         fs::create_dir_all(&earlier).unwrap();
+        fs::write(earlier.join("secrets.json"), br#"{"keys":{"anthropic":"sk-ant-x"}}"#).unwrap();
+        fs::write(earlier.join("chat.json"), b"{}").unwrap();
         adopt_earlier_store(&dir, &[roaming]);
-        assert!(earlier.exists());
+        assert!(!earlier.join("secrets.json").exists());
+        assert!(earlier.join("chat.json").is_file());
+        assert_eq!(fs::read(dir.join("secrets.json")).unwrap(), b"{}");
         let _ = fs::remove_dir_all(&base);
     }
 

@@ -21,7 +21,6 @@
  * opens one, adds to it or deletes it (they stay "foreign" until the cloud
  * shows one is this account's own).
  */
-import { storage } from '@wxt-dev/storage';
 import {
   getSavedChat,
   listChats,
@@ -34,7 +33,7 @@ import {
   type ChatSummary,
 } from '../chats';
 import { IMAGE_REF, images } from '../images';
-import { getSettings, type Settings } from '../storage';
+import { defineItem, getSettings, type Settings } from '../storage';
 import { ACCOUNTS } from './config';
 import {
   deleteAllCloudChats,
@@ -67,7 +66,7 @@ interface SyncState {
   foreign?: string[];
 }
 
-const stateItem = storage.defineItem<SyncState | null>('local:sync', { fallback: null });
+const stateItem = defineItem<SyncState | null>('sync', null);
 
 /** Pulls start this far before the last row seen, for writes still committing then. */
 const OVERLAP_MS = 60_000;

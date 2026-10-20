@@ -2,8 +2,7 @@
  * A WebExtension-shaped `browser` for the app's windows (the code began as a
  * browser extension). Installed as `globalThis.browser`, it is what lib/
  * (chats, the current chat, images, settings, accounts, sync), ui/ (the
- * panel) and the settings page talk to, as do WXT's `storage` helpers, which
- * read `globalThis.browser`.
+ * panel) and the settings page talk to.
  *
  *  - storage.local / storage.session: kept by the native core (store.rs),
  *    shared by every window; every change reaches every window's
@@ -17,7 +16,7 @@ import type { Transport } from './transport';
 
 /** The one window of chats (lib/current.ts keys everything by window). */
 export const WINDOW_ID = 1;
-export const RUNTIME_ID = 'selection-ai-desktop';
+const RUNTIME_ID = 'selection-ai-desktop';
 /** How long a message waits for the core's answer before giving up. */
 const REPLY_TIMEOUT_MS = 120_000;
 /** How long a port's messages wait for a connect that was overtaken. */
@@ -26,7 +25,7 @@ const EARLY_PORT_MS = 10_000;
 type Listener = (...args: never[]) => unknown;
 
 /** chrome.events.Event, minimally. */
-export class Ev<L extends Listener> {
+class Ev<L extends Listener> {
   private set = new Set<L>();
   addListener(l: L): void {
     this.set.add(l);
@@ -79,8 +78,6 @@ interface Wire {
 let counter = 0;
 const uid = () => `${Date.now().toString(36)}-${(counter++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-/** Where Google sign-in comes back to: the app's own link (lib.rs hands it to settings as `app:deep-link`). */
-export const AUTH_REDIRECT = 'com.humanbn.juno://auth/callback';
 /** How long a sign-in in the browser is waited for. */
 const AUTH_WAIT_MS = 10 * 60_000;
 
@@ -287,26 +284,9 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
   const tell = (label: string, msg: unknown): Promise<void> =>
     t.emitTo(label, 'rt:msg', { id: uid(), from: t.label, msg, reply: false } satisfies Wire['msg']).catch(() => {});
 
-  let shortcut: Promise<string> | null = null;
-  /** Opens `url` in the student's browser; resolves with the first `event` that `take` makes something of. */
-  const authFlow = <T>(url: string, event: string, take: (payload: T) => string | null) =>
-    new Promise<string>((resolve, reject) => {
-      let off = () => {};
-      const timer = setTimeout(() => {
-        off();
-        reject(new Error('Sign-in timed out'));
-      }, AUTH_WAIT_MS);
-      void t
-        .listen<T>(event, (payload) => {
-          const back = take(payload);
-          if (back === null) return;
-          clearTimeout(timer);
-          off();
-          resolve(back);
-        })
-        .then((unlisten) => (off = unlisten));
-      opts.openUrl?.(url);
-    });
+  /** What the native core says about the app once (app_info): the shortcut it registered, this computer's id. */
+  let info: Promise<{ shortcut: { shortcut: string; error: string | null }; device: string | null } | null> | null = null;
+  const appInfo = () => (info ??= t.invoke<{ shortcut: { shortcut: string; error: string | null }; device: string | null }>('app_info').catch(() => null));
 
   const browser = {
     /** Resolves once this window hears events (tests wait for it). */
@@ -321,33 +301,46 @@ export function createBrowser(t: Transport, opts: BrowserOptions = {}) {
       onConnect,
       /** The settings window, at `section` if one is named ("account"). */
       openOptionsPage: (section?: string) => t.invoke('settings_open', { hash: section ?? null }),
+      /** This computer, for the unlock (src-tauri/src/device.rs: a salted hash), or null. */
+      deviceId: async (): Promise<string | null> => (await appInfo())?.device ?? null,
     },
     /**
-     * Sign-in (lib/account/session.ts): the page opens in the student's
-     * browser, and the answer comes back through the app's link, or to a
-     * one-time listener on this computer (src-tauri/src/oauth.rs).
+     * Google sign-in (lib/account/session.ts): the page opens in the
+     * student's browser, and the answer comes back to a one-time listener on
+     * this computer (src-tauri/src/oauth.rs).
      */
     identity: {
-      getRedirectURL: () => AUTH_REDIRECT,
-      launchWebAuthFlow: ({ url }: { url: string; interactive?: boolean }) =>
-        authFlow(url, 'app:deep-link', (back: string) => (back.startsWith(AUTH_REDIRECT) ? back : null)),
-      /** `url` is given the listener's address to come back to; resolves with the address it came back on. */
+      /**
+       * `url` is given the listener's address to come back to; resolves with
+       * the address it came back on. What came back to an older sign-in's
+       * listener (another port) is not this one's.
+       */
       launchLoopbackFlow: async (url: (redirectUri: string) => string) => {
         const port = await t.invoke<number>('auth_listen');
         const redirect = `http://127.0.0.1:${port}`;
-        return await authFlow(url(redirect), 'auth:returned', (back: { port: number; query: string }) =>
-          back.port === port ? `${redirect}/?${back.query}` : null,
-        );
+        return await new Promise<string>((resolve, reject) => {
+          let off = () => {};
+          const timer = setTimeout(() => {
+            off();
+            reject(new Error('Sign-in timed out'));
+          }, AUTH_WAIT_MS);
+          void t
+            .listen<{ port: number; query: string }>('auth:returned', (back) => {
+              if (back.port !== port) return;
+              clearTimeout(timer);
+              off();
+              resolve(`${redirect}/?${back.query}`);
+            })
+            .then((unlisten) => (off = unlisten));
+          opts.openUrl?.(url(redirect));
+        });
       },
     },
     commands: {
       /** The shortcut the app registered (ui/useShortcut.ts). */
       getAll: async () => {
-        shortcut ??= t
-          .invoke<{ shortcut: { shortcut: string; error: string | null } }>('app_info')
-          .then((info) => (info.shortcut.error ? '' : info.shortcut.shortcut))
-          .catch(() => '');
-        return [{ name: '_execute_action', description: 'Start a selection', shortcut: await shortcut }];
+        const s = (await appInfo())?.shortcut;
+        return [{ name: '_execute_action', description: 'Start a selection', shortcut: s && !s.error ? s.shortcut : '' }];
       },
     },
   };

@@ -11,7 +11,7 @@ import { verifySession } from '../../worker/src/auth';
 import { readBody } from '../../worker/src/body';
 import { checkout, form, prices, webhook } from '../../worker/src/billing';
 import { googleToken } from '../../worker/src/google';
-import { cleanCode, newCode, unlockCheckout, unlockClaim, unlockDone, unlockPrice, unlockRestore } from '../../worker/src/unlock';
+import { unlockCheckout, unlockClaim, unlockDone, unlockPrice, unlockRestore } from '../../worker/src/unlock';
 import { LIMITS, anthropicToOpenAI, cacheScope, callVendor, parseAsk, scoped, toAnthropic } from '../../worker/src/models';
 import type { Env } from '../../worker/src/index';
 
@@ -523,37 +523,38 @@ describe('Google sign-in for the app', () => {
   });
 });
 
-describe('the unlock, without an account', () => {
-  const unlockEnv = () => billingEnv({ UNLOCK_PRICE: 'unlock' });
+describe('the unlock, without an account, for one computer', () => {
+  const DEVICE = 'a'.repeat(64);
+  const OTHER = 'b'.repeat(64);
+  let keys: CryptoKeyPair;
+  const unlockEnv = async () => {
+    keys ??= (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+    return billingEnv({ UNLOCK_PRICE: 'unlock', UNLOCK_SIGNING_KEY: JSON.stringify(await crypto.subtle.exportKey('jwk', keys.privateKey)) });
+  };
   const post = (path: string, body: unknown) => new Request(`https://w.example${path}`, { method: 'POST', body: JSON.stringify(body) });
+  /** What the app checks (lib/account/unlock.ts): the signature, and whose computer it names. */
+  const opened = async (lic: string) => {
+    const [body, sig] = lic.split('.') as [string, string];
+    const bytes = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+    const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, keys.publicKey, bytes(sig), new TextEncoder().encode(body));
+    return ok ? (JSON.parse(new TextDecoder().decode(bytes(body))) as { d: string; p: string }) : null;
+  };
 
-  it('makes codes that are hard to guess and easy to type back', () => {
-    const codes = new Set(Array.from({ length: 50 }, newCode));
-    expect(codes.size).toBe(50);
-    for (const c of codes) expect(c).toMatch(/^JUNO-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
-    expect(cleanCode(' juno-ab12 cd34-ef56 ')).toBe('JUNO-AB12-CD34-EF56');
-    expect(cleanCode('ab12cd34ef56')).toBe('JUNO-AB12-CD34-EF56');
-    // Letters left out of the alphabet, quotes, and the wrong length are no code.
-    expect([cleanCode('JUNO-AB12-CD34-EF5I'), cleanCode("JUNO-AB12-CD34-EF5'"), cleanCode('JUNO-AB12-CD34'), cleanCode(7)]).toEqual([null, null, null, null]);
-  });
-
-  it('sells one price at checkout, its code on the payment, and gives the code once Stripe says it is paid', async () => {
+  it('sells one price at checkout for this computer, and signs a license for it alone once Stripe says it is paid', async () => {
     let paid = false;
-    let code = '';
     const calls = fakeServices({
       'GET stripe/v1/prices': () => ({ data: [{ id: 'p_u', type: 'one_time', unit_amount: 499, currency: 'usd' }] }),
-      'POST stripe/v1/checkout/sessions': (body) => {
-        code = new URLSearchParams(body).get('metadata[unlock_code]')!;
-        return { id: 'cs_test_abcdefghij1', url: 'https://checkout.stripe.com/c/pay/cs_test_abcdefghij1' };
-      },
+      'POST stripe/v1/checkout/sessions': () => ({ id: 'cs_test_abcdefghij1', url: 'https://checkout.stripe.com/c/pay/cs_test_abcdefghij1' }),
       'GET stripe/v1/checkout/sessions/cs_test_abcdefghij1': () => ({
         id: 'cs_test_abcdefghij1',
+        payment_intent: 'pi_1',
         payment_status: paid ? 'paid' : 'unpaid',
-        metadata: { kind: 'unlock', unlock_code: code },
+        metadata: { kind: 'unlock', unlock_device: DEVICE },
       }),
     });
-    expect(await unlockPrice(unlockEnv())).toEqual({ amount: 499, currency: 'usd' });
-    expect(await unlockCheckout(post('/unlock/checkout', {}), unlockEnv())).toEqual({
+    const e = await unlockEnv();
+    expect(await unlockPrice(e)).toEqual({ amount: 499, currency: 'usd' });
+    expect(await unlockCheckout(post('/unlock/checkout', { device: DEVICE }), e)).toEqual({
       url: 'https://checkout.stripe.com/c/pay/cs_test_abcdefghij1',
       session: 'cs_test_abcdefghij1',
     });
@@ -562,40 +563,47 @@ describe('the unlock, without an account', () => {
       mode: 'payment',
       'line_items[0][price]': 'p_u',
       'metadata[kind]': 'unlock',
-      'payment_intent_data[metadata][unlock_code]': code,
+      'payment_intent_data[metadata][unlock_device]': DEVICE,
       success_url: 'https://w.example/unlock/done?session_id={CHECKOUT_SESSION_ID}',
     });
     expect(sent.customer).toBeUndefined();
 
-    await expect(unlockClaim(post('/unlock/claim', { session: 'cs_test_abcdefghij1' }), unlockEnv())).rejects.toMatchObject({ status: 409 });
-    expect(await (await unlockDone(new Request('https://w.example/unlock/done?session_id=cs_test_abcdefghij1'), unlockEnv())).text()).not.toContain(code);
+    const claim = (device: string) => unlockClaim(post('/unlock/claim', { session: 'cs_test_abcdefghij1', device }), e);
+    await expect(claim(DEVICE)).rejects.toMatchObject({ status: 409 });
+    expect(await (await unlockDone(new Request('https://w.example/unlock/done?session_id=cs_test_abcdefghij1'), e)).text()).toContain('Almost there');
     paid = true;
-    expect(await unlockClaim(post('/unlock/claim', { session: 'cs_test_abcdefghij1' }), unlockEnv())).toEqual({ code });
-    const done = await unlockDone(new Request('https://w.example/unlock/done?session_id=cs_test_abcdefghij1'), unlockEnv());
-    expect(await done.text()).toContain(`<code>${code}</code>`);
+    const { license } = await claim(DEVICE);
+    expect(await opened(license)).toMatchObject({ d: DEVICE, p: 'pi_1' });
+    // Another computer asking about this checkout gets nothing.
+    await expect(claim(OTHER)).rejects.toMatchObject({ status: 404 });
+    const done = await unlockDone(new Request('https://w.example/unlock/done?session_id=cs_test_abcdefghij1'), e);
+    expect(await done.text()).toContain('Unlocked');
     expect(done.headers.get('content-security-policy')).toContain("default-src 'none'");
-    // Only an unlock's checkout, and only a session id, is looked up.
-    await expect(unlockClaim(post('/unlock/claim', { session: '../customers' }), unlockEnv())).rejects.toMatchObject({ status: 404 });
+    // Only an unlock's checkout, and only a session id, is looked up; only a computer id is taken.
+    await expect(unlockClaim(post('/unlock/claim', { session: '../customers', device: DEVICE }), e)).rejects.toMatchObject({ status: 404 });
+    await expect(unlockCheckout(post('/unlock/checkout', { device: "x' OR status:'succeeded" }), e)).rejects.toMatchObject({ status: 400 });
   });
 
-  it('is not on offer without its price', async () => {
+  it('is not on offer without its price or its signing key', async () => {
     fakeServices({});
     await expect(unlockPrice(billingEnv({ UNLOCK_PRICE: '' }))).rejects.toMatchObject({ status: 404 });
-    await expect(unlockCheckout(post('/unlock/checkout', {}), billingEnv({ UNLOCK_PRICE: '' }))).rejects.toMatchObject({ status: 404 });
+    await expect(unlockPrice(billingEnv({ UNLOCK_PRICE: 'unlock', UNLOCK_SIGNING_KEY: '' }))).rejects.toMatchObject({ status: 404 });
   });
 
-  it('takes a code back on another computer if its payment went through and was not refunded', async () => {
+  it('gives this computer its unlock again after a reinstall, if the payment went through and was not refunded', async () => {
     let refunded = false;
     const calls = fakeServices({
-      'GET stripe/v1/payment_intents/search': () => ({ data: [{ metadata: { kind: 'unlock' }, latest_charge: { refunded, disputed: false } }] }),
+      'GET stripe/v1/payment_intents/search': () => ({ data: [{ id: 'pi_9', metadata: { kind: 'unlock' }, latest_charge: { refunded, disputed: false } }] }),
     });
-    expect(await unlockRestore(post('/unlock/restore', { code: 'juno ab12 cd34 ef56' }), unlockEnv())).toEqual({ code: 'JUNO-AB12-CD34-EF56' });
-    expect(calls[0]!.url.searchParams.get('query')).toBe("metadata['unlock_code']:'JUNO-AB12-CD34-EF56' AND status:'succeeded'");
+    const e = await unlockEnv();
+    const { license } = await unlockRestore(post('/unlock/restore', { device: DEVICE }), e);
+    expect(await opened(license)).toMatchObject({ d: DEVICE, p: 'pi_9' });
+    expect(calls[0]!.url.searchParams.get('query')).toBe(`metadata['unlock_device']:'${DEVICE}' AND status:'succeeded'`);
     refunded = true;
-    await expect(unlockRestore(post('/unlock/restore', { code: 'JUNO-AB12-CD34-EF56' }), unlockEnv())).rejects.toMatchObject({ status: 404 });
-    // Not a code: Stripe is never asked.
+    await expect(unlockRestore(post('/unlock/restore', { device: DEVICE }), e)).rejects.toMatchObject({ status: 404 });
+    // Not a computer id: Stripe is never asked.
     const before = calls.length;
-    await expect(unlockRestore(post('/unlock/restore', { code: "x' OR status:'succeeded" }), unlockEnv())).rejects.toMatchObject({ status: 404 });
+    await expect(unlockRestore(post('/unlock/restore', { device: "x' OR status:'succeeded" }), e)).rejects.toMatchObject({ status: 400 });
     expect(calls.length).toBe(before);
   });
 
@@ -603,7 +611,7 @@ describe('the unlock, without an account', () => {
     const calls = fakeServices({});
     const event = await signed({
       type: 'checkout.session.completed',
-      data: { object: { id: 'cs_1', mode: 'payment', payment_status: 'paid', client_reference_id: null, metadata: { kind: 'unlock', unlock_code: 'JUNO-AB12-CD34-EF56' } } },
+      data: { object: { id: 'cs_1', mode: 'payment', payment_status: 'paid', client_reference_id: null, metadata: { kind: 'unlock', unlock_device: DEVICE } } },
     });
     expect((await webhook(event, billingEnv())).status).toBe(200);
     expect(calls).toEqual([]);

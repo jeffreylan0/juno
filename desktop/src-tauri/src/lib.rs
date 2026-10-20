@@ -9,6 +9,7 @@
 
 mod capture;
 mod crop;
+mod device;
 mod diag;
 mod geometry;
 mod oauth;
@@ -490,6 +491,8 @@ struct AppInfo {
     shortcut: ShortcutStatus,
     /// Started with `--hidden` (at login, say), or by an update: no bar until it is asked for.
     hidden: bool,
+    /// This computer for the unlock (device.rs): a salted hash, nothing more.
+    device: Option<&'static str>,
 }
 
 #[tauri::command(async)]
@@ -499,6 +502,7 @@ fn app_info(app: AppHandle, window: WebviewWindow, state: State<Shared>) -> AppI
         version: app.package_info().version.to_string(),
         shortcut: state.shortcut.lock().unwrap().clone(),
         hidden: std::env::args().any(|a| a == "--hidden") || updates::started_by_update(),
+        device: device::id(),
     }
 }
 
@@ -572,25 +576,6 @@ fn quote_run_entry(app: &AppHandle) -> Res<()> {
 
 // ── The shortcut and the menu bar icon ───────────────────────────────────
 
-/// The app's own link, a reverse-DNS scheme (RFC 8252 §7.1): no other app
-/// named Juno can claim it by accident. Test builds run side by side and
-/// never take it.
-#[cfg(not(feature = "test-hook"))]
-const LINK_SCHEME: &str = "com.humanbn.juno://";
-
-/// The app's link was opened. Today that is only Google sign-in coming back
-/// (`com.humanbn.juno://auth/callback`, platform/browser.ts `identity`): settings,
-/// where it started, hear it and come forward.
-pub(crate) fn deep_link(app: &AppHandle, url: &str) {
-    if !url.starts_with("com.humanbn.juno://auth/") {
-        return;
-    }
-    let _ = app.emit_to(wm::SETTINGS, "app:deep-link", url);
-    if let Some(w) = app.get_webview_window(wm::SETTINGS) {
-        let _ = wm::show_window(&w);
-    }
-}
-
 /// The shortcut (or the menu): the core decides what comes up.
 pub(crate) fn summon(app: &AppHandle) {
     let _ = app.emit_to(wm::CORE, "app:summon", ());
@@ -641,18 +626,11 @@ pub fn run() {
     diag::start();
     let builder = tauri::Builder::default();
     // A second copy was started: this one stays, and brings the bar up, as
-    // opening the app does; or, on Windows and Linux, the app's link was
-    // opened (the system starts a copy with it). Not in test builds, where
-    // each test runs its own copy side by side.
+    // opening the app does. Not in test builds, where each test runs its own
+    // copy side by side.
     #[cfg(not(feature = "test-hook"))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-        match args.iter().find(|a| a.starts_with(LINK_SCHEME)) {
-            Some(url) => deep_link(app, url),
-            None => summon(app),
-        }
-    }));
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| summon(app)));
     let app = builder
-        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::Builder::new().args(["--hidden"]).build())
@@ -703,21 +681,6 @@ pub fn run() {
             diag::note("setup: windows made");
             tray(&handle)?;
             diag::note("setup: tray icon made");
-            {
-                // macOS hands the link to the running app (its Info.plist names
-                // the scheme, from tauri.conf.json); Windows and Linux learn it here.
-                use tauri_plugin_deep_link::DeepLinkExt;
-                let links = handle.clone();
-                app.deep_link().on_open_url(move |event| {
-                    for url in event.urls() {
-                        deep_link(&links, url.as_str());
-                    }
-                });
-                #[cfg(all(any(windows, target_os = "linux"), not(feature = "test-hook")))]
-                if let Err(e) = app.deep_link().register_all() {
-                    diag::note(&format!("setup: link not registered: {e}"));
-                }
-            }
             wm::start_passthrough(handle.clone(), overlay);
             app.manage(updates::Updates::new(&handle));
             updates::start(handle.clone());

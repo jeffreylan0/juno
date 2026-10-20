@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { fakeBrowser } from '@webext-core/fake-browser';
 import type { Plan } from '@shared/payload';
 import {
   autoTitle,
@@ -68,7 +67,6 @@ const answer = (id: string, text: string, over: Partial<AssistantItem> = {}): As
 
 let store: MemoryImageStore;
 beforeEach(() => {
-  fakeBrowser.reset();
   store = new MemoryImageStore();
   setImageStore(store);
 });
@@ -176,7 +174,7 @@ describe('saved chats', () => {
     await saveChat(temp);
     expect(await listChats()).toEqual([]);
     expect(await getChat('t')).toMatchObject({ id: 't', temporary: true });
-    expect(await fakeBrowser.storage.local.get('chat:t')).toEqual({});
+    expect(await browser.storage.local.get('chat:t')).toEqual({});
   });
 
   it('renames without moving the chat, and searches titles, pages and questions', async () => {
@@ -327,7 +325,7 @@ describe('a chat’s life', () => {
   });
 
   it('a temporary chat keeps its screenshots in memory, and finishing deletes it with them', async () => {
-    const memImages = async () => Object.keys(await fakeBrowser.storage.session.get(null)).filter((k) => k.startsWith('img:'));
+    const memImages = async () => Object.keys(await browser.storage.session.get(null)).filter((k) => k.startsWith('img:'));
     const temp = await setTemporary(W, true);
     const { item } = await addSelection(W, { plan: shot('s') });
     // Never on disk: not in IndexedDB, not in the menu.

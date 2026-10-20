@@ -159,6 +159,16 @@ describe('the first-run setup', () => {
   });
 });
 
+describe('the first-launch intro', () => {
+  it('plays for a new student, but not for anyone set up before there was one, and only once', () => {
+    expect(DEFAULT_SETTINGS.introSeen).toBe(false);
+    expect(migrateSettings(undefined).introSeen).toBe(false);
+    expect(migrateSettings({ version: 6, setupDone: true }).introSeen).toBe(true);
+    expect(migrateSettings({ version: 5, provider: 'byok' }).introSeen).toBe(true);
+    expect(migrateSettings({ version: 6, setupDone: false, introSeen: true }).introSeen).toBe(true);
+  });
+});
+
 describe('settings from before v5', () => {
   const v4 = (macros: { id: string; name: string; prompt: string }[]) => ({ version: 4, macros, blockedSites: ['exam.example.edu'] });
   const three = [

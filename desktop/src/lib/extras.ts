@@ -10,15 +10,16 @@
  */
 import { ACCOUNTS } from './account/config';
 import { entitlementItem, type Entitlement } from './account/session';
-import { unlockItem, type Unlock } from './account/unlock';
+import { unlockItem, unlockedHere } from './account/unlock';
 import { DEFAULT_SETTINGS, type Settings } from './storage';
 import { DEFAULT_THEME } from './themes';
 
 /** The macros free to use, the first ones in the list. */
 export const FREE_MACROS = 2;
 
-export function extrasOpen(ent: Entitlement | null, unlock: Unlock | null): boolean {
-  return !ACCOUNTS || !!unlock || (!!ent && ent.plan !== 'free');
+/** `unlocked`: the unlock bought on this computer is here (account/unlock.ts). */
+export function extrasOpen(ent: Entitlement | null, unlocked: boolean): boolean {
+  return !ACCOUNTS || unlocked || (!!ent && ent.plan !== 'free');
 }
 
 /** The settings as they act: with the extras closed, those they would change at their defaults. */
@@ -30,8 +31,8 @@ export function withinPlan(s: Settings, open: boolean): Settings {
 /** Whether the extras are open now. */
 export async function extrasOpenNow(): Promise<boolean> {
   if (!ACCOUNTS) return true;
-  const [ent, unlock] = await Promise.all([entitlementItem.getValue().catch(() => null), unlockItem.getValue().catch(() => null)]);
-  return extrasOpen(ent, unlock);
+  const [ent, unlocked] = await Promise.all([entitlementItem.getValue().catch(() => null), unlockedHere()]);
+  return extrasOpen(ent, unlocked);
 }
 
 /** Calls `fn` with whether the extras are open, as soon as that is known and whenever it changes. */

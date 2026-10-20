@@ -1,9 +1,9 @@
 /**
- * Settings, in storage.local through WXT's `storage` helper. Not the API
- * keys: the native core keeps those where no page can read them (vault.rs).
- * Chats are not here: see lib/chats.ts (and lib/images.ts for screenshots).
+ * Settings, in storage.local, and `defineItem` for the app's other kept
+ * values. Not the API keys: the native core keeps those where no page can
+ * read them (vault.rs). Chats are not here: see lib/chats.ts (and
+ * lib/images.ts for screenshots).
  */
-import { storage } from '@wxt-dev/storage';
 import { DEFAULT_MACROS, DEFAULT_PROMPT, DEFAULT_PROMPTS, type Macro } from '@shared/prompts';
 import type { ModelRef, Provider } from '@shared/payload';
 import type { Place } from '@/selection/bar';
@@ -20,11 +20,11 @@ export type { Macro } from '@shared/prompts';
 export type SendBehavior = 'prefill' | 'auto';
 
 export type Scheme = 'system' | 'light' | 'dark';
-export const SCHEMES: readonly Scheme[] = ['system', 'light', 'dark'];
+const SCHEMES: readonly Scheme[] = ['system', 'light', 'dark'];
 
 /** How many saved chats this computer keeps; the oldest goes first. */
 export const CHAT_LIMITS = [1, 5, 10, 25, 50, 100] as const;
-export const DEFAULT_CHAT_LIMIT = 10;
+const DEFAULT_CHAT_LIMIT = 10;
 
 /** Bumped when a default changes in a way stored settings must pick up. */
 export const SETTINGS_VERSION = 6;
@@ -77,6 +77,8 @@ export interface Settings {
   cloudSync: boolean;
   localBaseUrl: string;
   localModel: string;
+  /** The first-launch intro (settings/Intro.tsx) has played: it plays once. */
+  introSeen: boolean;
   /** The first-run setup (settings/Setup.tsx) is behind the student. */
   setupDone: boolean;
 }
@@ -100,12 +102,39 @@ export const DEFAULT_SETTINGS: Settings = {
   cloudSync: false,
   localBaseUrl: 'http://localhost:11434/v1',
   localModel: 'qwen2.5vl:7b',
+  introSeen: false,
   setupDone: false,
 };
 
-export const settingsItem = storage.defineItem<Settings>('local:settings', {
-  fallback: DEFAULT_SETTINGS,
-});
+/** One value in storage.local, under `key`: `fallback` while there is none, and every change to it. */
+export interface Item<T> {
+  getValue(): Promise<T>;
+  /** Null removes it. */
+  setValue(value: T): Promise<void>;
+  removeValue(): Promise<void>;
+  /** Called on each change, from any window; returns the way to stop. */
+  watch(cb: (value: T, old: T) => void): () => void;
+}
+
+export function defineItem<T>(key: string, fallback: T): Item<T> {
+  const or = (v: unknown) => (v ?? fallback) as T;
+  const remove = () => browser.storage.local.remove(key);
+  return {
+    getValue: async () => or((await browser.storage.local.get(key))[key]),
+    setValue: (value) => (value == null ? remove() : browser.storage.local.set({ [key]: value })),
+    removeValue: remove,
+    watch(cb) {
+      const heard = (changes: Record<string, { oldValue?: unknown; newValue?: unknown }>) => {
+        const change = changes[key];
+        if (change) cb(or(change.newValue), or(change.oldValue));
+      };
+      browser.storage.local.onChanged.addListener(heard);
+      return () => browser.storage.local.onChanged.removeListener(heard);
+    },
+  };
+}
+
+export const settingsItem = defineItem<Settings>('settings', DEFAULT_SETTINGS);
 
 /**
  * The size the student last gave the panel by hand (panel/fit.ts), which it
@@ -116,7 +145,7 @@ export interface PanelSize {
   width: number;
   height: number;
 }
-export const panelSizeItem = storage.defineItem<PanelSize | null>('local:panelSize', { fallback: null });
+export const panelSizeItem = defineItem<PanelSize | null>('panelSize', null);
 
 export async function getSettings(): Promise<Settings> {
   return migrateSettings(await settingsItem.getValue());
@@ -164,6 +193,8 @@ export function migrateSettings(stored: unknown): Settings {
     if (!s.macros.some(has)) merged.macros = [...s.macros, { ...answer }];
   }
   if ((s.version ?? 1) < 6) merged.setupDone = s.provider !== undefined && s.provider !== 'mock';
+  // Set up before there was an intro: it is behind them too.
+  if (s.introSeen === undefined) merged.introSeen = merged.setupDone;
   if ((merged.sendBehavior as string) === 'auto-box') merged.sendBehavior = 'auto';
   if (!isPlace(merged.barPlace)) merged.barPlace = DEFAULT_SETTINGS.barPlace;
   if (!isPlace(merged.panelPlace)) merged.panelPlace = DEFAULT_SETTINGS.panelPlace;
@@ -183,7 +214,7 @@ export function migrateSettings(stored: unknown): Settings {
 }
 
 const PLACES = new Set(['top', 'middle', 'bottom'].flatMap((row) => ['left', 'center', 'right'].map((col) => `${row}-${col}`)));
-export const isPlace = (v: unknown): v is Place => typeof v === 'string' && PLACES.has(v);
+const isPlace = (v: unknown): v is Place => typeof v === 'string' && PLACES.has(v);
 
 /** What the box used to be prefilled with; replaced only if left unchanged. */
 const V2_DEFAULT_PROMPT = 'Explain this step by step.';

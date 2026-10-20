@@ -7,7 +7,7 @@
  */
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { chromium } from '@playwright/test';
+import { chromium } from 'playwright-core';
 import { ROOT, loadProblems } from './lib';
 
 // PLAYWRIGHT_CHROMIUM_PATH lets CI or a sandbox point at a preinstalled Chromium.

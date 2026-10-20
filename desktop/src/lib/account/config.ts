@@ -16,10 +16,16 @@ export const ACCOUNTS = !!(SUPABASE_URL && SUPABASE_KEY);
 /**
  * WXT_GOOGLE_CLIENT_ID: the app's own Google client (a desktop one, public by
  * design; supabase/README.md, step 3), so Google's sign-in page names the app.
- * Without it, Google sign-in goes through Supabase's, which names the
- * project's supabase.co address.
+ * Without it, there is no Google sign-in, only email codes.
  */
 export const GOOGLE_CLIENT_ID = ((import.meta.env.WXT_GOOGLE_CLIENT_ID as string | undefined) ?? '').trim();
 
 /** The private bucket screenshots go to, as <user id>/<chat id>/<image id>. */
 export const SCREENSHOT_BUCKET = 'screenshots';
+
+/**
+ * WXT_UNLOCK_KEY: the public half of the key unlock licenses are signed
+ * with (worker/scripts/unlock-key.mjs; public by design). Without it, the
+ * unlock isn't offered: nothing here could check a license.
+ */
+export const UNLOCK_KEY = ((import.meta.env.WXT_UNLOCK_KEY as string | undefined) ?? '').trim();

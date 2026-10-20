@@ -25,6 +25,7 @@
  *   STRIPE_SECRET_KEY     a restricted key (supabase/README.md)
  *   STRIPE_WEBHOOK_SECRET the webhook endpoint's signing secret (whsec_…)
  *   GOOGLE_CLIENT_SECRET  the Google desktop sign-in client's secret (supabase/README.md, step 3)
+ *   UNLOCK_SIGNING_KEY    the unlock's signing key, a P-256 private JWK (scripts/unlock-key.mjs)
  */
 import { stillSignedIn, verifySession, type Session } from './auth';
 import { BillingError, checkout, close, donePage, portal, prices, webhook } from './billing';
@@ -48,8 +49,9 @@ export interface Env {
   STRIPE_PRICES: string;
   /** "on": Stripe Tax works out and adds sales tax / VAT at checkout. */
   STRIPE_TAX: string;
-  /** The unlock's one-time price, by its lookup key; empty: not on offer (unlock.ts). */
+  /** The unlock's one-time price, by its lookup key, and the key its licenses are signed with; either empty: not on offer (unlock.ts). */
   UNLOCK_PRICE: string;
+  UNLOCK_SIGNING_KEY: string;
   /** Google sign-in's desktop client (wrangler.toml) and its secret; empty: the app uses Supabase's sign-in page. */
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;

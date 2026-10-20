@@ -41,7 +41,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 72px; }
 body { margin: 0; background: var(--bg); color: var(--fg); font-size: 1rem; }
 
 /* A sticky header: the name, the sections, and "Saved". */
-.top { position: sticky; top: 0; z-index: 2; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.top { user-select: none; -webkit-user-select: none; position: sticky; top: 0; z-index: 2; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
 .top-inner { max-width: 860px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 h1 { font-size: 15px; font-weight: 600; margin: 0; }
 .top .spacer { flex: 1; }
@@ -69,7 +69,6 @@ h1 { font-size: 15px; font-weight: 600; margin: 0; }
 .avatar svg { width: 100%; height: 100%; fill: var(--muted); }
 .profile-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .profile-name { font-size: 24px; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
-.profile-actions { display: flex; gap: 8px; }
 .profile .field { align-self: stretch; }
 .plan { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .plan-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
@@ -116,7 +115,8 @@ section {
   border: 1px solid var(--line); border-radius: 14px;
 }
 h2 { font-size: 15px; margin: 0; }
-.head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+/* What a section is for, in a sentence, under its title (the gap above it is the section's own, halved). */
+.section-sub { margin: -10px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 
 /* Who answers: one card per choice. */
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
@@ -201,6 +201,36 @@ button.secondary:hover:not(:disabled) { background: var(--hover); }
 button.danger { border: 0; background: var(--bad); color: #fff; }
 button.primary { font: inherit; font-weight: 600; padding: 9px 18px; border: 0; border-radius: var(--radius); background: var(--accent); color: var(--on-accent); cursor: pointer; }
 
+/* The first-launch intro (Intro.tsx), on near-black whatever the theme. Each
+   part's resting style is how it ends; its animation plays from how it
+   starts (fill: both), so with reduced motion only the end shows. About 3 s. */
+.intro { position: fixed; inset: 0; display: grid; place-items: center; overflow: hidden; background: #0f0d0c; color: #f7f1ea; --rise: 64px; }
+.intro .top.intro-top { position: absolute; inset: 0 0 auto; height: 40px; background: none; border: 0; backdrop-filter: none; }
+.intro-frame { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; opacity: 0; animation: intro-frame 1250ms cubic-bezier(.2, .8, .2, 1) both; }
+.intro-frame svg { width: 240px; overflow: visible; fill: none; stroke: #f7f1ea; stroke-width: 1.5; stroke-linecap: square; }
+.intro-box { stroke-dasharray: 100; stroke-dashoffset: 0; stroke-width: 1; animation: intro-draw 420ms 340ms ease-out both; }
+.intro-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; animation: intro-flash 260ms 820ms ease-out both; }
+.intro-main { position: relative; display: flex; flex-direction: column; align-items: center; gap: 28px; }
+.intro-brand { display: flex; align-items: center; gap: 16px; margin: 0; animation: intro-rise 600ms 2400ms cubic-bezier(.3, 0, .2, 1) both; }
+.intro-mark { width: 56px; height: 56px; animation: intro-mark 1100ms 1100ms cubic-bezier(.3, 0, .2, 1) both; }
+.intro-mark circle:first-child { fill: #e5702a; }
+.intro-mark circle:last-child { fill: none; stroke: #fff; stroke-width: 4; }
+.intro-name { font-size: 46px; font-weight: 600; letter-spacing: .02em; animation: intro-name 520ms 1750ms ease-out both; }
+.intro-actions { display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 260px; animation: intro-actions 500ms 2650ms ease-out both; }
+.intro-actions > .primary { min-width: 260px; }
+.intro-actions .help { color: #b2a79c; }
+.intro-actions .link { color: #f7f1ea; opacity: .8; font-size: 13px; }
+.intro-actions .sign-in { width: 300px; }
+.intro .sign-in .help { color: #b2a79c; }
+@keyframes intro-frame { 0% { opacity: 0; transform: scale(1.45); } 30% { opacity: 1; transform: scale(1); } 80% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: translateY(var(--rise)) scale(.25); } }
+@keyframes intro-draw { from { stroke-dashoffset: 100; } }
+@keyframes intro-flash { 0% { opacity: 0; } 30% { opacity: .5; } 100% { opacity: 0; } }
+@keyframes intro-mark { 0% { opacity: 0; transform: translateX(61px) scale(.2); } 30% { opacity: 1; transform: translateX(61px) scale(1); } 60% { transform: translateX(61px) scale(1); } 100% { transform: none; } }
+@keyframes intro-name { from { opacity: .3; clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes intro-rise { from { transform: translateY(var(--rise)); } }
+@keyframes intro-actions { from { opacity: 0; transform: translateY(14px); visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .intro, .intro * { animation: none !important; } }
+
 /* The first-run setup (Setup.tsx). */
 .setup-end { display: flex; align-items: center; gap: 16px; margin-top: 20px; }
 /* A saved key, by its last four characters only. */
@@ -209,7 +239,12 @@ button:disabled { opacity: .5; cursor: default; }
 .confirm-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
 .macro-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.macro-row { display: grid; grid-template-columns: 9.5em 1fr auto; gap: 8px; align-items: start; }
+/* One card per macro: its button name and its content side by side, ✕ at the end. */
+.macro-row {
+  display: grid; grid-template-columns: 9.5em 1fr auto; gap: 8px; align-items: start;
+  padding: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+}
+.macro-row :is(input, textarea) { background: var(--surface); }
 .macro-row textarea { resize: vertical; min-height: 2.6em; }
 .tool { font: inherit; width: 30px; height: 34px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 8px; cursor: pointer; }
 .tool:hover { color: var(--fg); }
@@ -218,6 +253,14 @@ button:disabled { opacity: .5; cursor: default; }
 /* A checkbox with its label. */
 label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
 .field > label.check { align-self: flex-start; }
+
+/* Signing in or up (Account.tsx SignIn): Google, then an email address, each as wide as the other. */
+.sign-in { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 320px; }
+.sign-in form { display: flex; flex-direction: column; gap: 8px; }
+.sign-in > button:not(.link), .sign-in form > * { width: 100%; align-self: stretch; }
+.sign-in > .link { align-self: flex-start; }
+.sign-in .or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.sign-in .or::before, .sign-in .or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 
 /* An extra while locked (lib/extras.ts): greyed and out of reach, its way to the plan under it. */
 .locked { opacity: .45; filter: grayscale(.6); }

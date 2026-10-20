@@ -20,6 +20,8 @@ followTheme();
 /** Opening: shows `#section`, or the top. */
 function opened(section: string): void {
   playEntrance();
+  // The intro (Intro.tsx) plays from the start each time the window shows.
+  dispatchEvent(new Event('settings:shown'));
   history.replaceState(null, '', section ? `#${section}` : location.pathname);
   goTo(section, 30);
 }
@@ -47,4 +49,4 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   </React.StrictMode>,
 );
 
-cardWindow({ drag: '.top', ready: () => !!document.querySelector('.options section') });
+cardWindow({ drag: '.top', ready: () => !!document.querySelector('.options section, .intro') });

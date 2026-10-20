@@ -15,6 +15,11 @@
  *    Neither happens here (the namespace is HTML). It now parses nothing, so
  *    it fails safe: an empty answer.
  *
+ * KaTeX (the answers' math):
+ *  - each font in three formats; every webview the app runs in (WebKit,
+ *    WebView2) takes WOFF2, so the WOFF and TrueType copies (two thirds of
+ *    the fonts, 0.9 MB of the app's pages) are left out.
+ *
  * Every edit must match, or the build fails: an upgrade that moves the code
  * is caught here, not shipped half-patched.
  */
@@ -44,6 +49,12 @@ const EDITS: Edit[] = [
     find: /\(domElement\.innerHTML = key\);/g,
     replace: '(() => { throw Error("dangerouslySetInnerHTML is not used in this app"); })();',
     count: 2,
+  },
+  {
+    file: /katex\/dist\/katex\.min\.css$/,
+    find: /,url\(fonts\/KaTeX_[\w-]+\.woff\) format\("woff"\),url\(fonts\/KaTeX_[\w-]+\.ttf\) format\("truetype"\)/g,
+    replace: '',
+    count: 20,
   },
 ];
 

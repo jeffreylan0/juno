@@ -266,11 +266,17 @@ it('the panel: ✕ first, then the chats menu; text at the system’s size; noti
   await waitFor('the notice gone again', async () => !(await app.read('panel', `!!document.querySelector('[data-testid=notice]')`)));
 });
 
-it('the first time the app is opened, setup comes up instead of the bar: pick who answers, then the bar', async () => {
+it('the first time the app is opened, the intro, then setup come up instead of the bar: pick who answers, then the bar', async () => {
   await app.close();
   app = await App.launch({ opened: true, firstRun: true });
-  await waitFor('the setup', async () => (await app.window('settings'))?.visible && (await app.read('settings', `!!document.querySelector('[data-testid=setup]')`)), 20_000);
+  await waitFor('the intro', async () => (await app.window('settings'))?.visible && (await app.read('settings', `!!document.querySelector('[data-testid=intro]')`)), 20_000);
   expect((await app.overlay()).visible).toBe(false);
+  expect(await app.read('settings', `document.querySelector('.intro-name').textContent`)).toBe('Juno');
+  // No accounts in this build: the one way on.
+  expect(await app.read('settings', `document.querySelector('[data-testid=intro-continue]').textContent`)).toBe('Get started');
+  await app.eval('settings', `document.querySelector('[data-testid=intro-continue]').click()`);
+  await waitFor('the setup', () => app.read('settings', `!!document.querySelector('[data-testid=setup]')`));
+  expect((await app.storage('local')).settings).toMatchObject({ introSeen: true, setupDone: false });
   // No made-up answers to pick: a key, a local model (or, in builds with accounts, an account).
   const cards = await app.read<string[]>('settings', `[...document.querySelectorAll('[data-testid=setup] .card')].map((c) => c.dataset.testid)`);
   expect(cards.slice(0, 2)).toEqual(['setup-key', 'setup-local']);
@@ -298,6 +304,7 @@ it('the first time the app is opened, setup comes up instead of the bar: pick wh
   await app.eval('core', `browser.runtime.openOptionsPage()`);
   await waitFor('all of settings', () => app.read('settings', `!!document.querySelector('[data-testid=section-answers]')`));
   expect(await app.read('settings', `!!document.querySelector('[data-testid=setup]')`)).toBe(false);
+  expect(await app.read('settings', `!!document.querySelector('[data-testid=intro]')`)).toBe(false);
 });
 
 it('opening the app brings the bar straight up, armed, as the shortcut does', async () => {
@@ -833,7 +840,7 @@ it('the gear on the bar opens settings: the app’s own shortcut, no blocked sit
   const text = await app.read<string>('settings', 'document.body.innerText');
   expect(text).toContain('Keyboard shortcut');
   expect(text).toContain('Alt + Shift + S');
-  expect(text).toContain('Works in every app');
+  expect(text).not.toContain('Works in every app');
   expect(text).not.toContain('Blocked sites');
   expect(text).not.toContain("browser's PDF viewer");
   expect(text).toContain("its window's title, to the AI you picked");
@@ -970,13 +977,16 @@ it('settings open on a dashboard: who you are, this month’s answers and who an
   expect(await app.read('settings', `document.querySelector('[data-testid=answers-this-month]').textContent`)).toBe('0 answers');
   expect(await app.read('settings', `document.querySelector('[data-testid=who-answers]').textContent`)).toContain('No one yet');
   // The settings follow the dashboard, the most used first.
-  expect(await app.read('settings', `[...document.querySelectorAll('.sections > section')].map((s) => s.id).slice(0, 5)`)).toEqual([
+  expect(await app.read('settings', `[...document.querySelectorAll('.sections > section')].map((s) => s.id).slice(0, 6)`)).toEqual([
     'answers',
     'asking',
+    'macros',
     'appearance',
     'selecting',
     'privacy',
   ]);
+  // Each says what it is for, in a sentence under its title.
+  expect(await app.read('settings', `[...document.querySelectorAll('.sections > section')].every((s) => s.querySelector('h2 + .section-sub')?.textContent.length > 10)`)).toBe(true);
   const shown = () => app.read<boolean>('settings', `document.querySelector('[data-testid=side-menu]').classList.contains('on')`);
   expect(await shown()).toBe(false);
   await app.eval('settings', `document.getElementById('selecting').scrollIntoView({ behavior: 'instant' })`);

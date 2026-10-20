@@ -16,12 +16,11 @@
  * Settings → Selecting → *Notices in the panel* turns them all off; the very
  * first notice says where, under it.
  */
-import { storage } from '@wxt-dev/storage';
 import { useEffect, useState } from 'react';
 import { ASSISTANT } from '@/lib/router';
 import type { AiStatus } from '@/lib/status';
 import type { KeyStatus } from '@/lib/providers/types';
-import { answerChoiceOf, type Settings } from '@/lib/storage';
+import { answerChoiceOf, defineItem, type Settings } from '@/lib/storage';
 import { Icon, type IconName } from './icons';
 
 interface Action {
@@ -45,7 +44,7 @@ const openSettings = () => void browser.runtime.openOptionsPage();
 const openAccount = () => void browser.runtime.openOptionsPage('account');
 
 /** Whether the first notice, and how to turn notices off, has been shown. */
-const tipItem = storage.defineItem<boolean>('local:noticeTipShown', { fallback: false });
+const tipItem = defineItem<boolean>('noticeTipShown', false);
 
 function useTipShown(): boolean | null {
   const [shown, setShown] = useState<boolean | null>(null);

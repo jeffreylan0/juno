@@ -1,13 +1,13 @@
 /**
  * The top of settings, in the manner of a profile page: who you are (your
- * picture, name and plan; or Guest, with signing in or up a click away but
+ * picture, name and plan; or Guest, with signing up or in a click away but
  * never pressed on you), then your plan. Signed in to a plan with hosted
  * answers, the answers left this month, in a badge. Otherwise this month's
  * answers, what they cost on your own key, who answers, and for a guest the
- * unlock (lib/account/unlock.ts). The settings follow, the most used first
+ * unlock for this computer (lib/account/unlock.ts). The settings follow, the most used first
  * (Options.tsx).
  */
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ACCOUNTS } from '@/lib/account/config';
 import { signOut, type AccountUser } from '@/lib/account/session';
 import { buyUnlock, restoreUnlock, unlockOffer } from '@/lib/account/unlock';
@@ -15,7 +15,7 @@ import type { KeyStatus } from '@/lib/providers/types';
 import { ASSISTANT, COMPANY, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
 import type { Settings } from '@/lib/storage';
 import { thisMonth, usageItem, type MonthUsage } from '@/lib/usage';
-import { useExtrasOpen, useUnlock, type AccountState } from '@/ui/useAccount';
+import { useExtrasOpen, type AccountState } from '@/ui/useAccount';
 import { PlanDetails, SignIn, useAccountRefresh } from './Account';
 
 export function Dashboard({ settings, keys, account }: { settings: Settings; keys: KeyStatus; account: AccountState }) {
@@ -54,19 +54,20 @@ function Profile({ account }: { account: AccountState }) {
         </button>
       ) : (
         ACCOUNTS &&
-        account.ready &&
-        (signing ? (
-          <SignIn onCancel={() => setSigning(false)} />
-        ) : (
-          <div className="profile-actions">
-            <button type="button" className="primary" data-testid="sign-up" onClick={() => setSigning(true)}>
-              Sign up
-            </button>
-            <button type="button" className="secondary" data-testid="sign-in-open" onClick={() => setSigning(true)}>
-              Sign in
-            </button>
-          </div>
-        ))
+        account.ready && (
+          <>
+            {/* One way in: an account is made the first time it signs in. */}
+            {!signing && (
+              <button type="button" className="primary" data-testid="sign-up" onClick={() => setSigning(true)}>
+                Sign up or sign in
+              </button>
+            )}
+            <small className="help" data-testid="account-why">
+              Unlock hosted answers and cloud storage.
+            </small>
+            {signing && <SignIn onCancel={() => setSigning(false)} />}
+          </>
+        )
       )}
     </div>
   );
@@ -152,23 +153,22 @@ function Plan({ settings, keys, account }: { settings: Settings; keys: KeyStatus
   );
 }
 
-/** A guest's plan: free, or unlocked (and the code, for another computer); the unlock offered, quietly. */
+/** A guest's plan: free, or Plus by the unlock bought on this computer; the unlock offered, quietly. */
 function GuestPlan() {
-  const unlock = useUnlock();
   const open = useExtrasOpen();
   // A build without accounts sells nothing: no plan to name.
   if (!ACCOUNTS) return null;
   return (
     <>
       <span className="plan-name" data-testid="plan-name">
-        {unlock ? 'Unlocked' : 'Free'}
+        {open ? 'Plus' : 'Free'}
       </span>
-      {unlock ? (
-        <p className="help" data-testid="unlock-code">
-          On another computer, enter <code className="code">{unlock.code}</code> to unlock it too.
+      {open ? (
+        <p className="help" data-testid="unlocked">
+          Unlocked on this computer.
         </p>
       ) : (
-        !open && <UnlockOffer />
+        <UnlockOffer />
       )}
     </>
   );
@@ -176,9 +176,7 @@ function GuestPlan() {
 
 function UnlockOffer() {
   const [price, setPrice] = useState<string | null>(null);
-  const [busy, setBusy] = useState<'buy' | 'code' | null>(null);
-  const [entering, setEntering] = useState(false);
-  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState<'buy' | 'restore' | null>(null);
   const [error, setError] = useState('');
   const stop = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -187,7 +185,7 @@ function UnlockOffer() {
   }, []);
   if (!price) return null;
 
-  const run = async (what: 'buy' | 'code', fn: () => Promise<unknown>) => {
+  const run = async (what: 'buy' | 'restore', fn: () => Promise<unknown>) => {
     setBusy(what);
     setError('');
     try {
@@ -202,32 +200,18 @@ function UnlockOffer() {
     stop.current = new AbortController();
     void run('buy', () => buyUnlock(stop.current!.signal));
   };
-  const restore = (e: FormEvent) => {
-    e.preventDefault();
-    void run('code', () => restoreUnlock(code));
-  };
 
   return (
     <div className="unlock" data-testid="unlock">
-      <p className="help">Every theme, your own place for the bar and the panel, and more macros: {price} once, no account needed.</p>
+      <p className="help">Every theme, your own place for the bar and the panel, and more macros, on this computer: {price} once, no account needed.</p>
       <span className="key-row">
         <button type="button" className="unlock-btn" disabled={!!busy} data-testid="unlock-buy" onClick={buy}>
           {busy === 'buy' ? 'Waiting for checkout…' : `Unlock for ${price}`}
         </button>
-        {!entering && (
-          <button type="button" className="link" onClick={() => setEntering(true)}>
-            I have a code
-          </button>
-        )}
+        <button type="button" className="link" disabled={!!busy} data-testid="unlock-restore" onClick={() => void run('restore', restoreUnlock)}>
+          {busy === 'restore' ? 'Checking…' : 'Bought it here before? Restore'}
+        </button>
       </span>
-      {entering && (
-        <form className="key-row" onSubmit={restore}>
-          <input value={code} placeholder="JUNO-XXXX-XXXX-XXXX" aria-label="Unlock code" spellCheck={false} data-testid="unlock-code-input" onChange={(e) => setCode(e.target.value)} />
-          <button type="submit" className="secondary" disabled={!code.trim() || !!busy}>
-            {busy === 'code' ? 'Checking…' : 'Use code'}
-          </button>
-        </form>
-      )}
       {error && <p className="help bad">{error}</p>}
     </div>
   );

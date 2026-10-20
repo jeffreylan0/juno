@@ -42,9 +42,6 @@
     }
   },
   "plugins": {
-    "deep-link": {
-      "desktop": { "schemes": ["com.humanbn.juno"] }
-    },
     "updater": {
       "pubkey": "",
       "endpoints": ["https://github.com/jeffreylan0/selectionai/releases/download/updates/latest.json"],

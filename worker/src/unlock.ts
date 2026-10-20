@@ -1,42 +1,52 @@
 /**
  * The unlock: the app's extras (every colour theme, placing the bar and the
- * panel, more than two macros) for one payment, for students who would
- * rather not have an account. With no account there is no session, so what
- * proves a purchase is its code: a random JUNO-XXXX-XXXX-XXXX this Worker
- * puts on the payment (metadata) and shows the buyer, who can enter it on
- * another computer. Its price is the one-time Stripe price whose lookup key
- * is UNLOCK_PRICE; empty, nothing is on offer.
+ * panel, more than two macros) for one payment, on one computer, for
+ * students who would rather not have an account. With no account there is
+ * no session: the app sends its computer's id (a salted hash:
+ * desktop/src-tauri/src/device.rs), the Worker puts it on the payment, and
+ * once Stripe says it is paid, signs a license for that id alone (ECDSA
+ * P-256, the UNLOCK_SIGNING_KEY secret). The app checks the signature with
+ * the public half built into it, and that the id is its own, so a license
+ * copied to another computer opens nothing there. Its price is the one-time
+ * Stripe price whose lookup key is UNLOCK_PRICE; without it, or without the
+ * signing key, nothing is on offer.
  *
  * Routes (index.ts), all without a session:
  *   GET  /unlock           { amount, currency }, or 404 when it isn't on offer
- *   POST /unlock/checkout  a Stripe Checkout page → { url, session }
- *   POST /unlock/claim     { session }: once paid → { code }; 409 until then
- *   POST /unlock/restore   { code }: a code paid for, and not refunded → { code }
- *   GET  /unlock/done      where Stripe sends the browser back, with the code
+ *   POST /unlock/checkout  { device }: a Stripe Checkout page → { url, session }
+ *   POST /unlock/claim     { session, device }: once paid → { license }; 409 until then
+ *   POST /unlock/restore   { device }: this computer's unlock again, after a reinstall → { license }
+ *   GET  /unlock/done      where Stripe sends the browser back
  */
 import { BillingError, page, stripe, type CheckoutSession } from './billing';
 import { readBody } from './body';
 import type { Env } from './index';
 
-/** Crockford's base32: no I, L, O or U to misread. */
-const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-const CODE = /^JUNO-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
+const DEVICE = /^[0-9a-f]{64}$/;
 const SESSION = /^cs_(test|live)_[A-Za-z0-9]{10,200}$/;
 const PRICE_TTL_MS = 5 * 60_000;
 
-/** A new code, 60 random bits. */
-export function newCode(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(12));
-  const chars = Array.from(bytes, (b) => ALPHABET[b & 31]).join('');
-  return `JUNO-${chars.slice(0, 4)}-${chars.slice(4, 8)}-${chars.slice(8)}`;
+const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+let signing: { jwk: string; key: Promise<CryptoKey> } | null = null;
+
+/** The signing key, from the secret (a P-256 private JWK: worker/scripts/unlock-key.mjs). */
+function signingKey(env: Env): Promise<CryptoKey> | null {
+  const jwk = (env.UNLOCK_SIGNING_KEY ?? '').trim();
+  if (!jwk) return null;
+  if (signing?.jwk !== jwk) {
+    signing = { jwk, key: crypto.subtle.importKey('jwk', JSON.parse(jwk) as JsonWebKey, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']) };
+  }
+  return signing.key;
 }
 
-/** A code as typed (any case, spaces, the dashes or not) in its one form, or null. */
-export function cleanCode(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null;
-  const chars = raw.toUpperCase().replace(/[\s-]/g, '').replace(/^JUNO/, '');
-  const code = chars.length === 12 ? `JUNO-${chars.slice(0, 4)}-${chars.slice(4, 8)}-${chars.slice(8)}` : '';
-  return CODE.test(code) ? code : null;
+/** `{ d: device, p: payment, t: seconds }`, then its signature: what the app checks (lib/account/unlock.ts). */
+export async function license(env: Env, device: string, payment: string): Promise<string> {
+  const key = signingKey(env);
+  if (!key) throw notOnOffer();
+  const body = b64url(new TextEncoder().encode(JSON.stringify({ d: device, p: payment, t: Math.floor(Date.now() / 1000) })));
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, await key, new TextEncoder().encode(body));
+  return `${body}.${b64url(new Uint8Array(sig))}`;
 }
 
 interface Price {
@@ -49,7 +59,7 @@ let cached: { key: string; at: number; price: Price | null } | null = null;
 
 async function price(env: Env): Promise<Price | null> {
   const key = (env.UNLOCK_PRICE ?? '').trim();
-  if (!key || !env.STRIPE_SECRET_KEY) return null;
+  if (!key || !env.STRIPE_SECRET_KEY || !signingKey(env)) return null;
   if (cached && cached.key === key && Date.now() - cached.at < PRICE_TTL_MS) return cached.price;
   const found = await stripe<{ data: { id: string; type: string; unit_amount: number | null; currency: string }[] }>(env, 'GET', '/prices', {
     active: true,
@@ -71,26 +81,31 @@ export async function unlockPrice(env: Env): Promise<{ amount: number; currency:
   return { amount: p.amount, currency: p.currency };
 }
 
-async function field(request: Request, name: string): Promise<unknown> {
+async function body(request: Request): Promise<Record<string, unknown>> {
   try {
-    return (JSON.parse(await readBody(request, 2048)) as Record<string, unknown>)[name];
+    return JSON.parse(await readBody(request, 2048)) as Record<string, unknown>;
   } catch {
-    return undefined;
+    return {};
   }
 }
 
-/** A Checkout page for the unlock, carrying a new code. */
+function deviceOf(raw: unknown): string {
+  if (typeof raw !== 'string' || !DEVICE.test(raw)) throw new BillingError('This computer could not be identified.', 400, 'no-device');
+  return raw;
+}
+
+/** A Checkout page for the unlock, for this computer. */
 export async function unlockCheckout(request: Request, env: Env): Promise<{ url: string; session: string }> {
   // No account to count against: the caller's address is (Checkout pages cost nothing, but are not for a script).
   const who = request.headers.get('cf-connecting-ip') ?? 'unknown';
   if (env.ASK_LIMIT && !(await env.ASK_LIMIT.limit({ key: `unlock:${who}` })).success) {
     throw new BillingError('Too many tries. Wait a minute, then try again.', 429, 'rate-limited');
   }
+  const device = deviceOf((await body(request)).device);
   const p = await price(env);
   if (!p) throw notOnOffer();
-  const code = newCode();
   const origin = new URL(request.url).origin;
-  const metadata = { kind: 'unlock', unlock_code: code };
+  const metadata = { kind: 'unlock', unlock_device: device };
   const made = await stripe<{ id: string; url: string }>(env, 'POST', '/checkout/sessions', {
     mode: 'payment',
     line_items: [{ price: p.id, quantity: 1 }],
@@ -98,59 +113,54 @@ export async function unlockCheckout(request: Request, env: Env): Promise<{ url:
     cancel_url: `${origin}/billing/done?result=cancelled`,
     metadata,
     // On the payment too, where restoring finds it.
-    payment_intent_data: { metadata, description: `Juno unlock code ${code}` },
+    payment_intent_data: { metadata, description: 'Juno unlock, one computer' },
     ...(env.STRIPE_TAX === 'on' ? { automatic_tax: { enabled: true } } : {}),
   });
   return { url: made.url, session: made.id };
 }
 
-/** The checkout's code, once Stripe says it is paid. */
-async function paidCode(env: Env, session: unknown): Promise<string> {
+/** The checkout, once Stripe says it is paid; null while it isn't. Only an unlock's checkout counts. */
+async function paidCheckout(env: Env, session: unknown): Promise<CheckoutSession | null> {
   if (typeof session !== 'string' || !SESSION.test(session)) throw notOnOffer();
   const s = await stripe<CheckoutSession>(env, 'GET', `/checkout/sessions/${encodeURIComponent(session)}`);
-  const code = s.metadata?.kind === 'unlock' ? cleanCode(s.metadata.unlock_code) : null;
-  if (!code) throw notOnOffer();
-  if (s.payment_status !== 'paid') throw new BillingError('Not paid yet.', 409, 'pending');
-  return code;
+  if (s.metadata?.kind !== 'unlock' || !DEVICE.test(s.metadata.unlock_device ?? '')) throw notOnOffer();
+  return s.payment_status === 'paid' ? s : null;
 }
 
-/** The app asks, while its checkout is open, whether it has been paid. */
-export async function unlockClaim(request: Request, env: Env): Promise<{ code: string }> {
-  return { code: await paidCode(env, await field(request, 'session')) };
+/** The app asks, while its checkout is open, whether it has been paid: then the license, for the computer that paid. */
+export async function unlockClaim(request: Request, env: Env): Promise<{ license: string }> {
+  const sent = await body(request);
+  const device = deviceOf(sent.device);
+  const s = await paidCheckout(env, sent.session);
+  if (!s) throw new BillingError('Not paid yet.', 409, 'pending');
+  // A checkout made for another computer gives this one nothing.
+  if (s.metadata.unlock_device !== device) throw notOnOffer();
+  return { license: await license(env, device, s.payment_intent ?? s.id) };
 }
 
 interface PaymentIntent {
+  id: string;
   metadata: Record<string, string>;
   latest_charge: { refunded: boolean; disputed: boolean } | null;
 }
 
-/** A code entered by hand: taken if its payment went through and was not refunded or disputed. */
-export async function unlockRestore(request: Request, env: Env): Promise<{ code: string }> {
-  const code = cleanCode(await field(request, 'code'));
-  const missing = new BillingError("That code didn't work. Check it, or write to info@humanbn.com.", 404, 'no-code');
-  if (!code) throw missing;
-  // The code is checked against CODE above, so it can't break out of the query's quotes.
+/** This computer's unlock again (the app reinstalled): if a payment for it went through and was not refunded or disputed. */
+export async function unlockRestore(request: Request, env: Env): Promise<{ license: string }> {
+  const device = deviceOf((await body(request)).device);
+  // The id is checked against DEVICE above, so it can't break out of the query's quotes.
   const found = await stripe<{ data: PaymentIntent[] }>(env, 'GET', '/payment_intents/search', {
-    query: `metadata['unlock_code']:'${code}' AND status:'succeeded'`,
+    query: `metadata['unlock_device']:'${device}' AND status:'succeeded'`,
     expand: ['data.latest_charge'],
   });
-  const paid = found.data.some((pi) => pi.metadata.kind === 'unlock' && !pi.latest_charge?.refunded && !pi.latest_charge?.disputed);
-  if (!paid) throw missing;
-  return { code };
+  const paid = found.data.find((pi) => pi.metadata.kind === 'unlock' && !pi.latest_charge?.refunded && !pi.latest_charge?.disputed);
+  if (!paid) throw new BillingError("No unlock was bought on this computer. If you bought one, write to info@humanbn.com.", 404, 'no-unlock');
+  return { license: await license(env, device, paid.id) };
 }
 
-/** Where Stripe sends the browser back: the code, for another computer. The app unlocks by itself. */
+/** Where Stripe sends the browser back. The app unlocks by itself. */
 export async function unlockDone(request: Request, env: Env): Promise<Response> {
-  let code: string | null = null;
-  try {
-    code = await paidCode(env, new URL(request.url).searchParams.get('session_id'));
-  } catch {
-    // Not paid yet (a slow card), or not an unlock: the page says so without a code.
-  }
-  if (!code) return page('Almost there', "Your payment is being confirmed. Juno unlocks by itself once it is; you can close this tab.");
-  return page(
-    'Unlocked',
-    'Thank you! Go back to Juno: it is unlocked. To unlock it on another computer, enter this code in its settings.',
-    `<code>${code}</code><p>Keep it somewhere safe.</p>`,
-  );
+  const paid = await paidCheckout(env, new URL(request.url).searchParams.get('session_id')).catch(() => null);
+  return paid
+    ? page('Unlocked', 'Thank you! Go back to Juno: it unlocks by itself on this computer. You can close this tab.')
+    : page('Almost there', 'Your payment is being confirmed. Juno unlocks by itself once it is; you can close this tab.');
 }

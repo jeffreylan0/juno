@@ -1,21 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the app's own pages may ask of the native core: events, dragging a card, opening http(s) links in the browser, and fetch to the AI services (https), Supabase and the Worker (https), and a local model on this computer or a .local name. The app's own commands check which window calls them (lib.rs).",
+  "description": "What every page of the app may ask of the native core: events, dragging a card, and opening http(s) links in the browser. No network: the bar and the panel show what others wrote (answers, pages' text) and reach nothing themselves. The app's own commands check which window calls them (lib.rs).",
   "windows": ["core", "overlay", "panel", "settings", "fixture"],
-  "permissions": [
-    "core:event:default",
-    "core:window:allow-start-dragging",
-    "opener:allow-open-url",
-    "opener:allow-default-urls",
-    {
-      "identifier": "http:default",
-      "allow": [
-        { "url": "https://*" },
-        { "url": "http://localhost:*" },
-        { "url": "http://127.0.0.1:*" },
-        { "url": "http://*.local:*" }
-      ]
-    }
-  ]
+  "permissions": ["core:event:default", "core:window:allow-start-dragging", "opener:allow-open-url", "opener:allow-default-urls"]
 }

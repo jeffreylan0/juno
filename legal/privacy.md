@@ -17,7 +17,7 @@ These live in Juno's data folder on your computer, and we can't see them:
 
 - **Chats**: what you selected (a screenshot of that area of the screen), what you asked, and the answers. You choose how many saved chats are kept (1 to 100). Temporary chats are kept in memory only and deleted, with their screenshots, when you finish them. *Settings → Chats & privacy → Delete all chats* deletes them.
 - **Settings**, and a count of this month's answers (shown at the top of Settings).
-- **The unlock's code**, if you bought it (or entered it from another computer).
+- **The unlock's license**, if you bought it: a signed note that this computer is unlocked.
 - **Your API keys**, in a file only your user account can read (encrypted with Windows' own data protection on Windows). Juno's windows can't read them back; only the part of the app that sends your question to Anthropic or OpenAI uses them.
 
 Juno looks at your screen only when you select something. On macOS it needs Screen Recording for that, and nothing else; on Windows, no permission at all.
@@ -41,7 +41,7 @@ Juno looks at your screen only when you select something. On macOS it needs Scre
 
 **If you buy a plan**, Stripe handles the payment. We never see your card number. We keep your Stripe customer ID, what you bought, and when it renews or ends; Stripe keeps its own payment records, as the law requires.
 
-**If you buy the unlock** without an account, Stripe handles the payment too, and the unlock's code is kept with the payment in Stripe, so the code can be checked when you enter it on another computer. Our server keeps nothing about you for it.
+**If you buy the unlock** without an account, Stripe handles the payment too. Juno sends an identifier of your computer with it: a one-way hash of the identifier your operating system gives it, from which the identifier itself can't be recovered, and which means nothing outside Juno. It is kept with the payment in Stripe, so the unlock holds on that computer only and can be restored there after a reinstall. Our server keeps nothing about you for it.
 
 **Updates**: if *Update automatically* is on (Settings → Juno), the app checks GitHub for a new version from time to time. GitHub sees your IP address and the request, as for any download.
 
