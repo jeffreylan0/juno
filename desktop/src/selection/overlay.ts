@@ -3,7 +3,8 @@
  * selection is being made, the surface it is drawn on and the cursor
  * tooltip. The bar comes up once (opening from its middle) and stays through
  * the selection, the screenshot and the wait for the next one, until it is
- * dismissed (closing into its middle). The app's windows are left out of the
+ * dismissed (closing into its middle), except while a selection is being
+ * drawn: then only the drawing shows (the panel steps aside too). The app's windows are left out of the
  * screenshot (capture/), so the dim fades out after a selection; the bar
  * steps aside only if the selection runs under it.
  *
@@ -62,7 +63,7 @@ const STYLE = `
 .tip {
   position: fixed; left: 0; top: 0; display: flex; align-items: center; gap: 5px;
   font: 500 12px/1.3 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-  color: var(--sai-hint-fg, #1f1e1d); background: var(--sai-hint-bg, #f5f4ef);
+  color: var(--sai-hint-fg, #1c1714); background: var(--sai-hint-bg, #f7f1ea);
   padding: 5px 8px; border-radius: 7px; white-space: nowrap;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.12); pointer-events: none;
   opacity: 0; visibility: hidden; transition: opacity 120ms ease, visibility 0s linear 120ms;
@@ -74,6 +75,10 @@ const STYLE = `
 }
 @media (prefers-reduced-motion: reduce) { .tip, .tip.on { transition: none; } }
 ${BAR_STYLE}
+/* While a selection is being drawn, only the drawing shows; the bar is back once it is made. */
+.bar { transition: opacity 120ms ease, visibility 0s; }
+:host([data-state='drawing']) :is(.bar, .hint) { opacity: 0; visibility: hidden; transition: opacity 90ms ease, visibility 0s 90ms; }
+@media (prefers-reduced-motion: reduce) { .bar, :host([data-state='drawing']) :is(.bar, .hint) { transition: none; } }
 `;
 
 /** How far the tooltip sits from the pointer. Close enough to read without
@@ -103,13 +108,12 @@ const LEAVE_MS = 160;
 export interface OverlayHandlers {
   /** The user picked a different mode from the bar's chips. */
   onModeChange: (kind: SelectionKind) => void;
-  /**
-   * The bar's X was pressed: the caller finishes the chat. Any armed
-   * selection is cancelled first. Escape does not call it.
-   */
+  /** The bar's X was pressed: the caller finishes the chat. Any armed selection is cancelled first. */
   onClose: () => void;
-  /** Escape while the bar waits between selections (nothing armed). */
-  onEscapeWhileWaiting: () => void;
+  /** Escape, whatever the bar is doing (waiting, armed, drawing): the caller closes everything, as ✕. */
+  onEscape: () => void;
+  /** A selection started (`true`) or stopped being drawn. */
+  onDrawing: (drawing: boolean) => void;
   /** The ghost on the bar was pressed. */
   onGhost: () => void;
   /** The bar's chats button. */
@@ -172,8 +176,8 @@ export class Overlay {
 
   /**
    * Just the bar, waiting between selections; the app beneath works as
-   * usual. Escape here (when the bar has the keyboard) hides it, unless it
-   * is meant for a field of the bar's own settings.
+   * usual. Escape here (when the bar has the keyboard) closes everything,
+   * unless it is meant for a field of the bar's own settings.
    */
   ready(): void {
     this.abort();
@@ -188,7 +192,7 @@ export class Overlay {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.repeat || e.defaultPrevented) return;
       if (isEditable(e.composedPath()[0] ?? e.target)) return;
-      this.handlers.onEscapeWhileWaiting();
+      this.handlers.onEscape();
     };
     addEventListener('keydown', onKey);
     this.waitingKeys = () => removeEventListener('keydown', onKey);
@@ -386,8 +390,9 @@ export class Overlay {
   }
 
   private setState(state: OverlayState): void {
-    this.state = state;
     const drawing = state === 'drawing';
+    if (drawing !== (this.state === 'drawing')) this.handlers.onDrawing(drawing);
+    this.state = state;
     this.bar?.setDrawing(drawing);
     this.host?.setAttribute('data-state', state);
     if (!drawing) this.bar?.setAdjusting(state === 'adjusting');
@@ -421,11 +426,11 @@ export class Overlay {
 
   /**
    * The cursor tooltip: what to do while armed ("Drag to select"), how to
-   * stop while drawing. Never at once: it comes up once the pointer has been
+   * close while drawing. Never at once: it comes up once the pointer has been
    * over the screen (or dragging) a moment, then follows it.
    */
   private tipContent(): Node[] | null {
-    if (this.state === 'drawing') return [kbd('Esc'), say('to cancel')];
+    if (this.state === 'drawing') return [kbd('Esc'), say('to close')];
     return this.state === 'armed' && this.kind ? [say(CURSOR_HINT[this.kind])] : null;
   }
 
@@ -511,9 +516,9 @@ export class Overlay {
   }
 
   /**
-   * Shared plumbing: Escape handling, wheel forwarding, and a guarantee that
-   * the selection's drawing is removed however the selection ends. The bar
-   * stays; what happens next is the caller's to say.
+   * Shared plumbing: Escape (which closes everything: onEscape), wheel
+   * forwarding, and a guarantee that the selection's drawing is removed
+   * however the selection ends.
    */
   private run<T>(arm: (finish: (value: T | null) => void) => () => void): Promise<T | null> {
     return new Promise<T | null>((resolve) => {
@@ -545,6 +550,7 @@ export class Overlay {
         e.preventDefault();
         e.stopPropagation();
         finish(null);
+        this.handlers.onEscape();
       };
       // Capture on both: focus may sit in an input rather than on the
       // document body.

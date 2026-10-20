@@ -12,8 +12,12 @@
  * round its ✕ runs down meanwhile, and pointing at the notice holds it. Gone,
  * it stays gone while it says the same thing (the panel brings notices back
  * with each new chat, and each time the app shows it).
+ *
+ * Settings → Selecting → *Notices in the panel* turns them all off; the very
+ * first notice says where, under it.
  */
-import { useState } from 'react';
+import { storage } from '@wxt-dev/storage';
+import { useEffect, useState } from 'react';
 import { ASSISTANT } from '@/lib/router';
 import type { AiStatus } from '@/lib/status';
 import type { KeyStatus } from '@/lib/providers/types';
@@ -40,6 +44,18 @@ const openSettings = () => void browser.runtime.openOptionsPage();
 /** Settings, at the Account section. */
 const openAccount = () => void browser.runtime.openOptionsPage('account');
 
+/** Whether the first notice, and how to turn notices off, has been shown. */
+const tipItem = storage.defineItem<boolean>('local:noticeTipShown', { fallback: false });
+
+function useTipShown(): boolean | null {
+  const [shown, setShown] = useState<boolean | null>(null);
+  useEffect(() => {
+    void tipItem.getValue().then(setShown, () => setShown(true));
+    return tipItem.watch(setShown);
+  }, []);
+  return shown;
+}
+
 export function Notices({
   lasts = null,
   settings,
@@ -61,18 +77,18 @@ export function Notices({
   onDismissDropped: () => void;
 }) {
   const [gone, setGone] = useState<ReadonlySet<string>>(new Set());
+  const tipShown = useTipShown();
   let notices: Notice[] = [];
   const connection = settings && connectionNotice(settings, keys, status, checking, onRecheck);
   if (connection) notices.push(connection);
   if (dropped?.length && settings) {
-    const limit = settings.chatLimit;
     notices.push({
       kind: 'dropped',
       icon: 'info',
       text:
         dropped.length === 1
-          ? `Deleted your oldest chat, “${dropped[0]}”, to stay at ${limit}.`
-          : `Deleted your ${dropped.length} oldest chats to stay at ${limit}.`,
+          ? `Deleted your oldest chat, “${dropped[0]}”.`
+          : `Deleted your ${dropped.length} oldest chats.`,
       actions: [{ label: 'Keep more', onClick: openSettings, testid: 'notice-settings' }],
       onDismiss: onDismissDropped,
     });
@@ -80,13 +96,14 @@ export function Notices({
   const said = (n: Notice) => `${n.kind}:${n.title ?? ''}:${n.text}`;
   const dismiss = (n: Notice) => {
     if (lasts) setGone((g) => new Set(g).add(said(n)));
+    if (tipShown === false) void tipItem.setValue(true);
     n.onDismiss?.();
   };
   if (lasts) notices = notices.filter((n) => !gone.has(said(n)));
-  if (!notices.length) return null;
+  if (!notices.length || settings?.panelNotices === false) return null;
   return (
     <div className="notices" role="status">
-      {notices.map((n) => (
+      {notices.map((n, i) => (
         <div key={said(n)} className="notice" data-testid="notice" data-kind={n.kind}>
           <Icon name={n.icon} className="notice-icon" />
           <div className="notice-body">
@@ -102,6 +119,19 @@ export function Notices({
                   </button>
                 ))}
               </span>
+            )}
+            {tipShown === false && i === 0 && (
+              <button
+                type="button"
+                className="notice-tip"
+                data-testid="notice-tip"
+                onClick={() => {
+                  void tipItem.setValue(true);
+                  void browser.runtime.openOptionsPage('notices');
+                }}
+              >
+                Turn notices off
+              </button>
             )}
           </div>
           {(lasts || n.onDismiss) && (
@@ -131,7 +161,7 @@ function connectionNotice(
     return {
       kind: 'unset',
       icon: 'info',
-      text: 'Pick who answers to start asking.',
+      text: 'Pick who answers.',
       actions: [{ label: 'Set up', onClick: openSettings, testid: 'notice-settings' }],
     };
   }
@@ -139,7 +169,7 @@ function connectionNotice(
     return {
       kind: 'no-key',
       icon: 'warning',
-      text: `Add a ${ASSISTANT[settings.vendor]} API key to get answers.`,
+      text: `Add a ${ASSISTANT[settings.vendor]} API key.`,
       actions: [{ label: 'Add a key', onClick: openSettings, testid: 'notice-settings' }],
     };
   }

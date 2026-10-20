@@ -1,10 +1,9 @@
 /**
  * Account: optional. Signing in (Google, or a code sent by email) is what
  * plans hang on: hosted answers and cloud storage, bought with Stripe
- * (lib/account/billing.ts) or given by hand (supabase/README.md). At the
- * top of settings (Dashboard.tsx), the account: signing in, or who is
- * signed in, the plan and what is next for it, hosted answers used this
- * month, buying or managing it. Further down, its settings: cloud storage,
+ * (lib/account/billing.ts) or given by hand (supabase/README.md). The top
+ * of settings (Dashboard.tsx) shows who is signed in and the plan
+ * (PlanDetails); further down are the account's settings: cloud storage,
  * deleting the account. Without a Supabase project in the build there is
  * no account at all.
  */
@@ -17,7 +16,6 @@ import {
   refreshEntitlement,
   sendEmailCode,
   signInWithGoogle,
-  signOut,
   verifyEmailCode,
   type Entitlement,
   type SyncStatus,
@@ -28,10 +26,19 @@ import type { AccountState } from '@/ui/useAccount';
 type Save = (patch: Partial<Settings>) => Promise<void>;
 
 
-/** The dashboard's account card: signing in, or the account and its plan. */
+/** The first-run setup's account step: signing in, or who is signed in and the plan. */
 export function AccountCard({ account }: { account: AccountState }) {
+  useAccountRefresh(account.user?.id);
   if (!ACCOUNTS || !account.ready) return null;
-  return account.user ? <SignedIn account={account} /> : <SignIn />;
+  if (!account.user) return <SignIn />;
+  return (
+    <div className="field" data-testid="signed-in">
+      <span className="help">
+        Signed in as <b>{account.user.email}</b>
+      </span>
+      {account.entitlement && <PlanDetails ent={account.entitlement} />}
+    </div>
+  );
 }
 
 /** Settings → Account: cloud storage and deleting the account, once signed in. */
@@ -46,7 +53,8 @@ export function AccountSection({ account, settings, save }: { account: AccountSt
 }
 
 
-export function SignIn() {
+/** Signing in or up: one and the same (an account is made the first time). `onCancel`: a way back. */
+export function SignIn({ onCancel }: { onCancel?: () => void } = {}) {
   const [email, setEmail] = useState('');
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [code, setCode] = useState('');
@@ -147,6 +155,11 @@ export function SignIn() {
           {error}
         </p>
       )}
+      {onCancel && !busy && (
+        <button type="button" className="link" onClick={onCancel}>
+          Not now
+        </button>
+      )}
       <small className="help">
         By signing in, you agree to the{' '}
         <a className="link" href={BRAND.terms} target="_blank" rel="noopener noreferrer">
@@ -162,21 +175,19 @@ export function SignIn() {
   );
 }
 
-/** Who is signed in, the plan, hosted answers left, and buying or managing it. */
-function SignedIn({ account }: { account: AccountState }) {
-  const user = account.user!;
-  const ent = account.entitlement;
-  const [checkError, setCheckError] = useState('');
-
-  // What the account gets changes on the server (a payment, a cancellation,
-  // a plan you give by hand): read it again when this page opens, and when
-  // it comes back into view (from Stripe's pages, say). And catch up the
-  // cloud copy.
+/**
+ * What the account gets changes on the server (a payment, a cancellation, a
+ * plan you give by hand): read it again when settings open, and when they
+ * come back into view (from Stripe's pages, say). And catch up the cloud copy.
+ */
+export function useAccountRefresh(userId: string | undefined): string {
+  const [error, setError] = useState('');
   useEffect(() => {
+    if (!userId) return;
     const check = () => {
       if (document.visibilityState !== 'visible') return;
-      setCheckError('');
-      void refreshEntitlement().catch((err: Error) => setCheckError(err.message));
+      setError('');
+      void refreshEntitlement().catch((err: Error) => setError(err.message));
     };
     check();
     void browser.runtime.sendMessage({ type: 'sync:now' }).catch(() => {});
@@ -186,29 +197,8 @@ function SignedIn({ account }: { account: AccountState }) {
       document.removeEventListener('visibilitychange', check);
       window.removeEventListener('focus', check);
     };
-  }, [user.id]);
-
-  return (
-    <>
-      <div className="field" data-testid="signed-in">
-        <span className="key-row shortcut-row">
-          <span>
-            Signed in as <b data-testid="account-email">{user.email}</b>
-          </span>
-          <button type="button" className="secondary" onClick={() => void signOut()} data-testid="sign-out">
-            Sign out
-          </button>
-        </span>
-      </div>
-      {ent ? (
-        <PlanField ent={ent} />
-      ) : (
-        <p className={`help${checkError ? ' bad' : ''}`} data-testid="account-checking">
-          {checkError ? `Couldn't check your account: ${checkError}` : 'Checking…'}
-        </p>
-      )}
-    </>
-  );
+  }, [userId]);
+  return error;
 }
 
 /** Cloud storage (if the plan has it) and deleting the account. */
@@ -288,8 +278,8 @@ function planStatus(ent: Entitlement): string {
   return b.cancelAtPeriodEnd ? `Ends on ${day(b.periodEnd)}.` : `Renews on ${day(b.periodEnd)}.`;
 }
 
-/** The plan, hosted answers used this month, and buying or managing it. */
-function PlanField({ ent }: { ent: Entitlement }) {
+/** The plan, with the hosted answers left this month in a badge, and buying or managing it. */
+export function PlanDetails({ ent }: { ent: Entitlement }) {
   const [list, setList] = useState<Offer[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -316,25 +306,28 @@ function PlanField({ ent }: { ent: Entitlement }) {
   const left = Math.max(0, ent.quota - ent.used);
 
   return (
-    <div className="field" data-testid="plan">
-      <span className="field-label">Plan</span>
-      <p className="help" data-testid="plan-line">
-        <b>{ent.planName || 'Free'}</b>
-        {status && <> · {status}</>}
-      </p>
-      {ent.quota > 0 && (
-        <div className="usage">
-          <span className="help" data-testid="hosted-left">
-            {left} of {ent.quota} hosted answers left this month.
+    <>
+      <div className="plan-head">
+        <span className="plan-name" data-testid="plan-name">
+          {ent.planName || 'Free'}
+        </span>
+        {ent.quota > 0 && (
+          <span className="answers-left" data-testid="hosted-left" title={`${left} of ${ent.quota} hosted answers left this month`}>
+            {left.toLocaleString()}
           </span>
-          <meter min={0} max={ent.quota} value={ent.used} aria-label="Hosted answers used this month" />
-        </div>
+        )}
+      </div>
+      {ent.quota > 0 && <small className="help">Hosted answers left this month</small>}
+      {status && (
+        <p className="help" data-testid="plan-status">
+          {status}
+        </p>
       )}
       {plan && (
         <div className="upgrade" data-testid="upgrade">
           <p className="help">
             <b>{plan.name}</b>: up to {plan.monthly_questions.toLocaleString()} hosted answers a month, no key needed
-            {plan.cloud ? ', and cloud sync' : ''}.{upgrades.every((o) => !o.interval) ? ' Paid once; nothing renews.' : ''}
+            {plan.cloud ? ', and cloud sync' : ''}.{upgrades.every((o) => !o.interval) ? ' Paid once; nothing renews.' : ' Renews until you cancel, any time.'}
           </p>
           <div className="key-row">
             {upgrades.map((o) => (
@@ -363,7 +356,7 @@ function PlanField({ ent }: { ent: Entitlement }) {
           {error}
         </p>
       )}
-    </div>
+    </>
   );
 }
 

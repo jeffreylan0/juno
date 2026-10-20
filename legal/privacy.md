@@ -17,6 +17,7 @@ These live in Juno's data folder on your computer, and we can't see them:
 
 - **Chats**: what you selected (a screenshot of that area of the screen), what you asked, and the answers. You choose how many saved chats are kept (1 to 100). Temporary chats are kept in memory only and deleted, with their screenshots, when you finish them. *Settings → Chats & privacy → Delete all chats* deletes them.
 - **Settings**, and a count of this month's answers (shown at the top of Settings).
+- **The unlock's code**, if you bought it (or entered it from another computer).
 - **Your API keys**, in a file only your user account can read (encrypted with Windows' own data protection on Windows). Juno's windows can't read them back; only the part of the app that sends your question to Anthropic or OpenAI uses them.
 
 Juno looks at your screen only when you select something. On macOS it needs Screen Recording for that, and nothing else; on Windows, no permission at all.
@@ -34,11 +35,13 @@ Juno looks at your screen only when you select something. On macOS it needs Scre
 **If you make an account** (optional):
 
 - **Email codes**: your email address, to send you a sign-in code through our email provider ([email provider]).
-- **Google sign-in**: Google tells us your email address and an account ID. Juno asks Google for nothing else.
+- **Google sign-in**: Google tells us your email address, your name and profile picture, and an account ID. Juno asks Google for nothing else; your name and picture are shown only to you, in Settings.
 - **Your account** is kept by Supabase, our database provider ([region]): your email address, when you signed up and last signed in, your plan, how many hosted answers you used each month, and when you paid. For security, Supabase also keeps a log of sign-ins, with your email and IP address.
 - **Cloud sync** (on plans that include it, off until you turn it on): a copy of your saved chats and their screenshots, in a private storage space only your account can read. Temporary chats are never copied.
 
-**If you buy a plan**, Stripe handles the payment. We never see your card number. We keep your Stripe customer ID, what you bought, and when it ends; Stripe keeps its own payment records, as the law requires.
+**If you buy a plan**, Stripe handles the payment. We never see your card number. We keep your Stripe customer ID, what you bought, and when it renews or ends; Stripe keeps its own payment records, as the law requires.
+
+**If you buy the unlock** without an account, Stripe handles the payment too, and the unlock's code is kept with the payment in Stripe, so the code can be checked when you enter it on another computer. Our server keeps nothing about you for it.
 
 **Updates**: if *Update automatically* is on (Settings → Juno), the app checks GitHub for a new version from time to time. GitHub sees your IP address and the request, as for any download.
 

@@ -34,7 +34,7 @@ export const BAR_STYLE = `
   position: fixed; box-sizing: border-box; display: flex; flex-direction: column; max-width: calc(100vw - 32px);
   font: 400 14px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
-  color: var(--sai-bar-fg, #f5f4ef); background: var(--sai-bar-bg, #30302e);
+  color: var(--sai-bar-fg, #f7f1ea); background: var(--sai-bar-bg, #2c2622);
   border: 1px solid var(--sai-bar-line, rgba(222, 220, 209, 0.14)); border-radius: 18px;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34), 0 2px 8px rgba(0, 0, 0, 0.2);
   pointer-events: auto; overflow: hidden;
@@ -76,17 +76,17 @@ export const BAR_STYLE = `
 .close, .chats, .gear, .ghost {
   display: flex; align-items: center; justify-content: center; flex: none;
   width: 32px; height: 32px; padding: 0; border: 0; border-radius: 9px; cursor: pointer; overflow: hidden;
-  background: transparent; color: var(--sai-bar-muted, #a6a39b);
+  background: transparent; color: var(--sai-bar-muted, #b2a79c);
 }
-.close:hover, .chats:hover, .gear:hover, .gear[aria-expanded='true'], .ghost:hover { color: var(--sai-bar-fg, #f5f4ef); background: rgba(255, 255, 255, 0.08); }
-.ghost[aria-pressed='true'], .ghost[aria-pressed='true']:hover { color: var(--sai-bar-fg, #f5f4ef); background: rgba(255, 255, 255, 0.14); }
+.close:hover, .chats:hover, .gear:hover, .gear[aria-expanded='true'], .ghost:hover { color: var(--sai-bar-fg, #f7f1ea); background: rgba(255, 255, 255, 0.08); }
+.ghost[aria-pressed='true'], .ghost[aria-pressed='true']:hover { color: var(--sai-bar-fg, #f7f1ea); background: rgba(255, 255, 255, 0.14); }
 .close svg, .chats svg, .gear svg, .ghost svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .close svg { width: 16px; height: 16px; }
 /* The instruction, above the row, when it adds something. What could be wide
    (it, a note, the settings) never sets the bar's width: width 0, at least the bar's. */
 .say, .note, .settings { width: 0; min-width: 100%; box-sizing: border-box; }
 .say {
-  display: none; padding: 10px 14px 0; font-size: 13px; text-align: center; color: var(--sai-bar-muted, #a6a39b);
+  display: none; padding: 10px 14px 0; font-size: 13px; text-align: center; color: var(--sai-bar-muted, #b2a79c);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .say.loud:not(.gone) { display: block; }
@@ -94,12 +94,12 @@ export const BAR_STYLE = `
 .chips { display: flex; gap: 2px; flex: none; padding: 2px; border-radius: 11px; background: rgba(255, 255, 255, 0.06); }
 .chip {
   display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; cursor: pointer;
-  font-size: 13px; font-weight: 500; color: var(--sai-bar-muted, #a6a39b); background: transparent; border: 0; border-radius: 9px;
+  font-size: 13px; font-weight: 500; color: var(--sai-bar-muted, #b2a79c); background: transparent; border: 0; border-radius: 9px;
 }
-.chip:hover { color: var(--sai-bar-fg, #f5f4ef); background: rgba(255, 255, 255, 0.06); }
+.chip:hover { color: var(--sai-bar-fg, #f7f1ea); background: rgba(255, 255, 255, 0.06); }
 .chip .label { display: none; }
 /* After the hover rule, so hovering the chosen mode keeps it as it is. */
-.chip[aria-pressed='true'], .chip[aria-pressed='true']:hover { color: var(--sai-bar-fg, #f5f4ef); background: rgba(255, 255, 255, 0.14); padding: 0 11px 0 9px; }
+.chip[aria-pressed='true'], .chip[aria-pressed='true']:hover { color: var(--sai-bar-fg, #f7f1ea); background: rgba(255, 255, 255, 0.14); padding: 0 11px 0 9px; }
 .chip[aria-pressed='true'] .label { display: inline; }
 .chip-slot { display: flex; }
 /* Lets the pointer through to its wrapper, which carries the tooltip. */
@@ -108,13 +108,13 @@ export const BAR_STYLE = `
 .ask {
   display: none; align-items: center; justify-content: center; flex: none;
   width: 32px; height: 32px; padding: 0; border: 0; border-radius: 9px; cursor: pointer;
-  background: var(--sai-accent, #d97757); color: #fff;
+  background: var(--sai-accent, #e5702a); color: #fff;
 }
 .ask.on { display: flex; }
 .ask:hover:not(:disabled) { background: var(--sai-accent-hover, #c6613f); }
 .ask:disabled { opacity: 0.4; cursor: default; }
 .ask svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.bar :focus-visible { outline: 2px solid var(--sai-accent, #d97757); outline-offset: 1px; }
+.bar :focus-visible { outline: 2px solid var(--sai-accent, #e5702a); outline-offset: 1px; }
 /* Taken out of the screenshot when the selection runs under it; back right after. */
 .bar.out-of-shot { visibility: hidden; }
 
@@ -123,14 +123,14 @@ export const BAR_STYLE = `
 .note.on { display: flex; }
 .note-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .note-title { font-size: 14px; font-weight: 600; }
-.note-sub { font-size: 13px; color: var(--sai-bar-muted, #a6a39b); }
+.note-sub { font-size: 13px; color: var(--sai-bar-muted, #b2a79c); }
 .note-actions { display: flex; gap: 8px; flex: none; }
 .note-actions button {
   font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; padding: 7px 12px; border-radius: 9px;
-  color: var(--sai-bar-fg, #f5f4ef); background: rgba(255, 255, 255, 0.06); border: 1px solid var(--sai-bar-line, rgba(222, 220, 209, 0.14));
+  color: var(--sai-bar-fg, #f7f1ea); background: rgba(255, 255, 255, 0.06); border: 1px solid var(--sai-bar-line, rgba(222, 220, 209, 0.14));
 }
 .note-actions button:hover { background: rgba(255, 255, 255, 0.12); }
-.note-actions button.primary { color: #1f1e1d; background: #f5f4ef; border-color: transparent; }
+.note-actions button.primary { color: #1c1714; background: #f7f1ea; border-color: transparent; }
 .note-actions button.primary:hover { background: #fff; }
 
 /* The quick settings, opened by the gear. */
@@ -142,29 +142,29 @@ export const BAR_STYLE = `
 .settings.open { max-height: min(46vh, 340px); border-top-color: var(--sai-bar-line, rgba(222, 220, 209, 0.14)); }
 .settings-inner { display: flex; flex-direction: column; gap: 12px; padding: 14px 18px 14px; }
 .field { display: flex; flex-direction: column; gap: 6px; }
-.field > span { font-size: 12px; color: var(--sai-bar-muted, #a6a39b); }
+.field > span { font-size: 12px; color: var(--sai-bar-muted, #b2a79c); }
 .field select {
   font: inherit; font-size: 13px; padding: 7px 30px 7px 10px; border-radius: 9px; cursor: pointer;
-  color: var(--sai-bar-fg, #f5f4ef); background-color: rgba(255, 255, 255, 0.06); border: 1px solid var(--sai-bar-line, rgba(222, 220, 209, 0.14));
+  color: var(--sai-bar-fg, #f7f1ea); background-color: rgba(255, 255, 255, 0.06); border: 1px solid var(--sai-bar-line, rgba(222, 220, 209, 0.14));
   /* The native arrow sits hard against the edge and ignores our padding. */
   -webkit-appearance: none; -moz-appearance: none; appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23a6a39b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 10px center; background-size: 12px 12px;
 }
 .field select::-ms-expand { display: none; }
-.field select option { color: #1f1e1d; background: #fff; }
+.field select option { color: #1c1714; background: #fff; }
 .more {
   align-self: flex-start; font-size: 13px; cursor: pointer;
-  border: 0; background: none; padding: 0; color: var(--sai-bar-muted, #a6a39b); text-decoration: underline; text-underline-offset: 2px;
+  border: 0; background: none; padding: 0; color: var(--sai-bar-muted, #b2a79c); text-decoration: underline; text-underline-offset: 2px;
 }
-.more:hover { color: var(--sai-bar-fg, #f5f4ef); }
+.more:hover { color: var(--sai-bar-fg, #f7f1ea); }
 
 /* Small light tooltips: they come up after the pointer rests a moment. */
 .hint {
   position: fixed; left: 0; top: 0; z-index: 1; pointer-events: none; white-space: nowrap; box-sizing: border-box;
   max-width: min(360px, calc(100vw - 16px)); overflow: hidden; text-overflow: ellipsis;
   font: 500 12px/1.3 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-  color: var(--sai-hint-fg, #1f1e1d); background: var(--sai-hint-bg, #f5f4ef);
+  color: var(--sai-hint-fg, #1c1714); background: var(--sai-hint-bg, #f7f1ea);
   padding: 5px 8px; border-radius: 7px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
   opacity: 0; visibility: hidden; transition: opacity 120ms ease, visibility 0s linear 120ms;
 }

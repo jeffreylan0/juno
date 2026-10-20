@@ -14,8 +14,9 @@
  *    selection until it arrives;
  *  - the selection is done: the native core captures that display without
  *    the app's own windows and crops it; the selection joins the chat;
- *  - ✕ on the bar or the panel (or Escape before anything was selected)
- *    hides both and finishes the chat, by lib/current.ts's rules;
+ *  - while a selection is drawn, the bar and the panel step aside;
+ *  - ✕ or Escape (on the bar or the panel) hides both and finishes the
+ *    chat, by lib/current.ts's rules;
  *  - the bar's chats button opens the panel on its list of chats; while the
  *    panel shows, the bar leaves the ghost, settings and chats to it;
  *  - the panel's new-chat key (⌘⇧O, Ctrl+Shift+O) finishes the chat and
@@ -28,9 +29,9 @@ import { browser, note, transport } from '../platform/install';
 import { WINDOW_ID, type Port } from '../platform/browser';
 import { appFetch } from '../platform/net';
 import { nativeVault, watchKeys } from '../platform/vault';
-import { getChat } from '@/lib/chats';
 import { endChat, ensureCurrent, getCurrent, panelOpened, setTemporary, switchTo } from '@/lib/current';
 import { ChatEngine, reply, type KeptCapture } from '@/lib/engine';
+import { extrasOpenNow, withinPlan } from '@/lib/extras';
 import { getSettings, panelSizeItem } from '@/lib/storage';
 import { PANEL_PORT, isRuntimeMessage, type BarControlMsg, type PanelPortMsg, type RuntimeMessage, type SelectionDoneMsg } from '@/lib/messages';
 import type { NoticeReply } from '../overlay/notices';
@@ -42,6 +43,8 @@ const W = WINDOW_ID;
 const panels = new Set<Port>();
 /** Whether the panel is on screen: it is kept, hidden, between chats (wm.rs). */
 let panelShown = false;
+/** The panel is shown, but out of sight while a selection is drawn (drawing()). */
+let panelAside = false;
 const engine = new ChatEngine({ fetch: appFetch, vault: nativeVault, watchKeys, panelsOpen: () => panelShown }).start();
 const serial = <T>(task: () => Promise<T>) => engine.serial(task);
 
@@ -111,8 +114,8 @@ async function screenNotNow(): Promise<void> {
 }
 
 /**
- * ✕ on the bar or the panel (or Escape before anything was selected): both
- * go, then the chat is finished. In that order: finished first, the panel
+ * ✕ or Escape, on the bar or the panel: both go, then the chat is
+ * finished. In that order: finished first, the panel
  * would show its empty new chat for a moment on its way out.
  */
 async function finishChat(): Promise<void> {
@@ -129,19 +132,31 @@ async function finishChat(): Promise<void> {
  * window, which the system draws, on screen for a moment: a flash.)
  */
 async function closePanel(): Promise<void> {
+  panelAside = false;
   if (!panelShown) return;
   panelShown = false;
   void tellOverlay({ type: 'overlay:panel', open: false });
   await transport.invoke('panel_close').catch(() => {});
 }
 
-/** Escape stopped a selection: with nothing selected in this chat yet it meant "never mind". */
-async function cancelSelection(): Promise<{ end: boolean }> {
-  const current = await getCurrent(W);
-  const chat = current ? await getChat(current.chatId) : null;
-  if (chat?.items.length) return { end: false };
-  await finishChat();
-  return { end: true };
+/**
+ * While a selection is being drawn, the panel steps aside (the bar does too,
+ * on its own page) and comes back once the drawing ends, without taking the
+ * keyboard from the overlay; a selection made opens it as usual.
+ */
+async function drawing(on: boolean): Promise<void> {
+  if (on) {
+    if (!panelShown || panelAside) return;
+    panelAside = true;
+    await transport.invoke('panel_close', { aside: true }).catch(() => {});
+    return;
+  }
+  if (!panelAside) return;
+  panelAside = false;
+  const [place, size] = await Promise.all([panelPlace(), panelSizeItem.getValue().catch(() => null)]);
+  // Closed meanwhile (Escape while drawing), or opened by the selection made.
+  if (!panelShown || panelAside) return;
+  await transport.invoke('panel_open', { focus: false, place, size }).catch(() => {});
 }
 
 async function tellGhost(on: boolean): Promise<void> {
@@ -153,15 +168,22 @@ async function tellGhost(on: boolean): Promise<void> {
  * put it (the setting), as big as they last made it, if they did.
  */
 async function openPanel(): Promise<void> {
+  panelAside = false;
   if (!panelShown) {
     await browser.tell('panel', { type: 'card:enter' }).catch(() => {});
     void tellOverlay({ type: 'overlay:panel', open: true });
   }
   panelShown = true;
-  const [settings, size] = await Promise.all([getSettings(), panelSizeItem.getValue().catch(() => null)]);
+  const [place, size] = await Promise.all([panelPlace(), panelSizeItem.getValue().catch(() => null)]);
   await transport
-    .invoke('panel_open', { focus: true, place: settings.panelPlace, size })
+    .invoke('panel_open', { focus: true, place, size })
     .catch((err) => note(`panel_open failed: ${String(err)}`));
+}
+
+/** Where the panel goes: the setting, while the extras are open (lib/extras.ts). */
+async function panelPlace(): Promise<string> {
+  const [settings, open] = await Promise.all([getSettings(), extrasOpenNow()]);
+  return withinPlan(settings, open).panelPlace;
 }
 
 /** The panel's new-chat key: this chat is finished, the panel shows the new one, and the bar comes up for its first selection. */
@@ -289,8 +311,9 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
       return;
     case 'selection:done':
       return reply(handleSelectionDone(msg), sendResponse);
-    case 'selection:cancel':
-      return reply(cancelSelection(), sendResponse);
+    case 'selection:drawing':
+      void drawing(msg.on);
+      return;
     case 'chat:finish':
       return reply(finishChat(), sendResponse);
     case 'options:open':

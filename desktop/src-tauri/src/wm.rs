@@ -425,12 +425,16 @@ pub fn fit_panel(app: &AppHandle, state: &SharedOverlay, height: f64, animate: b
     Ok(h)
 }
 
-/// Hides the panel; it is kept for the next selection.
-pub fn close_panel(app: &AppHandle) -> tauri::Result<()> {
+/// Hides the panel; it is kept for the next selection. `give_back`: the
+/// keyboard goes back to the app that had it (not while a selection is being
+/// drawn, when the overlay keeps it).
+pub fn close_panel(app: &AppHandle, give_back: bool) -> tauri::Result<()> {
     if let Some(w) = app.get_webview_window(PANEL) {
         w.hide()?;
     }
-    yield_focus(app);
+    if give_back {
+        yield_focus(app);
+    }
     Ok(())
 }
 

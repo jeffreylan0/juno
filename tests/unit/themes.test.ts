@@ -35,7 +35,7 @@ describe('colour themes', () => {
     applyTheme(root, themeById('ocean'), true, true);
     expect(root.style.getPropertyValue('--sai-bar-bg')).toBe('#16252d');
     expect(root.style.getPropertyValue('--accent')).toBe('');
-    applyTheme(root, themeById('claude'), false);
+    applyTheme(root, themeById('ember'), false);
     expect(root.getAttribute('style') ?? '').toBe('');
   });
 
@@ -47,10 +47,25 @@ describe('colour themes', () => {
     expect(migrateSettings({ scheme: 'sepia' }).scheme).toBe('system');
   });
 
-  it('is a setting: Claude to start, and an unknown theme falls back to it', () => {
-    expect(DEFAULT_SETTINGS.theme).toBe('claude');
+  it('is a setting: Ember to start, and an unknown theme (the retired Claude one included) falls back to it', () => {
+    expect(DEFAULT_SETTINGS.theme).toBe('ember');
     expect(migrateSettings({ theme: 'rose' }).theme).toBe('rose');
-    expect(migrateSettings({ theme: 'from-the-marketplace' }).theme).toBe('claude');
-    expect(themeById('nope').id).toBe('claude');
+    expect(migrateSettings({ theme: 'from-the-marketplace' }).theme).toBe('ember');
+    expect(migrateSettings({ theme: 'claude' }).theme).toBe('ember');
+    expect(themeById('nope').id).toBe('ember');
+  });
+
+  it('the stylesheets carry the default theme, so choosing it sets nothing', async () => {
+    const { readFileSync } = await import('node:fs');
+    const ember = themeById('ember');
+    for (const file of ['desktop/src/ui/panel.css', 'desktop/src/settings/options.css']) {
+      const css = readFileSync(file, 'utf8');
+      const [light, dark] = [css.slice(css.indexOf(':root {')), css.slice(css.indexOf(":root[data-scheme='dark'] {"))];
+      for (const [block, p, isDarkBlock] of [[light, ember.light, false], [dark, ember.dark, true]] as const) {
+        const v = tokens(p, isDarkBlock);
+        for (const name of ['--bg', '--fg', '--muted', '--line', '--accent', '--accent-bg', '--on-accent', '--hover'])
+          expect(block.slice(0, block.indexOf('}')), `${file} ${name}`).toContain(`${name}: ${v[name]};`);
+      }
+    }
   });
 });

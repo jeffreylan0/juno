@@ -68,6 +68,8 @@ export interface Settings {
   scheme: Scheme;
   /** Install new versions by itself (core/updates.ts). */
   autoUpdate: boolean;
+  /** Notices floating over the panel's chat (ui/Notices.tsx): no key, disconnected, an old chat deleted. */
+  panelNotices: boolean;
   /**
    * Copy saved chats to the signed-in account (account/sync.ts). Only does
    * anything for accounts given cloud storage; off until the student turns it on.
@@ -94,6 +96,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: DEFAULT_THEME,
   scheme: 'system',
   autoUpdate: true,
+  panelNotices: true,
   cloudSync: false,
   localBaseUrl: 'http://localhost:11434/v1',
   localModel: 'qwen2.5vl:7b',
@@ -167,6 +170,7 @@ export function migrateSettings(stored: unknown): Settings {
   if (!isThemeId(merged.theme)) merged.theme = DEFAULT_THEME;
   if (!SCHEMES.includes(merged.scheme)) merged.scheme = 'system';
   merged.autoUpdate = merged.autoUpdate !== false;
+  merged.panelNotices = merged.panelNotices !== false;
   merged.macros = sanitizeMacros(merged.macros);
   if (!(CHAT_LIMITS as readonly number[]).includes(merged.chatLimit)) merged.chatLimit = DEFAULT_CHAT_LIMIT;
   merged.version = SETTINGS_VERSION;

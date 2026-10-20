@@ -32,18 +32,15 @@ export interface SelectionDoneMsg {
   page: { url: string; title: string };
 }
 
-/**
- * Bar → core: Escape stopped the selection being made. The reply
- * says whether that also hides the bar ({ end: true }: nothing had been
- * selected in this chat yet, so Escape meant "never mind").
- */
-export interface SelectionCancelMsg {
-  type: 'selection:cancel';
+/** Bar → core: a selection is being drawn (`on`), or no longer is. The panel steps aside meanwhile, as the bar does. */
+export interface SelectionDrawingMsg {
+  type: 'selection:drawing';
+  on: boolean;
 }
 
 /**
- * Bar → core: ✕ on the bar, or Escape while it waits. Hides
- * the bar and the panel and finishes the chat; it stays in the menu.
+ * Bar → core: ✕ on the bar, or Escape. Hides the bar and the panel and
+ * finishes the chat; it stays in the menu.
  */
 export interface ChatFinishMsg {
   type: 'chat:finish';
@@ -177,7 +174,7 @@ export interface OptionsOpenMsg {
 export type RuntimeMessage =
   | SelectionCommittedMsg
   | SelectionDoneMsg
-  | SelectionCancelMsg
+  | SelectionDrawingMsg
   | ChatFinishMsg
   | BarControlMsg
   | ChatSendMsg

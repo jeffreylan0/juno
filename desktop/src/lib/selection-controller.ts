@@ -11,6 +11,7 @@ import type { BarNotice } from '@/selection/bar';
 import { Overlay } from '@/selection/overlay';
 import { KIND_ORDER } from './kinds';
 import type { BarControlMsg, RuntimeMessage, SelectionDoneMsg } from './messages';
+import { watchExtras, withinPlan } from './extras';
 import { getSettings, migrateSettings, settingsItem, type Settings } from './storage';
 
 export interface SelectionControllerOptions {
@@ -43,8 +44,10 @@ export class SelectionController {
     this.overlay = new Overlay({
       onModeChange: (kind) => this.soon(() => void this.start(kind)),
       onClose: () => this.finish(),
-      // Escape while the bar waits: hide it (and the panel), like ✕.
-      onEscapeWhileWaiting: () => this.finish(),
+      // Escape, whatever is going on: everything goes, as with ✕.
+      onEscape: () => this.finish(),
+      // The panel steps aside while a selection is drawn (core/main.ts).
+      onDrawing: (on) => void this.send({ type: 'selection:drawing', on }),
       onGhost: () => this.soon(() => void this.toggleGhost()),
       // The chats on the panel, with nothing armed: the dim would cover them.
       onChats: () => {
@@ -53,12 +56,17 @@ export class SelectionController {
       },
       onScrollThrough: opts.scrollThrough,
     });
-    const apply = (s: Settings) => {
-      this.adjust = s.adjustBox;
-      this.overlay.setPlace(s.barPlace);
+    // Where the bar sits is one of the extras (lib/extras.ts).
+    let settings: Settings | null = null;
+    let extras = false;
+    const apply = () => {
+      if (!settings) return;
+      this.adjust = settings.adjustBox;
+      this.overlay.setPlace(withinPlan(settings, extras).barPlace);
     };
-    void getSettings().then(apply, () => {});
-    settingsItem.watch((s) => apply(migrateSettings(s)));
+    void getSettings().then((s) => ((settings = s), apply()), () => {});
+    settingsItem.watch((s) => ((settings = migrateSettings(s)), apply()));
+    watchExtras((open) => ((extras = open), apply()));
   }
 
   /** A note attached under the bar (a permission, say), or null to take it away. */
@@ -129,7 +137,7 @@ export class SelectionController {
     this.overlay.hide();
   }
 
-  /** ✕ on the bar, or Escape while it waits: the bar and the panel go, the chat is finished. */
+  /** ✕ on the bar, or Escape: the bar and the panel go, the chat is finished. */
   private finish(): void {
     this.hide();
     void this.send({ type: 'chat:finish' });
@@ -162,18 +170,6 @@ export class SelectionController {
     void this.send({ type: 'selection:committed', kind });
   }
 
-  /**
-   * Escape stopped the selection. The bar then waits, unless nothing has been
-   * selected in this chat yet, when Escape means "never mind" and the bar (and
-   * the panel) go. The core knows which, and says.
-   */
-  private async stopped(gen: number): Promise<void> {
-    this.armed = null;
-    this.overlay.ready();
-    const reply = await this.send<{ end?: boolean }>({ type: 'selection:cancel' });
-    if (gen === this.generation && reply?.end) this.hide();
-  }
-
   /** Arms a selection in `kind`, bringing the bar up if it is not. */
   async start(requested: SelectionKind): Promise<void> {
     const gen = ++this.generation;
@@ -184,11 +180,9 @@ export class SelectionController {
     const kind = KIND_ORDER.includes(requested) ? requested : 'box';
     this.armed = kind;
 
+    // Null when stopped: by Escape or ✕ (which close everything) or another mode (which re-arms).
     const done = await this.select(kind, current);
-    if (!done) {
-      if (current()) await this.stopped(gen);
-      return;
-    }
+    if (!done) return;
     // Committed (commit() set `delivering`). Superseded before it could be
     // sent (✕ in the two frames before the screenshot), it is dropped: the
     // screenshot would not be of it.

@@ -10,10 +10,12 @@
  *
  * Prices are made in the Stripe dashboard and found by their lookup keys
  * (STRIPE_PRICES, in the order shown), so a new price never needs new code.
- * A one-time price is a pass, for the days written after its key there
- * (`plus_year:365`; else its `pass_days` metadata; else 120, a semester). A
- * price gives Plus unless its (or its product's) `plan` metadata names
- * another plan.
+ * A recurring price is a subscription, renewing at its own interval (every
+ * 120 days, every year). A one-time price is a pass, for the days written
+ * after its key there (`plus_year:365`; else its `pass_days` metadata; else
+ * 120, a semester); for a recurring price those days are ignored. A price
+ * gives Plus unless its (or its product's) `plan` metadata names another
+ * plan. The one-time unlock for students without an account is unlock.ts.
  *
  * Routes (index.ts):
  *   GET  /billing/prices    what is on offer, and what each plan gives
@@ -68,7 +70,7 @@ export function form(params: Params, prefix = ''): string {
   return out.filter(Boolean).join('&');
 }
 
-async function stripe<T>(env: Env, method: 'GET' | 'POST' | 'DELETE', path: string, params?: Params): Promise<T> {
+export async function stripe<T>(env: Env, method: 'GET' | 'POST' | 'DELETE', path: string, params?: Params): Promise<T> {
   if (!env.STRIPE_SECRET_KEY) throw new BillingError("Payments aren't set up yet.", 503, 'no-billing');
   const query = params ? form(params) : '';
   const res = await fetch(method === 'POST' || !query ? `${STRIPE}${path}` : `${STRIPE}${path}?${query}`, {
@@ -89,13 +91,15 @@ async function stripe<T>(env: Env, method: 'GET' | 'POST' | 'DELETE', path: stri
 
 // ── What is on offer ─────────────────────────────────────────────────────
 
+type Interval = 'day' | 'week' | 'month' | 'year';
+
 interface StripePrice {
   id: string;
   lookup_key: string | null;
   unit_amount: number | null;
   currency: string;
   type: 'recurring' | 'one_time';
-  recurring: { interval: 'day' | 'week' | 'month' | 'year'; interval_count: number } | null;
+  recurring: { interval: Interval; interval_count: number } | null;
   metadata: Record<string, string>;
   product: { name: string; metadata: Record<string, string> } | string;
 }
@@ -115,8 +119,8 @@ export interface Offer {
   /** In the currency's smallest unit (cents). */
   amount: number;
   currency: string;
-  /** How often it renews; null for a pass. */
-  interval: 'month' | 'year' | null;
+  /** How often it renews (every `intervalCount` of them); null for a pass. */
+  interval: Interval | null;
   intervalCount: number;
   /** A pass's length; null for a subscription. */
   passDays: number | null;
@@ -151,7 +155,7 @@ export async function prices(env: Env): Promise<Offer[]> {
     const product = typeof p.product === 'string' ? { name: '', metadata: {} } : p.product;
     const plan = plans.find((x) => x.id === (p.metadata.plan || product.metadata.plan || DEFAULT_PLAN));
     if (!plan) continue;
-    const interval = p.recurring?.interval === 'month' || p.recurring?.interval === 'year' ? p.recurring.interval : null;
+    const interval = p.type === 'recurring' ? (p.recurring?.interval ?? null) : null;
     if (p.type === 'recurring' && !interval) continue;
     list.push({
       key,
@@ -256,12 +260,18 @@ export function donePage(request: Request): Response {
       : result === 'managed'
         ? ['Done', 'Go back to Juno. Any change shows there within a few seconds.']
         : ['Nothing was charged', 'Checkout was cancelled. Go back to Juno whenever you like.'];
+  return page(title, `${line} You can close this tab.`);
+}
+
+/** A page of fixed text (`more`: markup the caller built from checked values only). */
+export function page(title: string, line: string, more = ''): Response {
   const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · Juno</title>
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#faf9f5;color:#141413;font:16px/1.5 system-ui,sans-serif}
-main{max-width:28rem;padding:2rem;text-align:center}h1{font-size:1.4rem;margin:0 0 .5rem}p{margin:0;color:#5e5d59}
-@media (prefers-color-scheme:dark){body{background:#262624;color:#faf9f5}p{color:#b7b5a9}}</style>
-<main><h1>${title}</h1><p>${line} You can close this tab.</p></main></html>`;
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fbf8f5;color:#1c1714;font:16px/1.5 system-ui,sans-serif}
+main{max-width:28rem;padding:2rem;text-align:center}h1{font-size:1.4rem;margin:0 0 .5rem}p{margin:0;color:#6b625a}
+code{display:inline-block;margin:1rem 0 .25rem;padding:.4rem .7rem;border-radius:8px;background:#f4ece3;color:#1c1714;font:600 1.05rem ui-monospace,monospace;letter-spacing:.04em;user-select:all}
+@media (prefers-color-scheme:dark){body{background:#221d1a;color:#f7f1ea}p{color:#b2a79c}code{background:#2c2622;color:#f7f1ea}}</style>
+<main><h1>${title}</h1><p>${line}</p>${more}</main></html>`;
   return new Response(html, {
     headers: {
       'content-type': 'text/html; charset=utf-8',
@@ -332,7 +342,7 @@ async function syncSubscription(env: Env, id: string, userHint?: string): Promis
   });
 }
 
-interface CheckoutSession {
+export interface CheckoutSession {
   id: string;
   mode: 'subscription' | 'payment' | 'setup';
   created: number;
@@ -412,6 +422,8 @@ export async function webhook(request: Request, env: Env): Promise<Response> {
     case 'checkout.session.completed':
     case 'checkout.session.async_payment_succeeded': {
       const s = obj as unknown as CheckoutSession;
+      // The unlock (unlock.ts) is bought without an account: its code is what proves it.
+      if (s.metadata?.kind === 'unlock') break;
       // Only checkouts this Worker made (both set from the session at
       // checkout): a Payment Link or any other integration, whose reference
       // the buyer can choose, never gives a plan.

@@ -55,7 +55,7 @@ Once saved, your key is never shown again, only its last four characters. It sta
 2. **Box**: drag a rectangle. **Freeform**: draw around anything, in any shape.
 3. A panel opens at the top right with your selection. Press **Explain**, **Hint**, **Check** or **Answer** (the answer first, then the explanation), or type your own question.
 
-**Esc** cancels. You can still scroll the page underneath while the bar is waiting.
+While you drag, the bar and the panel get out of the way, and they come back the moment you let go. **Esc** closes Juno at any point, from the bar or the panel. You can still scroll the page underneath while the bar is waiting.
 
 In the panel:
 
@@ -63,12 +63,13 @@ In the panel:
 - **⌘⇧O** on a Mac or **Ctrl+Shift+O** on Windows starts a new chat: the current one is finished (and kept in the chat menu), and the bar comes up for the next selection.
 - Scroll up while an answer is coming in and the panel stays where you are; scroll back to the bottom and it follows the answer again.
 - Resize the panel by its edges and it keeps that size from then on. Settings → **Selecting** shows the saved size, with a link to let it grow with the chat again.
+- Notices (no key, no connection, an old chat deleted) go by themselves after 5 seconds. Settings → **Selecting** → *Notices in the panel* turns them off; the first one you ever see has a link there.
 
 Settings → **Selecting** → *Where the bar and the panel go* picks a part of the screen for each: click one of the nine squares. The bar sits at that part's outer edge (the bottom of the screen to start), and the panel in its corner or side (top right to start).
 
-Settings → **Appearance** has seven colour themes, and *Light or dark*: always light, always dark, or following your computer.
+Settings → **Appearance** has *Light or dark* (always light, always dark, or following your computer) and the colour themes, Ember (orange) to start. Without a plan, Ember is the theme, the bar and the panel keep their usual places, and two macros are in use; the rest show greyed, with a button to unlock them.
 
-Settings opens from the gear on the bar, always in front of the panel, and goes away when you close it. Its top shows your account (if you signed in), how many answers you got this month (and, with your own key, roughly what they cost), and who answers. The settings follow, the most used first; once you scroll down to them, a list of them appears at the side to jump between.
+Settings opens from the gear on the bar, always in front of the panel, and goes away when you close it (or press **Esc**). Its top shows who you are (*Guest* until you sign in, with *Sign up* and *Sign in* buttons) and your plan: with Plus, the hosted answers left this month in a white badge; otherwise how many answers you got this month (and, with your own key, roughly what they cost), and who answers. The settings follow, the most used first; once you scroll down to them, a list of them appears at the side to jump between.
 
 ## What to look for
 

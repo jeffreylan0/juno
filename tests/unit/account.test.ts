@@ -175,7 +175,7 @@ describe('signing in', () => {
       client_id: 'desktop.apps.googleusercontent.com',
       redirect_uri: back,
       response_type: 'code',
-      scope: 'openid email',
+      scope: 'openid email profile',
       code_challenge_method: 'S256',
     });
     // Google is given the nonce's hash, never the nonce Supabase checks it with.
@@ -420,7 +420,7 @@ describe('cloud copies', () => {
 });
 
 describe('prices, as settings show them', () => {
-  const offer = (amount: number, passDays: number | null, interval: 'month' | 'year' | null = null): Offer => ({
+  const offer = (amount: number, passDays: number | null, interval: Offer['interval'] = null): Offer => ({
     key: 'k',
     name: 'Plus',
     amount,
@@ -435,5 +435,7 @@ describe('prices, as settings show them', () => {
     expect(priceLabel(offer(1199, 365), 'en-US')).toBe('$11.99 for a year');
     expect(priceLabel(offer(199, 7), 'en-US')).toBe('$1.99 for 7 days');
     expect(priceLabel(offer(799, null, 'month'), 'en-US')).toBe('$7.99 a month');
+    expect(priceLabel({ ...offer(499, null, 'day'), intervalCount: 120 }, 'en-US')).toBe('$4.99 every 120 days');
+    expect(priceLabel(offer(1199, null, 'year'), 'en-US')).toBe('$11.99 a year');
   });
 });
