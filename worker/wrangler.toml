@@ -12,10 +12,15 @@ compatibility_flags = ["nodejs_compat"]
 # request). Empty: the Worker calls the vendors directly.
 AI_GATEWAY_ID = ""
 # The prices on offer: Stripe lookup keys, in the order the apps show them
-# (supabase/README.md). Empty: no plans are offered.
+# (supabase/README.md). A recurring price renews at its own interval; the
+# days after a key are a one-time price's length, ignored for a recurring
+# one. Empty: no plans are offered.
 STRIPE_PRICES = "plus_semester:120,plus_year:365"
 # "on" once Stripe Tax is set up in the Stripe dashboard.
 STRIPE_TAX = ""
+# The one-time unlock for students without an account (src/unlock.ts): the
+# lookup key of a one-time Stripe price. Empty: not on offer.
+UNLOCK_PRICE = "unlock"
 # Google sign-in's desktop client id (public; supabase/README.md, step 3).
 # Its secret: npx wrangler secret put GOOGLE_CLIENT_SECRET.
 GOOGLE_CLIENT_ID = ""

@@ -17,8 +17,8 @@ export interface Offer {
   /** In the currency's smallest unit (cents). */
   amount: number;
   currency: string;
-  /** How often it renews; null for a pass. */
-  interval: 'month' | 'year' | null;
+  /** How often it renews (every `intervalCount` of them); null for a pass. */
+  interval: 'day' | 'week' | 'month' | 'year' | null;
   intervalCount: number;
   /** A pass's length in days; null for a subscription. */
   passDays: number | null;
@@ -58,7 +58,7 @@ async function post<T>(path: string, body: unknown = {}): Promise<T> {
 /** Only ever Stripe's own pages: whatever the Worker answers, nothing else is opened. */
 const STRIPE_HOSTS = ['checkout.stripe.com', 'billing.stripe.com'];
 
-function openStripe(url: unknown): void {
+export function openStripe(url: unknown): void {
   let page: URL | null = null;
   try {
     page = new URL(String(url));
@@ -86,7 +86,7 @@ export async function closeBilling(): Promise<void> {
   await post('/billing/close');
 }
 
-/** "$7.99 a month", "$59.99 a year", "$24.99 for 4 months". */
+/** "$4.99 every 120 days", "$11.99 a year", "$24.99 for 4 months" (a pass). */
 export function priceLabel(o: Offer, locale?: string): string {
   const amount = new Intl.NumberFormat(locale, { style: 'currency', currency: o.currency.toUpperCase() }).format(o.amount / 100);
   if (o.interval) return o.intervalCount > 1 ? `${amount} every ${o.intervalCount} ${o.interval}s` : `${amount} a ${o.interval}`;

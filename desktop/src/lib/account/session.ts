@@ -25,6 +25,10 @@ import { ACCOUNTS, GOOGLE_CLIENT_ID, SUPABASE_KEY, SUPABASE_URL } from './config
 export interface AccountUser {
   id: string;
   email: string;
+  /** From Google, when signed in with it. */
+  name?: string;
+  /** Google's picture of the account (an https address), when signed in with it. */
+  picture?: string;
 }
 
 export interface AccountSession {
@@ -135,13 +139,21 @@ function authError(path: string, status: number, data: Record<string, unknown>):
 }
 
 function toSession(data: Record<string, unknown>): AccountSession {
-  const user = data.user as { id?: string; email?: string } | undefined;
+  const user = data.user as { id?: string; email?: string; user_metadata?: Record<string, unknown> } | undefined;
   const access = String(data.access_token ?? '');
   const refresh = String(data.refresh_token ?? '');
   if (!access || !refresh || !user?.id) throw new AccountError('Sign-in failed: no session came back.', 'server');
   const expiresAt =
     typeof data.expires_at === 'number' ? data.expires_at * 1000 : Date.now() + (Number(data.expires_in) || 3600) * 1000;
-  return { accessToken: access, refreshToken: refresh, expiresAt, user: { id: user.id, email: user.email ?? '' } };
+  const meta = user.user_metadata ?? {};
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 200) : undefined);
+  const picture = text(meta.avatar_url) ?? text(meta.picture);
+  return {
+    accessToken: access,
+    refreshToken: refresh,
+    expiresAt,
+    user: { id: user.id, email: user.email ?? '', name: text(meta.full_name) ?? text(meta.name), picture: picture?.startsWith('https://') ? picture : undefined },
+  };
 }
 
 async function keep(session: AccountSession): Promise<AccountSession> {
@@ -191,7 +203,8 @@ async function googleItself(): Promise<Record<string, unknown>> {
   const query = {
     client_id: GOOGLE_CLIENT_ID,
     response_type: 'code',
-    scope: 'openid email',
+    // The name and picture are for the account card in settings.
+    scope: 'openid email profile',
     code_challenge: b64url(await sha256(verifier)),
     code_challenge_method: 'S256',
     state,

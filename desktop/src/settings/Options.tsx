@@ -24,6 +24,7 @@ import { DEFAULT_MACROS, DEFAULT_PROMPT } from '@shared/prompts';
 import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import { listChats } from '@/lib/chats';
+import { FREE_MACROS, withinPlan } from '@/lib/extras';
 import { MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
 import type { KeyModel } from '@/lib/providers/byok';
 import type { KeyStatus, KeyVendor as Vendor } from '@/lib/providers/types';
@@ -40,7 +41,8 @@ import {
   type Settings,
 } from '@/lib/storage';
 import { Icon } from '@/ui/icons';
-import { hasHosted, useAccount, type AccountState } from '@/ui/useAccount';
+import { DEFAULT_THEME } from '@/lib/themes';
+import { hasHosted, useAccount, useExtrasOpen, type AccountState } from '@/ui/useAccount';
 import { useKeyStatus } from '@/ui/useKeyStatus';
 import { MAC } from '../os';
 import { AppSection } from './AppSection';
@@ -92,6 +94,7 @@ export function Options() {
   const [models, setModels] = useState<Partial<Record<Vendor, KeyModel[]>>>({});
   const [saved, setSaved] = useState(0);
   const account = useAccount();
+  const extras = useExtrasOpen();
 
   useEffect(() => {
     void Promise.all([getSettings(), browser.storage.local.get('models')]).then(([s, m]) => {
@@ -169,7 +172,7 @@ export function Options() {
               onKeySaved={() => setSaved(Date.now())}
               rememberModels={rememberModels}
             />
-            <AskingSection settings={settings} save={save} />
+            <AskingSection settings={settings} save={save} locked={extras ? null : unlockLabel(account)} />
             <Section id="appearance" title="Appearance">
               <div className="field">
                 <span className="field-label">Light or dark</span>
@@ -188,9 +191,10 @@ export function Options() {
                   ))}
                 </div>
               </div>
-              <ThemePicker value={settings.theme} onChange={(theme) => void save({ theme })} />
+              <ThemePicker value={extras ? settings.theme : DEFAULT_THEME} locked={!extras} onChange={(theme) => void save({ theme })} />
+              {!extras && <ToPlan label={unlockLabel(account)} what="Every other theme" />}
             </Section>
-            <SelectingSection settings={settings} save={save} />
+            <SelectingSection settings={settings} save={save} locked={extras ? null : unlockLabel(account)} />
             <PrivacySection settings={settings} save={save} account={account} />
             <AccountSection account={account} settings={settings} save={save} />
             {MAC && (
@@ -248,6 +252,21 @@ function SideMenu({ sections }: { sections: { id: string; title: string }[] }) {
         </a>
       ))}
     </nav>
+  );
+}
+
+/** What a locked extra's button says: a guest can unlock them, a signed-in account gets Plus (lib/extras.ts). */
+const unlockLabel = (account: AccountState) => (account.user ? 'Get Plus' : 'Unlock');
+
+/** A locked extra's way to it: a white button to the plan, at the top. */
+function ToPlan({ label, what }: { label: string; what: string }) {
+  return (
+    <span className="key-row to-plan" data-testid="to-plan">
+      <button type="button" className="unlock-btn" onClick={() => document.getElementById('plan')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
+        {label}
+      </button>
+      <small className="help">{what}, with {label === 'Unlock' ? 'the unlock or Plus' : 'Plus'}.</small>
+    </span>
   );
 }
 
@@ -415,7 +434,7 @@ function KeyAndModel({
 
 // ── 2. Asking ────────────────────────────────────────────────────────────
 
-function AskingSection({ settings, save }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void> }) {
+function AskingSection({ settings, save, locked }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void>; locked: string | null }) {
   const [macros, setMacros] = useState<Macro[]>(settings.macros);
   const [prompt, setPrompt] = useState(settings.defaultPrompt);
   // Blank rows are drafts nobody finished; they are kept on screen, not saved.
@@ -441,7 +460,8 @@ function AskingSection({ settings, save }: { settings: Settings; save: (patch: P
         </div>
         <ol className="macro-list">
           {macros.map((m, i) => (
-            <li key={m.id} className="macro-row" data-testid="macro-row">
+            // Past the free ones, kept but greyed while the extras are locked.
+            <li key={m.id} className={`macro-row${locked && i >= FREE_MACROS ? ' locked' : ''}`} inert={!!locked && i >= FREE_MACROS} data-testid="macro-row">
               <input
                 className="macro-name"
                 value={m.name}
@@ -468,11 +488,12 @@ function AskingSection({ settings, save }: { settings: Settings; save: (patch: P
           type="button"
           className="secondary"
           data-testid="add-macro"
-          disabled={macros.length >= 8}
+          disabled={macros.length >= (locked ? FREE_MACROS : 8)}
           onClick={() => setMacros([...macros, { id: `macro-${Date.now().toString(36)}`, name: '', prompt: '' }])}
         >
           Add macro
         </button>
+        {locked && <ToPlan label={locked} what={`More than ${FREE_MACROS} macros`} />}
       </div>
 
       <label className="field">
@@ -500,7 +521,8 @@ function AskingSection({ settings, save }: { settings: Settings; save: (patch: P
 
 // ── 3. Selecting ─────────────────────────────────────────────────────────
 
-function SelectingSection({ settings, save }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void> }) {
+function SelectingSection({ settings, save, locked }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void>; locked: string | null }) {
+  const place = withinPlan(settings, !locked);
   return (
     <Section id="selecting" title="Selecting">
       <ShortcutField />
@@ -520,11 +542,20 @@ function SelectingSection({ settings, save }: { settings: Settings; save: (patch
 
       <div className="field" data-testid="places">
         <span className="field-label">Where the bar and the panel go</span>
-        <div className="places">
-          <PlacePicker label="Bar" value={settings.barPlace} onChange={(v) => void save({ barPlace: v })} />
-          <PlacePicker label="Panel" value={settings.panelPlace} onChange={(v) => void save({ panelPlace: v })} />
+        <div className={`places${locked ? ' locked' : ''}`} inert={!!locked}>
+          <PlacePicker label="Bar" value={place.barPlace} onChange={(v) => void save({ barPlace: v })} />
+          <PlacePicker label="Panel" value={place.panelPlace} onChange={(v) => void save({ panelPlace: v })} />
         </div>
+        {locked && <ToPlan label={locked} what="Your own place for them" />}
         <PanelSizeNote />
+      </div>
+
+      <div className="field" id="notices">
+        <label className="check">
+          <input type="checkbox" checked={settings.panelNotices} data-testid="panel-notices" onChange={(e) => void save({ panelNotices: e.target.checked })} />
+          Notices in the panel
+        </label>
+        <small className="help">No key, no connection, an old chat deleted. They go by themselves after 5 seconds.</small>
       </div>
     </Section>
   );

@@ -319,9 +319,10 @@ fn window_show(window: WebviewWindow) -> Res<()> {
 }
 
 #[tauri::command(async)]
-fn panel_close(app: AppHandle, window: WebviewWindow) -> Res<()> {
+fn panel_close(app: AppHandle, window: WebviewWindow, aside: Option<bool>) -> Res<()> {
     only(&window, &[wm::CORE])?;
-    wm::close_panel(&app).map_err(err)
+    // Aside: only out of sight while a selection is drawn, the overlay keeping the keyboard.
+    wm::close_panel(&app, !aside.unwrap_or(false)).map_err(err)
 }
 
 #[tauri::command(async)]

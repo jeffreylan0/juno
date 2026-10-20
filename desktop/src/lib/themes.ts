@@ -6,7 +6,7 @@
  * worked out from those few. The bar is dark in every theme, in the dark
  * palette's colours.
  *
- * Claude, the default, is the stylesheets' own palette: choosing it sets
+ * Ember, the default, is the stylesheets' own palette: choosing it sets
  * nothing, so it looks exactly as the stylesheets say. Each page follows the
  * setting with followTheme (theme.ts).
  */
@@ -32,14 +32,14 @@ export interface Theme {
   dark: Palette;
 }
 
-export const DEFAULT_THEME = 'claude';
+export const DEFAULT_THEME = 'ember';
 
 export const THEMES: readonly Theme[] = [
   {
-    id: 'claude',
-    name: 'Claude',
-    light: { bg: '#faf9f5', surface: '#ffffff', fg: '#141413', muted: '#73726c', line: '#e6e4dc', accent: '#c96442', user: '#f0eee6' },
-    dark: { bg: '#262624', surface: '#30302e', fg: '#f5f4ef', muted: '#a6a39b', line: '#3d3d3a', accent: '#d97757', user: '#141413' },
+    id: 'ember',
+    name: 'Ember',
+    light: { bg: '#fbf8f5', surface: '#ffffff', fg: '#1c1714', muted: '#6b625a', line: '#ebe3da', accent: '#c2410c', user: '#f4ece3' },
+    dark: { bg: '#221d1a', surface: '#2c2622', fg: '#f7f1ea', muted: '#b2a79c', line: '#3e3631', accent: '#e5702a', user: '#171310' },
   },
   {
     id: 'graphite',

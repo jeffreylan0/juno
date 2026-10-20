@@ -1,7 +1,7 @@
 /**
  * The panel: the chat the bar is filling. The shortcut brings the bar up;
  * the first selection opens the panel, and every selection after lands here
- * too. ✕ on either (or Escape on a waiting bar) hides both and finishes the
+ * too. ✕ or Escape on either hides both and finishes the
  * chat: it stays in the chat menu, or is deleted if temporary. The next
  * selection starts a new chat; so does the new-chat key (⌘⇧O, Ctrl+Shift+O),
  * which keeps the panel up.
@@ -31,6 +31,7 @@ import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import { autoTitle, hasUsableSelection, isRemovable, pendingSelections, type AssistantItem, type Chat } from '@/lib/chats';
 import { isTransient, needsSettings } from '@/lib/providers/errors';
+import { watchExtras, withinPlan } from '@/lib/extras';
 import { getSettings, settingsItem, type Macro, type Settings } from '@/lib/storage';
 import { splitWhatIRead } from '@shared/prompts';
 import { Answer } from './Answer';
@@ -46,7 +47,7 @@ import { MAC } from '../os';
 import { formatShortcut, useShortcut } from './useShortcut';
 
 /** How long a notice stays before it goes by itself (Notices.tsx). */
-const NOTICE_MS = 9000;
+const NOTICE_MS = 5000;
 /** Within this of the end, the chat counts as scrolled to it (fractional display scales round). */
 const AT_END_PX = 4;
 /** The new-chat key, as people say it. */
@@ -67,6 +68,8 @@ export function Panel() {
   const { status, recheck, checking } = useAiStatus();
   const dropped = useDropped();
   const [settings, setSettings] = useState<Settings | null>(null);
+  // Past the first macros, an extra (lib/extras.ts).
+  const [extras, setExtras] = useState(false);
   const keys = useKeyStatus();
   const [menuOpen, setMenuOpen] = useState(false);
   const shortcut = useShortcut();
@@ -92,6 +95,7 @@ export function Panel() {
     void getSettings().then(setSettings);
     return settingsItem.watch(() => void getSettings().then(setSettings));
   }, []);
+  useEffect(() => watchExtras(setExtras), []);
 
   // Chats from the student's other computers (cloud storage): caught up when
   // the panel opens, comes back into view, opens the chat menu, and every few
@@ -370,7 +374,7 @@ export function Panel() {
         />
         <div className="ask-row">
           <div className="macros" role="toolbar" aria-label="Answer macros">
-            {settings?.macros.map((m) => (
+            {settings && withinPlan(settings, extras).macros.map((m) => (
               <button key={m.id} type="button" className="macro" title={m.prompt} disabled={!askable || busy} onClick={() => runMacro(m)}>
                 {m.name}
               </button>
@@ -613,18 +617,24 @@ function Empty({ temporary, shortcut, provider }: { temporary: boolean; shortcut
   );
 }
 
+/** The chat limit has dropped a chat since the app started, and the panel said so. */
+let droppedSaid = false;
+
 /**
- * When the chat limit drops an old chat, say so once. Only drops that happen
- * while this panel is open count; dismissing hides it.
+ * When the chat limit drops an old chat, say so, once each time the app
+ * runs (the panel is kept from start to quit). Only drops that happen while
+ * this panel is open count; dismissing hides it.
  */
 function useDropped(): { titles: string[] | null; dismiss: () => void } {
   const [titles, setTitles] = useState<string[] | null>(null);
   useEffect(() => {
     const since = Date.now();
     const onChanged = (changes: Record<string, { newValue?: unknown }>, area: string) => {
-      if (area !== 'session' || !('lastDropped' in changes)) return;
+      if (area !== 'session' || !('lastDropped' in changes) || droppedSaid) return;
       const v = changes.lastDropped!.newValue as { titles: string[]; at: number } | undefined;
-      if (v && v.at >= since) setTitles(v.titles);
+      if (!v || v.at < since) return;
+      droppedSaid = true;
+      setTitles(v.titles);
     };
     browser.storage.onChanged.addListener(onChanged);
     return () => browser.storage.onChanged.removeListener(onChanged);

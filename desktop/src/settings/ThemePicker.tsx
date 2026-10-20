@@ -1,26 +1,29 @@
 /**
  * Settings → Appearance: the colour themes (lib/themes.ts), each a small
  * preview in the page's current scheme, light or dark: the window, a
- * question, an answer line and the accent.
+ * question, an answer line and the accent. `locked` (the extras closed:
+ * lib/extras.ts): only the default can be picked.
  */
 import type { CSSProperties } from 'react';
-import { THEMES, type Palette } from '@/lib/themes';
+import { DEFAULT_THEME, THEMES, type Palette } from '@/lib/themes';
 import { usePageDark } from '../theme';
 
-export function ThemePicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+export function ThemePicker({ value, locked = false, onChange }: { value: string; locked?: boolean; onChange: (id: string) => void }) {
   const isDark = usePageDark();
   return (
     <div className="themes" role="radiogroup" aria-label="Theme" data-testid="themes">
       {THEMES.map((t) => {
         const p: Palette = isDark ? t.dark : t.light;
+        const off = locked && t.id !== DEFAULT_THEME;
         return (
           <button
             key={t.id}
             type="button"
             role="radio"
             aria-checked={value === t.id}
-            className="theme"
+            className={`theme${off ? ' locked' : ''}`}
             data-theme={t.id}
+            disabled={off}
             onClick={() => onChange(t.id)}
           >
             <span className="theme-preview" style={{ background: p.bg, borderColor: p.line } as CSSProperties}>

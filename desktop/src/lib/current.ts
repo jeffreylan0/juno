@@ -8,7 +8,7 @@
  *    chat; every later one joins it, whichever app it comes from.
  *  - The ghost (on the bar or the panel) makes the next selection start a
  *    temporary chat, which is never saved.
- *  - ✕ on the bar, ✕ on the panel, or Escape while the bar is waiting
+ *  - ✕ or Escape, on the bar or the panel,
  *    hides both and finishes the chat: a saved chat stays in the menu, a
  *    temporary one is deleted. The next selection starts a new chat.
  *
@@ -85,7 +85,7 @@ export async function panelOpened(windowId: number, claim?: Current): Promise<Cu
   return current;
 }
 
-/** Finishes the window's chat: ✕ on the bar or the panel, or Escape on a waiting bar. */
+/** Finishes the window's chat: ✕ or Escape, on the bar or the panel. */
 export async function endChat(windowId: number): Promise<void> {
   await leave(await getCurrent(windowId));
   await setCurrent(windowId, null);

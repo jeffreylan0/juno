@@ -3,13 +3,15 @@
  * The Worker's own logic: who is asking (a Supabase token checked against
  * the project's published keys), which models it may use, Anthropic's stream
  * re-emitted in the OpenAI shape the app reads, and billing (Stripe's
- * events mirrored into the database, checkout, what is on offer).
+ * events mirrored into the database, checkout, what is on offer, the
+ * unlock bought without an account).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { verifySession } from '../../worker/src/auth';
 import { readBody } from '../../worker/src/body';
 import { checkout, form, prices, webhook } from '../../worker/src/billing';
 import { googleToken } from '../../worker/src/google';
+import { cleanCode, newCode, unlockCheckout, unlockClaim, unlockDone, unlockPrice, unlockRestore } from '../../worker/src/unlock';
 import { LIMITS, anthropicToOpenAI, cacheScope, callVendor, parseAsk, scoped, toAnthropic } from '../../worker/src/models';
 import type { Env } from '../../worker/src/index';
 
@@ -431,6 +433,23 @@ describe('billing', () => {
     ]);
   });
 
+  it('offers plans that renew every so many days, the days after a key then ignored', async () => {
+    fakeServices({
+      'GET stripe/v1/prices': () => ({
+        data: [
+          { id: 'p_s', lookup_key: 'r_semester', unit_amount: 499, currency: 'usd', type: 'recurring', recurring: { interval: 'day', interval_count: 120 }, metadata: {}, product: { name: 'Juno Plus', metadata: {} } },
+          { id: 'p_y', lookup_key: 'r_year', unit_amount: 1199, currency: 'usd', type: 'recurring', recurring: { interval: 'year', interval_count: 1 }, metadata: {}, product: { name: 'Juno Plus', metadata: {} } },
+        ],
+      }),
+      'GET db/rest/v1/plans': () => [{ id: 'plus', name: 'Plus', monthly_questions: 3000, cloud: true }],
+    });
+    const list = await prices(billingEnv({ STRIPE_PRICES: 'r_semester:120, r_year:365' }));
+    expect(list.map((o) => [o.key, o.interval, o.intervalCount, o.passDays])).toEqual([
+      ['r_semester', 'day', 120, null],
+      ['r_year', 'year', 1, null],
+    ]);
+  });
+
   it('checks out a subscription for the signed-in account, once', async () => {
     let active = false;
     const calls = fakeServices({
@@ -501,5 +520,92 @@ describe('Google sign-in for the app', () => {
   it('says so when Google turns the code down', async () => {
     vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }));
     await expect(ask(good)).rejects.toMatchObject({ status: 400, code: 'google' });
+  });
+});
+
+describe('the unlock, without an account', () => {
+  const unlockEnv = () => billingEnv({ UNLOCK_PRICE: 'unlock' });
+  const post = (path: string, body: unknown) => new Request(`https://w.example${path}`, { method: 'POST', body: JSON.stringify(body) });
+
+  it('makes codes that are hard to guess and easy to type back', () => {
+    const codes = new Set(Array.from({ length: 50 }, newCode));
+    expect(codes.size).toBe(50);
+    for (const c of codes) expect(c).toMatch(/^JUNO-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
+    expect(cleanCode(' juno-ab12 cd34-ef56 ')).toBe('JUNO-AB12-CD34-EF56');
+    expect(cleanCode('ab12cd34ef56')).toBe('JUNO-AB12-CD34-EF56');
+    // Letters left out of the alphabet, quotes, and the wrong length are no code.
+    expect([cleanCode('JUNO-AB12-CD34-EF5I'), cleanCode("JUNO-AB12-CD34-EF5'"), cleanCode('JUNO-AB12-CD34'), cleanCode(7)]).toEqual([null, null, null, null]);
+  });
+
+  it('sells one price at checkout, its code on the payment, and gives the code once Stripe says it is paid', async () => {
+    let paid = false;
+    let code = '';
+    const calls = fakeServices({
+      'GET stripe/v1/prices': () => ({ data: [{ id: 'p_u', type: 'one_time', unit_amount: 499, currency: 'usd' }] }),
+      'POST stripe/v1/checkout/sessions': (body) => {
+        code = new URLSearchParams(body).get('metadata[unlock_code]')!;
+        return { id: 'cs_test_abcdefghij1', url: 'https://checkout.stripe.com/c/pay/cs_test_abcdefghij1' };
+      },
+      'GET stripe/v1/checkout/sessions/cs_test_abcdefghij1': () => ({
+        id: 'cs_test_abcdefghij1',
+        payment_status: paid ? 'paid' : 'unpaid',
+        metadata: { kind: 'unlock', unlock_code: code },
+      }),
+    });
+    expect(await unlockPrice(unlockEnv())).toEqual({ amount: 499, currency: 'usd' });
+    expect(await unlockCheckout(post('/unlock/checkout', {}), unlockEnv())).toEqual({
+      url: 'https://checkout.stripe.com/c/pay/cs_test_abcdefghij1',
+      session: 'cs_test_abcdefghij1',
+    });
+    const sent = Object.fromEntries(new URLSearchParams(calls.find((c) => c.url.pathname === '/v1/checkout/sessions')!.body));
+    expect(sent).toMatchObject({
+      mode: 'payment',
+      'line_items[0][price]': 'p_u',
+      'metadata[kind]': 'unlock',
+      'payment_intent_data[metadata][unlock_code]': code,
+      success_url: 'https://w.example/unlock/done?session_id={CHECKOUT_SESSION_ID}',
+    });
+    expect(sent.customer).toBeUndefined();
+
+    await expect(unlockClaim(post('/unlock/claim', { session: 'cs_test_abcdefghij1' }), unlockEnv())).rejects.toMatchObject({ status: 409 });
+    expect(await (await unlockDone(new Request('https://w.example/unlock/done?session_id=cs_test_abcdefghij1'), unlockEnv())).text()).not.toContain(code);
+    paid = true;
+    expect(await unlockClaim(post('/unlock/claim', { session: 'cs_test_abcdefghij1' }), unlockEnv())).toEqual({ code });
+    const done = await unlockDone(new Request('https://w.example/unlock/done?session_id=cs_test_abcdefghij1'), unlockEnv());
+    expect(await done.text()).toContain(`<code>${code}</code>`);
+    expect(done.headers.get('content-security-policy')).toContain("default-src 'none'");
+    // Only an unlock's checkout, and only a session id, is looked up.
+    await expect(unlockClaim(post('/unlock/claim', { session: '../customers' }), unlockEnv())).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('is not on offer without its price', async () => {
+    fakeServices({});
+    await expect(unlockPrice(billingEnv({ UNLOCK_PRICE: '' }))).rejects.toMatchObject({ status: 404 });
+    await expect(unlockCheckout(post('/unlock/checkout', {}), billingEnv({ UNLOCK_PRICE: '' }))).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('takes a code back on another computer if its payment went through and was not refunded', async () => {
+    let refunded = false;
+    const calls = fakeServices({
+      'GET stripe/v1/payment_intents/search': () => ({ data: [{ metadata: { kind: 'unlock' }, latest_charge: { refunded, disputed: false } }] }),
+    });
+    expect(await unlockRestore(post('/unlock/restore', { code: 'juno ab12 cd34 ef56' }), unlockEnv())).toEqual({ code: 'JUNO-AB12-CD34-EF56' });
+    expect(calls[0]!.url.searchParams.get('query')).toBe("metadata['unlock_code']:'JUNO-AB12-CD34-EF56' AND status:'succeeded'");
+    refunded = true;
+    await expect(unlockRestore(post('/unlock/restore', { code: 'JUNO-AB12-CD34-EF56' }), unlockEnv())).rejects.toMatchObject({ status: 404 });
+    // Not a code: Stripe is never asked.
+    const before = calls.length;
+    await expect(unlockRestore(post('/unlock/restore', { code: "x' OR status:'succeeded" }), unlockEnv())).rejects.toMatchObject({ status: 404 });
+    expect(calls.length).toBe(before);
+  });
+
+  it('a paid unlock gives no account a plan', async () => {
+    const calls = fakeServices({});
+    const event = await signed({
+      type: 'checkout.session.completed',
+      data: { object: { id: 'cs_1', mode: 'payment', payment_status: 'paid', client_reference_id: null, metadata: { kind: 'unlock', unlock_code: 'JUNO-AB12-CD34-EF56' } } },
+    });
+    expect((await webhook(event, billingEnv())).status).toBe(200);
+    expect(calls).toEqual([]);
   });
 });

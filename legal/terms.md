@@ -26,20 +26,22 @@ An account is optional. Keep your sign-in secure; you are responsible for what h
 
 ## Plans and payment
 
-- **Passes are paid once** and give the plan for the number of days shown at checkout. **Nothing renews**, and you are never charged again unless you buy again.
+- **Free**: Juno works in full with your own API key or a local model, with the default theme, the default places for the bar and the panel, and two macros.
+- **Plus renews automatically**, every 120 days or every year, as you choose at checkout, at the price shown there, **until you cancel**. Cancel any time in Settings → *Manage billing*: Plus stays until the end of the period you paid for, and nothing more is charged. We email you before a yearly plan renews.
+- **The unlock**, for using Juno without an account, is paid once and never renews: every theme, your own places for the bar and the panel, and more than two macros, on each computer you enter its code on.
 - Prices are shown in the app and at checkout, in US dollars, plus any sales tax or VAT. Stripe processes payments.
 - Hosted answers are limited to the monthly number your plan shows, and to 10 a minute. Unused answers don't carry over.
-- **Refunds**: if Juno isn't working for you, write to info@humanbn.com within [14] days of buying for a full refund. A refunded pass ends at once. After that, we refund where the law requires it.
+- **Refunds**: if Juno isn't working for you, write to info@humanbn.com within [14] days of a payment for a full refund of it. A refunded plan or unlock ends at once. After that, we refund where the law requires it.
 - Deleting your account ends your plan at once, without a refund.
-- We may change prices or plans for the future; a pass you already bought keeps what it promised until it ends.
+- We may change prices or plans. A new price for a renewing plan applies from its next renewal, and we email you before it does.
 
 ## Use Juno fairly
 
-Don't use Juno to break the law, to harm or harass anyone, or in ways that break Anthropic's or OpenAI's usage policies (they apply to hosted answers too). Don't try to get around plan limits, share or resell hosted answers or an account, overload or probe our services, or reach anyone else's data. We may suspend or close an account that does, and refund any pass we end that way, minus what was used.
+Don't use Juno to break the law, to harm or harass anyone, or in ways that break Anthropic's or OpenAI's usage policies (they apply to hosted answers too). Don't try to get around plan limits, share or resell hosted answers or an account, overload or probe our services, or reach anyone else's data. We may suspend or close an account, or end an unlock, that does so, and refund what we end that way, minus what was used.
 
 ## The app
 
-The app may update itself when *Update automatically* is on in Settings. We may change or stop parts of Juno; if we stop hosted answers or cloud sync while a pass is running, we will refund the unused part of it, and give you a way to keep your cloud chats.
+The app may update itself when *Update automatically* is on in Settings. We may change or stop parts of Juno; if we stop hosted answers or cloud sync while you are paying for them, we will refund the unused part, and give you a way to keep your cloud chats.
 
 ## No warranty
 

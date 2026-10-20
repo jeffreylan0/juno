@@ -5,7 +5,8 @@
  * page fills the window with its own background and its content comes in
  * with a short rise. They go at once: content fading out would leave the
  * empty window on screen for a moment. The top bar drags the window; the
- * page's own ✕ closes it (`onClose` for the panel); ⌘Q quits.
+ * page's own ✕ closes it (`onClose` for the panel), and so does Escape,
+ * unless something on the page took it first (a menu, an editor); ⌘Q quits.
  *
  * Both are made hidden at start and kept. Settings tell the native core
  * when their page has drawn, so that, asked for before then, they never
@@ -51,6 +52,13 @@ export function cardWindow(opts: CardOptions): void {
     if ((msg as { type?: string })?.type !== 'card:enter') return;
     playEntrance();
     opts.onEnter?.();
+  });
+
+  // Escape closes the card, as its ✕ does, once the page's own handlers have
+  // had it: a menu or an editor that closes on Escape marks it handled.
+  addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.repeat) return;
+    setTimeout(() => !e.defaultPrevented && window.close());
   });
 
   // ⌘Q quits the app from its windows, as in any Mac app (it has no menu bar of its own).

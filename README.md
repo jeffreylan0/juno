@@ -11,17 +11,17 @@ Juno began as a browser extension (Chrome, Edge and Firefox). The extension is r
 | Area | State |
 | --- | --- |
 | Shortcut (⌥⇧S on a Mac, Alt+Shift+S on Windows) or the menu bar / tray icon → selection → native crop → streamed answer | working on macOS 14+ and Windows 10/11; tested end to end on Linux |
-| Box selection | sends on release; optionally waits with resize-and-move handles; Escape cancels, ✕ closes everything |
+| Box selection | while it is drawn, the bar and the panel step aside, back the moment it is made; Escape closes everything at any point; sends on release; optionally waits with resize-and-move handles; Escape cancels, ✕ closes everything |
 | Freeform selection | draw any closed shape; the AI sees only what is inside the outline |
 | The bar | one dark row in the manner of Claude's quick entry, always armed in Box; while the panel is open its chats, ghost and gear fold smoothly away; where it sits is a setting (a 3×3 grid of the screen; the bottom edge to start) |
 | The panel | a card that grows with its chat, placed by the same kind of setting (top right to start); resized by hand, it keeps that size. Questions in rounded bubbles with copy, edit and retry; answers stream at an even pace with a copy button; the view follows the answer unless you scroll up |
 | Chats | the panel opens with the first selection; ✕ (bar or panel) or Escape hides both and finishes the chat; ⌘⇧O / Ctrl+Shift+O finishes it and brings the bar up for the next; a chat menu with search, rename and delete; temporary (ghost) chats; 1, 5, 10, 25, 50 or 100 chats kept on this computer |
 | Macros | Explain, Hint, Check and Answer (the answer first, then the explanation) to start with; yours to rename, rewrite and add to |
-| Settings | opens only from the gear (or the icon's menu), above the panel, and goes away when closed. At the top, the account (in builds with accounts) and this month's answers, spend and who answers; then the settings, most used first: Answers, Asking, Appearance (light, dark or the system's; seven colour themes), Selecting, Chats & privacy, the account's settings, Permissions (macOS), Juno (version, updates, login, privacy policy and terms, Quit). Once scrolled to them, a menu of them fades in at the side. Short text, saved as you go |
+| Settings | opens only from the gear (or the icon's menu), above the panel, and goes away when closed; Escape closes it. At the top, a profile (your picture, name and plan, or *Guest* with *Sign up* / *Sign in*) beside the plan: hosted answers left in a white badge, or this month's answers, spend and who answers, and for a guest the unlock; then the settings, most used first: Answers, Asking, Appearance (light, dark or the system's; seven colour themes, Ember to start), Selecting, Chats & privacy, the account's settings, Permissions (macOS), Juno (version, updates, login, privacy policy and terms, Quit). Once scrolled to them, a menu of them fades in at the side. Short text, saved as you go |
 | Updates | the app looks for a new version at start and every 6 hours, downloads it in the background and installs it when nothing of it is on screen, then restarts into the menu bar; on unless turned off. Needs the owner's update key (desktop/README.md, *Updates*) |
 | Real answers | your own Anthropic or OpenAI key, in one field (the key itself says whose; admin keys are refused): free key check, model picker beside the macros, prompt caching for follow-ups, errors that say what to do; temporary chats ask for the shortest retention the API allows |
 | Providers | local (Ollama), your own key (Anthropic, OpenAI), hosted (the Worker: Claude Haiku 5.5 or GPT-6 Luna, quick and cheap, for plans with hosted answers); the first start sets one up. Placeholder answers remain for the eval and tests only |
-| Accounts and plans | optional: Google (on Google's own page, in the app's name) or an emailed code (Supabase). Plans (Free, Plus, given by hand) with hosted answers and cloud storage of chats; Plus as a pass bought once with Stripe (*Plans* below). Built; turned on by the setup in `supabase/README.md` |
+| Accounts and plans | optional: Google (on Google's own page, in the app's name) or an emailed code (Supabase). Plans (Free, Plus, given by hand) with hosted answers and cloud storage of chats; Plus renews with Stripe every 120 days or every year; without an account, a one-time unlock opens the extras (*Plans* below). Built; turned on by the setup in `supabase/README.md` |
 | Permissions | Screen Recording only, on macOS; Windows asks for nothing |
 | Eval | 5 seed problems of 100; mock and image-only routes run |
 
@@ -124,15 +124,17 @@ Juno is a passion project: plans are priced to cover what hosted answers and the
 
 | Plan | Price | What it gives |
 | --- | --- | --- |
-| Free | $0 | Everything, unlimited, with your own API key or a local model. 100 hosted answers a month once sign-up has CAPTCHA (`supabase/README.md`, step 10); 0 until then |
-| Plus, semester | $4.99 once, for 120 days | Hosted answers (up to 3,000 a month, about 100 a day: more than anyone uses) and cloud sync |
-| Plus, year | $11.99 once, for 365 days | The same |
+| Free | $0 | Everything, unlimited, with your own API key or a local model, with the default theme (Ember), the default places for the bar and the panel, and two macros. 100 hosted answers a month once sign-up has CAPTCHA (`supabase/README.md`, step 10); 0 until then |
+| Unlock (no account) | $4.99 once | The extras: every theme, your own places for the bar and the panel, more than two macros. A code (JUNO-XXXX-XXXX-XXXX) unlocks other computers too |
+| Plus, semester | $4.99 every 120 days | The extras, hosted answers (up to 3,000 a month) and cloud sync. Renews until cancelled |
+| Plus, year | $11.99 a year | The same |
 
-- **Paid once, nothing renews.** Students pay at most a few dollars a term, and don't want to think about payment again; a pass can't surprise them with a charge.
-- **One fast model, no "think harder".** Hosted answers go to Claude Haiku 5.5 (or GPT-6 Luna) at low effort: about $0.0006 an answer, so even a heavy month costs well under a pass's share. A student who wants a bigger model brings their own key.
-- **What it costs to run:** about $0.20 a month for a typical Plus student (300 answers), and $31–56 a month of fixed costs (Supabase, Cloudflare, Apple's developer fee, Windows code signing, domain and email). A pass nets about $1 a month after Stripe's fee, so 40–70 paying students cover everything (free students' hosted answers add at most 6¢ each a month).
+- **Guests first.** Juno is complete without an account: own key or local model, no nagging. The extras (`desktop/src/lib/extras.ts`) are the only thing held back, greyed with a button to the plan; closed, what was chosen is kept, not undone. The unlock (`worker/src/unlock.ts`) costs nothing to serve, so it is nearly all margin after Stripe's fee (about $4.55 of $4.99).
+- **Plus renews.** Every 120 days or every year, until cancelled from *Manage billing*; Stripe emails before a yearly renewal. The Worker still handles one-time passes (a one-time price with days after its key in `STRIPE_PRICES`).
+- **One fast model, no "think harder".** Hosted answers go to Claude Haiku 5.5 (or GPT-6 Luna) at low effort: about $0.0005 an answer ($0.10 / $0.50 per million tokens in and out). The Worker allows nothing else, so what a student asks can't pick a pricier model. A student who wants a bigger model brings their own key, and pays its company directly.
+- **What it costs to run:** about $0.15 a month for a typical Plus student (300 answers); at the full 3,000 answers a month, about $1.50, more than a semester plan brings in (about $1.10 a month after Stripe's fee), so watch the heaviest accounts, or lower the cap, should many reach it. $31–56 a month of fixed costs (Supabase, Cloudflare, Apple's developer fee, Windows code signing, domain and email).
 - **Before launch:** run the eval with Haiku 5.5 against Sonnet 5.5 (on at least 50 problems) to confirm the fast model reads screenshots well enough.
-- **Later, without raising prices:** themes and macros sold on the website (a marketplace), and an optional "support Juno" tip.
+- **Later, without raising prices:** themes and macros sold on the website (a marketplace), and an optional "support Juno" tip. Bigger hosted models would need metering by cost rather than by answer (Opus 5.5 costs about 40 times Haiku 5.5 a token).
 
 ## Rebranding
 

@@ -661,19 +661,55 @@ it('Escape before anything is selected means never mind: the bar goes and no cha
   expect((await app.window('panel'))?.visible).toBe(false);
 });
 
-it('Escape while selecting after a selection only stops that selection; the bar waits', async () => {
+it('Escape while selecting closes everything, as ✕ does: the bar and the panel go, and the chat is finished', async () => {
   await app.summon();
   await armed();
   await box(150, 150, 250, 250);
-  await selections(1);
+  const chat = await selections(1);
   await waiting();
   await app.eval('overlay', bar(`querySelector('.chip[data-kind=box]').click()`));
   await armed('box');
   await app.xdo('mousemove', '640', '300');
   await app.xdo('key', 'Escape');
+  await waitFor('the overlay hidden', async () => !(await app.overlay()).visible);
+  await waitFor('the panel hidden', async () => (await app.window('panel'))?.visible === false);
+  expect((await app.storage('session'))['current:1']).toBeUndefined();
+  expect(((await app.storage('local')).chatIndex as { id: string }[]).map((c) => c.id)).toEqual([chat.id]);
+});
+
+it('Escape in the panel closes it and the bar too', async () => {
+  await app.summon();
+  await armed();
+  await box(150, 150, 250, 250);
+  await selections(1);
+  await waitFor('the panel', () => app.read('panel', `!!document.querySelector('[data-testid=selection]')`));
+  await app.eval('panel', `document.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await waitFor('the panel hidden', async () => (await app.window('panel'))?.visible === false);
+  await waitFor('the overlay hidden', async () => !(await app.overlay()).visible);
+});
+
+it('while a selection is drawn, only the drawing shows: the bar and the panel step aside, and are back once it is made', async () => {
+  await app.summon();
+  await armed();
+  await box(150, 150, 250, 250);
+  await selections(1);
+  await waitFor('the panel', async () => (await app.window('panel'))?.visible);
   await waiting();
-  expect((await app.overlay()).visible).toBe(true);
-  expect((await app.currentChat())!.items).toHaveLength(1);
+  await app.eval('overlay', bar(`querySelector('.chip[data-kind=box]').click()`));
+  await armed('box');
+  const barShows = () => app.read<boolean>('overlay', `getComputedStyle(${bar(`querySelector('.bar')`)}).visibility !== 'hidden'`);
+  expect(await barShows()).toBe(true);
+
+  await app.xdo('mousemove', '300', '300', 'mousedown', '1');
+  await app.xdo('mousemove', '360', '340');
+  await app.xdo('mousemove', '420', '380');
+  await waitFor('the bar out of sight', async () => !(await barShows()));
+  await waitFor('the panel out of sight', async () => (await app.window('panel'))?.visible === false);
+
+  await app.xdo('mouseup', '1');
+  await selections(2);
+  await waitFor('the panel back', async () => (await app.window('panel'))?.visible);
+  await waitFor('the bar back', barShows);
 });
 
 it('closing the panel finishes the chat and takes the bar away, as ✕ on the side panel does', async () => {
@@ -925,9 +961,12 @@ it('the app’s windows load only its own pages: a link can’t take the panel t
   expect(await app.read<string>('panel', 'location.href')).toBe(before);
 });
 
-it('settings open on a dashboard: this month’s answers and who answers; the settings’ menu comes in once they are reached', async () => {
+it('settings open on a dashboard: who you are, this month’s answers and who answers; the settings’ menu comes in once they are reached', async () => {
   await app.eval('core', `browser.runtime.openOptionsPage()`);
   await waitFor('the dashboard', () => app.read('settings', `!!document.querySelector('[data-testid=dashboard]')`), 20_000);
+  // Not signed in (this build has no accounts): a guest, with a blank picture.
+  expect(await app.read('settings', `document.querySelector('[data-testid=profile-name]').textContent`)).toBe('Guest');
+  expect(await app.read('settings', `!!document.querySelector('[data-testid=avatar] svg')`)).toBe(true);
   expect(await app.read('settings', `document.querySelector('[data-testid=answers-this-month]').textContent`)).toBe('0 answers');
   expect(await app.read('settings', `document.querySelector('[data-testid=who-answers]').textContent`)).toContain('No one yet');
   // The settings follow the dashboard, the most used first.
@@ -954,10 +993,10 @@ it('light or dark, as chosen, whatever the system shows; or as the system is', a
   await app.eval('settings', `document.querySelector('[data-scheme-choice=dark]').click()`);
   await waitFor('the panel dark', async () => (await scheme('panel')) === 'dark');
   expect(await scheme('settings')).toBe('dark');
-  expect(await bg('panel')).toBe('rgb(38, 38, 36)');
+  expect(await bg('panel')).toBe('rgb(34, 29, 26)');
   await app.eval('settings', `document.querySelector('[data-scheme-choice=light]').click()`);
   await waitFor('the panel light', async () => (await scheme('panel')) === 'light');
-  expect(await bg('panel')).toBe('rgb(250, 249, 245)');
+  expect(await bg('panel')).toBe('rgb(251, 248, 245)');
   await app.eval('settings', `document.querySelector('[data-scheme-choice=system]').click()`);
   await waitFor('as the system is', async () => ((await app.storage('local')).settings as { scheme?: string }).scheme === 'system');
 });
@@ -965,7 +1004,7 @@ it('light or dark, as chosen, whatever the system shows; or as the system is', a
 it('a theme from settings colours the panel and the bar', async () => {
   await app.eval('core', `browser.runtime.openOptionsPage('appearance')`);
   await waitFor('the themes', () => app.read('settings', `!!document.querySelector('[data-testid=themes]')`), 20_000);
-  expect(await app.read('settings', `document.querySelector('[data-testid=themes] [aria-checked=true]').dataset.theme`)).toBe('claude');
+  expect(await app.read('settings', `document.querySelector('[data-testid=themes] [aria-checked=true]').dataset.theme`)).toBe('ember');
   await app.eval('settings', `document.querySelector('[data-theme=ocean]').click()`);
   await waitFor('the theme saved', async () => ((await app.storage('local')).settings as { theme?: string } | undefined)?.theme === 'ocean');
   const accent = (label: string, name: string) => app.read<string>(label, `getComputedStyle(document.documentElement).getPropertyValue('${name}').trim()`);
@@ -975,8 +1014,8 @@ it('a theme from settings colours the panel and the bar', async () => {
   // The bar is dark in every theme.
   await waitFor('the bar in Ocean', async () => (await accent('overlay', '--sai-bar-bg')) === '#16252d');
 
-  await app.eval('settings', `document.querySelector('[data-theme=claude]').click()`);
-  await waitFor('back to Claude', async () => (await accent('panel', '--accent')) !== '#0e7490' && (await accent('panel', '--accent')) !== '#22b8cf');
+  await app.eval('settings', `document.querySelector('[data-theme=ember]').click()`);
+  await waitFor('back to Ember', async () => (await accent('panel', '--accent')) !== '#0e7490' && (await accent('panel', '--accent')) !== '#22b8cf');
 });
 
 it('Quit in settings ends the app (the menu bar icon starts a selection when clicked, so Quit lives here and in its right-click menu)', async () => {

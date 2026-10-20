@@ -1,10 +1,12 @@
 /**
- * Keeps a page in the chosen colour theme (lib/themes.ts), light or dark as
- * the setting says (or as the system is). The page's stylesheets key their
+ * Keeps a page in the chosen colour theme (lib/themes.ts; the default one
+ * while the extras are closed: lib/extras.ts), light or dark as the setting
+ * says (or as the system is). The page's stylesheets key their
  * dark colours off `data-scheme` on the root, which this sets, so a choice
  * of Light or Dark holds whatever the system shows.
  */
 import { useEffect, useState } from 'react';
+import { watchExtras } from '@/lib/extras';
 import { getSettings, migrateSettings, settingsItem, type Scheme } from '@/lib/storage';
 import { DEFAULT_THEME, applyTheme, themeById } from '@/lib/themes';
 
@@ -17,11 +19,12 @@ export function followTheme({ bar = false } = {}): void {
   const root = document.documentElement;
   let theme = DEFAULT_THEME;
   let scheme: Scheme = 'system';
+  let extras = false;
   const apply = () => {
     const dark = isDark(scheme, system.matches);
     root.dataset.scheme = dark ? 'dark' : 'light';
     root.style.colorScheme = dark ? 'dark' : 'light';
-    applyTheme(root, themeById(theme), dark, bar);
+    applyTheme(root, themeById(extras ? theme : DEFAULT_THEME), dark, bar);
   };
   const take = (s: { theme: string; scheme: Scheme }) => {
     theme = s.theme;
@@ -32,6 +35,10 @@ export function followTheme({ bar = false } = {}): void {
   apply();
   void getSettings().then(take, () => {});
   settingsItem.watch((s) => take(migrateSettings(s)));
+  watchExtras((open) => {
+    extras = open;
+    apply();
+  });
   system.addEventListener('change', apply);
 }
 

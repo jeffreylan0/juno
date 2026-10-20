@@ -74,7 +74,8 @@ The design doesn't defend against malware running as the student's own user acco
   - Subscriptions and passes are read back fresh from Stripe, so refunds and chargebacks end a pass.
   - Events for deleted accounts are acknowledged instead of retried.
 - **Google sign-in (`/auth/google`):** the Worker holds the Google client secret (a desktop app can't keep one), takes only a code meant for `http://127.0.0.1:<port>` with a well-formed PKCE verifier, and returns only the ID token: no access or refresh token for the student's Google account leaves Google. A stolen code is useless without the verifier.
-- **Responses:** JSON is sent `nosniff`, and the one HTML page has a strict CSP. Logs carry no prompt text.
+- **The unlock (`/unlock/*`, no session, `worker/src/unlock.ts`):** its Checkout pages are rate-limited per address. A code is 60 random bits; one typed in is checked against its exact form before it goes into a Stripe search, so it can't widen the query. Only a paid checkout marked as an unlock gives its code, and a refunded or disputed payment restores nothing. The webhook ignores unlock checkouts, so none gives an account a plan.
+- **Responses:** JSON is sent `nosniff`, and the HTML pages have a strict CSP. Logs carry no prompt text.
 
 **Prompt caching**
 
@@ -156,8 +157,9 @@ Five parts were reviewed separately against the standards above, and every findi
 - **Window titles go to the AI:** in the app, the title of the window under the selection goes to the AI with the selection (for example an email subject). A setting to leave it out is a product decision.
 - **Email codes are the weakest sign-in:** NIST no longer treats email as a strong second channel. Google sign-in is offered. Passkeys would be the next step.
 - **CAPTCHA isn't wired into sign-in yet.** Turn it on before the free plan includes hosted answers.
-- **Hosted answers are counted per answer, not per token.** The size caps bound one answer's cost, but metering tokens would be fairer before free hosted answers are raised.
+- **Hosted answers are counted per answer, not per token.** That holds because the Worker allows only the fast model (about $0.0005 an answer); the size caps bound one answer's cost. Bigger hosted models would need metering by cost.
 - **Builds aren't reproducible:** the Rust toolchain and the runner images aren't pinned.
+- **The extras are held back by the app itself** (`desktop/src/lib/extras.ts`): every theme, the bar's and panel's places, more than two macros. The app is open source, so someone who builds it can turn them on, and someone who edits its local storage can fake an unlock. That is accepted: they cost nothing to serve. What costs money (hosted answers, cloud storage) is enforced by the Worker and the database. An unlock code is checked once, when it is entered, so refunding one doesn't relock computers already unlocked.
 
 ## Owner's checklist
 

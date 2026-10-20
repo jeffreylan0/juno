@@ -15,6 +15,8 @@
  *   GET  /billing/done      where Stripe sends the browser back
  *   POST /billing/close     ends billing before the account is deleted
  *   POST /stripe/webhook    Stripe's events
+ *   GET  /unlock, POST /unlock/checkout, /unlock/claim, /unlock/restore, GET /unlock/done
+ *                           the one-time unlock, without an account (unlock.ts)
  *
  * Secrets (`wrangler secret put …`, never committed):
  *   SUPABASE_URL          https://<project>.supabase.co
@@ -31,6 +33,7 @@ import { readBody } from './body';
 import { BadRequest, cacheScope, callVendor, parseAsk } from './models';
 import { refundAnswer, useAnswer } from './quota';
 import { accountOf } from './supabase';
+import { unlockCheckout, unlockClaim, unlockDone, unlockPrice, unlockRestore } from './unlock';
 
 export interface Env {
   /** Cloudflare account id of an AI Gateway named "juno"; empty to call the vendors directly. */
@@ -45,6 +48,8 @@ export interface Env {
   STRIPE_PRICES: string;
   /** "on": Stripe Tax works out and adds sales tax / VAT at checkout. */
   STRIPE_TAX: string;
+  /** The unlock's one-time price, by its lookup key; empty: not on offer (unlock.ts). */
+  UNLOCK_PRICE: string;
   /** Google sign-in's desktop client (wrangler.toml) and its secret; empty: the app uses Supabase's sign-in page. */
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
@@ -74,6 +79,12 @@ export default {
       if (url.pathname === '/billing/prices' && request.method === 'GET') return json(await prices(env));
       if (url.pathname === '/billing/done' && request.method === 'GET') return donePage(request);
       if (url.pathname === '/auth/google' && request.method === 'POST') return json(await googleToken(request, env));
+      // The unlock is bought without an account: its code is what proves it.
+      if (url.pathname === '/unlock' && request.method === 'GET') return json(await unlockPrice(env));
+      if (url.pathname === '/unlock/done' && request.method === 'GET') return await unlockDone(request, env);
+      if (url.pathname === '/unlock/checkout' && request.method === 'POST') return json(await unlockCheckout(request, env));
+      if (url.pathname === '/unlock/claim' && request.method === 'POST') return json(await unlockClaim(request, env));
+      if (url.pathname === '/unlock/restore' && request.method === 'POST') return json(await unlockRestore(request, env));
 
       const session = await verifySession(request, env);
       if (!session) return error(401, 'Sign in again.', 'signed-out');

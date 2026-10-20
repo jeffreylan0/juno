@@ -46,7 +46,10 @@ export function ChatMenu({
   useEffect(() => {
     searchRef.current?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.defaultPrevented) close.current();
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      // Only the menu closes, not the panel (card.ts).
+      e.preventDefault();
+      close.current();
     };
     addEventListener('keydown', onKey);
     return () => removeEventListener('keydown', onKey);
