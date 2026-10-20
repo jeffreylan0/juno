@@ -262,10 +262,22 @@ label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; fon
 .sign-in .or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
 .sign-in .or::before, .sign-in .or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 
-/* An extra while locked (lib/extras.ts): greyed and out of reach, its way to the plan under it. */
-.locked { opacity: .45; filter: grayscale(.6); }
-button.theme.locked { cursor: default; }
-.to-plan { margin-top: 2px; }
+/* An extra while locked (lib/extras.ts, Options.tsx Locked): greyed and out of
+   reach, with why and the white button to the plan laid over its middle. */
+.locked-area { position: relative; }
+.locked-area.fit { width: fit-content; max-width: 100%; }
+.locked { opacity: .35; filter: grayscale(.7); }
+.to-plan { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.to-plan .unlock-btn { align-self: center; }
+.locked-area > .to-plan {
+  position: absolute; inset: 0; flex-direction: column; justify-content: center; gap: 8px; padding: 8px;
+  text-align: center; font-weight: 500; border-radius: 12px; background: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+/* The default theme, then the others greyed beside it: one row, as when all are open. */
+.themes-split { display: flex; gap: 10px; align-items: flex-start; }
+.themes-split > .themes { grid-template-columns: minmax(104px, 118px); }
+.themes-split > .locked-area { flex: 1; min-width: 0; }
+.themes-split .locked .themes { grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); }
 
 /* The plan's upgrade offer (Account.tsx PlanDetails). */
 .upgrade { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; background: var(--accent-bg); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 12px; }

@@ -42,12 +42,6 @@ export const THEMES: readonly Theme[] = [
     dark: { bg: '#221d1a', surface: '#2c2622', fg: '#f7f1ea', muted: '#b2a79c', line: '#3e3631', accent: '#e5702a', user: '#171310' },
   },
   {
-    id: 'graphite',
-    name: 'Graphite',
-    light: { bg: '#f7f7f8', surface: '#ffffff', fg: '#18181b', muted: '#62626b', line: '#e4e4e7', accent: '#2563eb', user: '#ececef' },
-    dark: { bg: '#1c1c1f', surface: '#27272a', fg: '#f4f4f5', muted: '#a1a1aa', line: '#3a3a40', accent: '#60a5fa', user: '#111113' },
-  },
-  {
     id: 'ocean',
     name: 'Ocean',
     light: { bg: '#f4f8fa', surface: '#ffffff', fg: '#0f1c24', muted: '#526570', line: '#dbe5ea', accent: '#0e7490', user: '#e6eff3' },
@@ -58,12 +52,6 @@ export const THEMES: readonly Theme[] = [
     name: 'Forest',
     light: { bg: '#f6f8f4', surface: '#ffffff', fg: '#172016', muted: '#56634f', line: '#dfe6db', accent: '#3b7535', user: '#eaf0e6' },
     dark: { bg: '#161c15', surface: '#1f271e', fg: '#eef3ea', muted: '#9aa896', line: '#2f3a2d', accent: '#7fbf6a', user: '#10150f' },
-  },
-  {
-    id: 'rose',
-    name: 'Rose',
-    light: { bg: '#fbf7f8', surface: '#ffffff', fg: '#22161a', muted: '#735c62', line: '#eedfe3', accent: '#b8365f', user: '#f5e9ec' },
-    dark: { bg: '#211719', surface: '#2c1f22', fg: '#f8eef0', muted: '#b39ba1', line: '#3f2d31', accent: '#f07ea0', user: '#170f11' },
   },
   {
     id: 'lavender',

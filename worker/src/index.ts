@@ -52,7 +52,7 @@ export interface Env {
   /** The unlock's one-time price, by its lookup key, and the key its licenses are signed with; either empty: not on offer (unlock.ts). */
   UNLOCK_PRICE: string;
   UNLOCK_SIGNING_KEY: string;
-  /** Google sign-in's desktop client (wrangler.toml) and its secret; empty: the app uses Supabase's sign-in page. */
+  /** Google sign-in's desktop client (wrangler.toml) and its secret; empty: no Google sign-in. */
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
   /** Hosted answers a minute per account (wrangler.toml [[ratelimits]]); absent in tests. */

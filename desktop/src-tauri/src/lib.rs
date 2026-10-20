@@ -331,12 +331,13 @@ fn settings_open(app: AppHandle, hash: Option<String>) -> Res<()> {
     wm::open_settings(&app, hash.as_deref()).map_err(err)
 }
 
-/// `window.close()` from settings: they are only hidden, kept for the next
-/// time (wm.rs). No other page closes its own window: the panel's ✕ asks the
-/// core, which finishes the chat first.
+/// `window.close()` from settings, or Escape anywhere (the core closes all of
+/// the app): settings are only hidden, kept for the next time (wm.rs). No
+/// other page closes its own window: the panel's ✕ asks the core, which
+/// finishes the chat first.
 #[tauri::command(async)]
 fn window_close(app: AppHandle, window: WebviewWindow) -> Res<()> {
-    only(&window, &[wm::SETTINGS])?;
+    only(&window, &[wm::SETTINGS, wm::CORE])?;
     wm::close_settings(&app).map_err(err)
 }
 

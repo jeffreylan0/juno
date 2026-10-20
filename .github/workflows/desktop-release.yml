@@ -106,9 +106,13 @@ jobs:
         env:
           WXT_SUPABASE_URL: ${{ vars.WXT_SUPABASE_URL }}
           WXT_SUPABASE_KEY: ${{ vars.WXT_SUPABASE_KEY }}
+          WXT_GOOGLE_CLIENT_ID: ${{ vars.WXT_GOOGLE_CLIENT_ID }}
+          WXT_UNLOCK_KEY: ${{ vars.WXT_UNLOCK_KEY }}
         run: |
           if [ -n "$WXT_SUPABASE_URL" ] && [ -n "$WXT_SUPABASE_KEY" ]; then
             echo "::notice::Accounts are in this build ($WXT_SUPABASE_URL)."
+            [ -n "$WXT_GOOGLE_CLIENT_ID" ] || echo "::warning::No Google sign-in in this build, email codes only: set the Actions variable WXT_GOOGLE_CLIENT_ID (supabase/README.md, step 3)."
+            [ -n "$WXT_UNLOCK_KEY" ] || echo "::warning::No unlock in this build: set the Actions variable WXT_UNLOCK_KEY (supabase/README.md, step 6)."
           else
             echo "::warning::No accounts in this build: set the Actions variables WXT_SUPABASE_URL, WXT_SUPABASE_KEY and WXT_GATEWAY_URL (supabase/README.md, step 7)."
           fi

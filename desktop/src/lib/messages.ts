@@ -171,6 +171,14 @@ export interface OptionsOpenMsg {
   type: 'options:open';
 }
 
+/**
+ * Panel or settings → core: Escape. All of the app goes: the bar and the
+ * panel (the chat is finished, as with ✕) and settings.
+ */
+export interface AppEscapeMsg {
+  type: 'app:escape';
+}
+
 export type RuntimeMessage =
   | SelectionCommittedMsg
   | SelectionDoneMsg
@@ -190,6 +198,7 @@ export type RuntimeMessage =
   | KeysTestMsg
   | SelectionIncomingMsg
   | OptionsOpenMsg
+  | AppEscapeMsg
   | SyncNowMsg
   | AccountDeleteMsg;
 

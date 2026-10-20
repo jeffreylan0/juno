@@ -71,7 +71,9 @@ export type ProviderErrorCode =
   | 'network'
   | 'aborted'
   | 'unsupported'
-  | 'empty';
+  | 'empty'
+  | 'declined'
+  | 'cut-off';
 
 export class ProviderError extends Error {
   /** The vendor's request id, for a support ticket. */

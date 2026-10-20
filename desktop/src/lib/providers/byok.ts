@@ -9,7 +9,7 @@
  */
 import type { AskRequest, ModelRef } from '@shared/payload';
 import { COMPANY, estimateCostUsd } from '../router';
-import { describeStreamError, ensureVendorOk, vendorFetch } from './errors';
+import { cutOff, declined, describeStreamError, ensureVendorOk, vendorFetch } from './errors';
 import { sseData, streamOpenAIChat, toChatMessages, type ChatMessage, type ContentPart } from './openai-compat';
 import { ProviderError, type KeyStatus, type KeyVendor, type ProviderContext, type ProviderDriver, type StreamResult, type Vault } from './types';
 
@@ -18,8 +18,25 @@ export const ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models';
 export const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 export const OPENAI_MODELS_URL = 'https://api.openai.com/v1/models';
 const ANTHROPIC_VERSION = '2023-06-01';
-/** Room for a full worked solution; most answers use a fraction of it. */
-export const MAX_OUTPUT_TOKENS = 4096;
+/** What lets a request carry `fallbacks` (below); the native core sends the same (vault.rs). */
+export const ANTHROPIC_BETA = 'server-side-fallback-2026-07-01';
+/**
+ * Room for the thinking as well as the answer. Every current model thinks
+ * before it answers, and the thinking counts toward this limit: at 4,096 a
+ * hard question could use it all up, leaving an answer cut short or none.
+ * Most answers use a fraction of it, and room not used costs nothing.
+ */
+export const MAX_OUTPUT_TOKENS = 32_000;
+
+/**
+ * Models whose safeguards may decline a question (a biology problem can look
+ * like research they won't help with). With `fallbacks: "default"` Anthropic
+ * answers a declined question with the model it recommends for that case, in
+ * the same request. Haiku has no fallback to go to.
+ */
+const FALLBACK_MODELS = new Set(['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1']);
+/** Models the key's account turned the fallback down for: asked again without it, and remembered. */
+const NO_FALLBACK = new Set<string>();
 
 type CacheControl = { type: 'ephemeral' };
 
@@ -34,7 +51,9 @@ interface AnthropicMessage {
 
 /** Each company's key headers (the native core adds the same: vault.rs). */
 function keyHeaders(vendor: KeyVendor, key: string): Record<string, string> {
-  return vendor === 'anthropic' ? { 'x-api-key': key, 'anthropic-version': ANTHROPIC_VERSION } : { authorization: `Bearer ${key}` };
+  return vendor === 'anthropic'
+    ? { 'x-api-key': key, 'anthropic-version': ANTHROPIC_VERSION, 'anthropic-beta': ANTHROPIC_BETA }
+    : { authorization: `Bearer ${key}` };
 }
 
 /** Keys the caller holds (the eval, tests): each request carries its key itself. */
@@ -109,7 +128,7 @@ interface AnthropicUsage {
 interface AnthropicEvent {
   type: string;
   message?: { usage?: AnthropicUsage };
-  delta?: { type?: string; text?: string; stop_reason?: string };
+  delta?: { type?: string; text?: string; stop_reason?: string | null; stop_details?: { category?: string | null } | null };
   usage?: AnthropicUsage;
   error?: { type?: string; message?: string };
 }
@@ -126,13 +145,32 @@ async function* streamAnthropic(
   model: ModelRef,
   ctx: ProviderContext,
 ): AsyncGenerator<string, StreamResult, void> {
-  const res = await vendorFetch(await keyed(ctx.vault, 'anthropic'), 'Anthropic', ANTHROPIC_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(toAnthropicBody(toChatMessages(req), model.model)),
-    signal: ctx.signal,
-  });
-  await ensureVendorOk(res, 'Anthropic', model.model);
+  const send = await keyed(ctx.vault, 'anthropic');
+  const body = toAnthropicBody(toChatMessages(req), model.model);
+  const call = async (b: object) => {
+    const res = await vendorFetch(send, 'Anthropic', ANTHROPIC_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(b),
+      signal: ctx.signal,
+    });
+    await ensureVendorOk(res, 'Anthropic', model.model);
+    return res;
+  };
+  let res: Response;
+  if (FALLBACK_MODELS.has(model.model) && !NO_FALLBACK.has(model.model)) {
+    try {
+      res = await call({ ...body, fallbacks: 'default' });
+    } catch (err) {
+      // Turned down before a word was streamed, so asking again repeats nothing.
+      const e = err as ProviderError;
+      if (e.status !== 400 || !/fallback/i.test(`${e.detail ?? ''} ${e.message}`)) throw err;
+      NO_FALLBACK.add(model.model);
+      res = await call(body);
+    }
+  } else {
+    res = await call(body);
+  }
   // `input_tokens` counts only what came after the last cache breakpoint;
   // the cached share is reported separately and billed at its own rate.
   let plain = 0;
@@ -140,6 +178,8 @@ async function* streamAnthropic(
   let cacheRead = 0;
   let outputTokens = 0;
   let sawText = false;
+  let stop: string | null | undefined;
+  let category: string | null | undefined;
   for await (const data of sseData(res)) {
     let ev: AnthropicEvent;
     try {
@@ -164,11 +204,16 @@ async function* streamAnthropic(
         break;
       case 'message_delta':
         outputTokens = ev.usage?.output_tokens ?? outputTokens;
+        stop = ev.delta?.stop_reason ?? stop;
+        category = ev.delta?.stop_details?.category ?? category;
         break;
       case 'error':
         throw describeStreamError('Anthropic', ev.error);
     }
   }
+  // A fallback that answered ends normally; only a decline nothing rescued says `refusal`.
+  if (stop === 'refusal') throw declined('Claude', category);
+  if (stop === 'max_tokens') throw cutOff(sawText);
   if (!sawText) throw new ProviderError('Anthropic sent back an empty answer. Try again.', 'empty');
   const inputTokens = plain + cacheWrite + cacheRead;
   return {

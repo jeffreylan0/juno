@@ -47,9 +47,11 @@ describe('colour themes', () => {
     expect(migrateSettings({ scheme: 'sepia' }).scheme).toBe('system');
   });
 
-  it('is a setting: Ember to start, and an unknown theme (the retired Claude one included) falls back to it', () => {
+  it('is a setting: Ember to start, and an unknown theme (the retired ones included) falls back to it', () => {
     expect(DEFAULT_SETTINGS.theme).toBe('ember');
-    expect(migrateSettings({ theme: 'rose' }).theme).toBe('rose');
+    expect(THEMES.map((t) => t.id)).toEqual(['ember', 'ocean', 'forest', 'lavender', 'contrast']);
+    expect(migrateSettings({ theme: 'ocean' }).theme).toBe('ocean');
+    for (const retired of ['rose', 'graphite']) expect(migrateSettings({ theme: retired }).theme).toBe('ember');
     expect(migrateSettings({ theme: 'from-the-marketplace' }).theme).toBe('ember');
     expect(migrateSettings({ theme: 'claude' }).theme).toBe('ember');
     expect(themeById('nope').id).toBe('ember');

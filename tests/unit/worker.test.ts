@@ -249,6 +249,24 @@ describe('Anthropic, in the OpenAI shape', () => {
     expect(chunks.flatMap((c) => c.choices.map((x: { delta: { content: string } }) => x.delta.content)).join('')).toBe('Hello');
     expect(chunks.at(-1).usage).toEqual({ prompt_tokens: 100, completion_tokens: 7, prompt_tokens_details: { cached_tokens: 90 } });
   });
+
+  it('says why an answer stopped early, as OpenAI would: the length limit, or a safeguard', async () => {
+    const finish = async (stop_reason: string) => {
+      const events = [
+        { type: 'message_start', message: { usage: { input_tokens: 1 } } },
+        { type: 'message_delta', delta: { stop_reason }, usage: { output_tokens: 3 } },
+      ];
+      const sse = events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
+      const out = await new Response(new Response(sse).body!.pipeThrough(anthropicToOpenAI())).text();
+      return out
+        .split('\n\n')
+        .filter((l) => l && !l.includes('[DONE]'))
+        .flatMap((l) => (JSON.parse(l.slice(6)) as { choices: { finish_reason?: string }[] }).choices.map((c) => c.finish_reason));
+    };
+    expect(await finish('max_tokens')).toEqual(['length']);
+    expect(await finish('refusal')).toEqual(['content_filter']);
+    expect(await finish('end_turn')).toEqual([]);
+  });
 });
 
 // ── Billing ──────────────────────────────────────────────────────────────

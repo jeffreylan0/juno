@@ -143,7 +143,31 @@ export function needsSettings(code: string | undefined): boolean {
 
 /** Codes worth a plain retry. */
 export function isTransient(code: string | undefined): boolean {
-  return code === 'rate-limit' || code === 'overloaded' || code === 'network' || code === 'http' || code === 'empty';
+  return code === 'rate-limit' || code === 'overloaded' || code === 'network' || code === 'http' || code === 'empty' || code === 'cut-off';
+}
+
+/** What each safeguard covers, in the words a decline says (Anthropic's `stop_details.category`). */
+const SAFEGUARD: Record<string, string> = { bio: 'biology', cyber: 'security', frontier_llm: 'AI research', general_harms: 'safety' };
+
+/**
+ * The model's safeguards declined the question (Anthropic's `refusal`,
+ * OpenAI's `content_filter`). Whatever came before the decline is not an
+ * answer (the engine drops it).
+ */
+export function declined(who: string, category?: string | null): ProviderError {
+  if (category === 'reasoning_extraction') {
+    return new ProviderError(`${who} won't write out its private reasoning. Ask for the steps of the solution instead.`, 'declined');
+  }
+  const area = category ? SAFEGUARD[category] : undefined;
+  return new ProviderError(`${who} declined to answer this${area ? ` (its ${area} safeguard)` : ''}. Try rewording it, or pick another model.`, 'declined');
+}
+
+/** The output limit was reached: partway through the answer, or before it began (all of it spent thinking). */
+export function cutOff(answered: boolean): ProviderError {
+  return new ProviderError(
+    answered ? 'The answer reached its length limit and stops here. Ask it to go on.' : 'The model spent its whole length limit thinking. Try again, or pick a faster model.',
+    'cut-off',
+  );
 }
 
 function safeHost(url: string): string {
