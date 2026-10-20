@@ -35,6 +35,9 @@ pub const STORAGE_KEY: &str = "keys";
 const MAX_BODY_BYTES: usize = 40 * 1024 * 1024;
 /// What Anthropic's API is asked to speak.
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+/// Lets a question one model's safeguards decline be answered by another, in
+/// the same request (`fallbacks`, lib/providers/byok.ts).
+const ANTHROPIC_BETA: &str = "server-side-fallback-2026-07-01";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Vendor {
@@ -203,7 +206,8 @@ impl Vault {
             // A redirect would carry the key wherever it pointed.
             .redirect(redirect::Policy::none())
             .connect_timeout(Duration::from_secs(20))
-            .read_timeout(Duration::from_secs(120))
+            // Models think before the first word, at length on a hard question.
+            .read_timeout(Duration::from_secs(300))
             .build()
             .map_err(|e| e.to_string())?;
         Ok(Vault { client, running: Mutex::new(HashMap::new()) })
@@ -286,7 +290,7 @@ fn failure(e: &reqwest::Error) -> String {
     format!("The request {what}.")
 }
 
-/// The key, as each company takes it; marked sensitive, so it is never printed.
+/// The key, as each company takes it (marked sensitive, so it is never printed), with Anthropic's version and beta.
 fn auth_headers(vendor: Vendor, key: &str) -> Result<Vec<(header::HeaderName, header::HeaderValue)>, String> {
     let secret = |v: String| {
         let mut value = header::HeaderValue::from_str(&v).map_err(|_| "That doesn't look like an API key.".to_string())?;
@@ -297,6 +301,7 @@ fn auth_headers(vendor: Vendor, key: &str) -> Result<Vec<(header::HeaderName, he
         Vendor::Anthropic => vec![
             (header::HeaderName::from_static("x-api-key"), secret(key.to_string())?),
             (header::HeaderName::from_static("anthropic-version"), header::HeaderValue::from_static(ANTHROPIC_VERSION)),
+            (header::HeaderName::from_static("anthropic-beta"), header::HeaderValue::from_static(ANTHROPIC_BETA)),
         ],
         Vendor::OpenAi => vec![(header::AUTHORIZATION, secret(format!("Bearer {key}"))?)],
     })
@@ -394,5 +399,7 @@ mod tests {
         assert!(!format!("{:?}", headers[0].1).contains("sk-secret"));
         let headers = auth_headers(Vendor::Anthropic, "sk-ant-secret").unwrap();
         assert!(headers[0].1.is_sensitive());
+        let names: Vec<_> = headers.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["x-api-key", "anthropic-version", "anthropic-beta"]);
     }
 }

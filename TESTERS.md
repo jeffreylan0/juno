@@ -41,9 +41,9 @@ Windows asks for no permissions.
 
 The first time you open Juno, it asks who should answer. Pick one, then **Start using Juno**:
 
+- **Your plan**: sign up or in with an emailed code (or Google), for hosted answers if your plan includes them.
 - **API key** (Claude or ChatGPT): paste an Anthropic or OpenAI API key and press **Save**; Juno tells from the key whose it is, and checks it at once. Get one at [console.anthropic.com](https://console.anthropic.com/settings/keys) or [platform.openai.com](https://platform.openai.com/api-keys). API use is pay-as-you-go and is billed separately from a Claude or ChatGPT subscription. Make a key just for Juno, with a spend limit, and read *Keep your API key safe* below.
 - **Local model**: a model running on your own computer, such as one served by Ollama. It must be a model that reads images. (In the app, a server on another computer needs an `https://` address or a `.local` name.)
-- **Juno account**: sign in with Google or an emailed code, for hosted answers if your plan includes them.
 
 You can change it later in Settings (the gear on the bar, or right-click the menu bar or tray icon and choose **Settings…**) under **Answers**.
 
@@ -67,7 +67,7 @@ Coming from an earlier test build or the old Chrome extension: those kept keys l
 2. **Box**: drag a rectangle. **Freeform**: draw around anything, in any shape.
 3. A panel opens at the top right with your selection. Press **Explain**, **Hint**, **Check** or **Answer** (the answer first, then the explanation), or type your own question.
 
-While you drag, the bar and the panel get out of the way, and they come back the moment you let go. **Esc** closes Juno at any point, from the bar or the panel. You can still scroll the page underneath while the bar is waiting.
+While you drag, the bar and the panel get out of the way, and they come back the moment you let go. **Esc** closes Juno at any point, from the bar, the panel or settings, whatever is open in them. You can still scroll the page underneath while the bar is waiting.
 
 In the panel:
 

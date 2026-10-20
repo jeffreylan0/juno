@@ -149,8 +149,8 @@ it('the bar is compact, its modes in the middle; chats, ghost and gear leave it 
   expect(Math.abs(middle(before.chips) - middle(before.bar))).toBeLessThanOrEqual(1);
   expect(before.shown).toEqual(['.chats', '.ghost', '.gear']);
 
-  // Widened by the gear's settings: ✕ still on the left, the modes in the middle, the buttons on the right.
-  await app.eval('overlay', bar(`querySelector('.gear').click()`));
+  // Widened, as a note widens it: ✕ still on the left, the modes in the middle, the buttons on the right.
+  await app.eval('overlay', bar(`querySelector('.bar').classList.add('wide')`));
   await waitFor('the bar widened', async () => (await barLayout()).bar.width > before.bar.width + 50);
   await new Promise((r) => setTimeout(r, 300));
   const wide = await app.read<{ bar: [number, number]; close: number; chips: [number, number]; gear: number }>(
@@ -164,7 +164,7 @@ it('the bar is compact, its modes in the middle; chats, ghost and gear leave it 
   expect(Math.abs((wide.chips[0] + wide.chips[1]) / 2 - (wide.bar[0] + wide.bar[1]) / 2)).toBeLessThanOrEqual(1);
   expect(wide.close - wide.bar[0]).toBeLessThanOrEqual(10);
   expect(wide.bar[1] - wide.gear).toBeLessThanOrEqual(10);
-  await app.eval('overlay', bar(`querySelector('.gear').click()`));
+  await app.eval('overlay', bar(`querySelector('.bar').classList.remove('wide')`));
   await waitFor('the bar compact again', async () => Math.abs((await barLayout()).bar.width - before.bar.width) <= 1);
   await armed();
 
@@ -684,15 +684,21 @@ it('Escape while selecting closes everything, as ✕ does: the bar and the panel
   expect(((await app.storage('local')).chatIndex as { id: string }[]).map((c) => c.id)).toEqual([chat.id]);
 });
 
-it('Escape in the panel closes it and the bar too', async () => {
+it('Escape in the panel closes all of the app, even with the chat menu open in it', async () => {
   await app.summon();
   await armed();
   await box(150, 150, 250, 250);
   await selections(1);
   await waitFor('the panel', () => app.read('panel', `!!document.querySelector('[data-testid=selection]')`));
-  await app.eval('panel', `document.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  // Settings open too (the core opens them, as the panel's gear does).
+  await app.eval('core', `browser.runtime.openOptionsPage()`);
+  await waitFor('settings', async () => (await app.window('settings'))?.visible);
+  await app.eval('panel', `document.querySelector('[data-testid=menu]').click()`);
+  await waitFor('the chat menu', () => app.read('panel', `!!document.querySelector('[data-testid=chat-search]')`));
+  await app.eval('panel', `document.querySelector('[data-testid=chat-search]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
   await waitFor('the panel hidden', async () => (await app.window('panel'))?.visible === false);
   await waitFor('the overlay hidden', async () => !(await app.overlay()).visible);
+  await waitFor('settings hidden', async () => (await app.window('settings'))?.visible === false);
 });
 
 it('while a selection is drawn, only the drawing shows: the bar and the panel step aside, and are back once it is made', async () => {
@@ -821,9 +827,9 @@ it('the ghost on the bar: the next selection is a temporary chat, in memory only
 it('the gear on the bar opens settings: the app’s own shortcut, no blocked sites, keys in a private file, and Quit', async () => {
   await app.summon();
   await armed();
+  // Settings itself, straight away: the bar has no menu of its own.
   await app.eval('overlay', bar(`querySelector('.gear').click()`));
-  await waitFor('quick settings', () => app.read('overlay', `!!${bar(`querySelector('.more')`)}`));
-  await app.eval('overlay', bar(`querySelector('.more').click()`));
+  expect(await app.read('overlay', `!${bar(`querySelector('.settings, select')`)}`)).toBe(true);
   await waitFor('the settings window', async () => (await app.window('settings'))?.visible);
   // Settings are not a selection: the bar goes, and the dim with it.
   await waitFor('the bar gone', async () => !(await app.overlay()).visible);
@@ -1032,8 +1038,6 @@ it('Quit in settings ends the app (the menu bar icon starts a selection when cli
   await app.summon();
   await armed();
   await app.eval('overlay', bar(`querySelector('.gear').click()`));
-  await waitFor('quick settings', () => app.read('overlay', `!!${bar(`querySelector('.more')`)}`));
-  await app.eval('overlay', bar(`querySelector('.more').click()`));
   await waitFor('the settings page', () => app.read('settings', `!!document.querySelector('[data-testid=quit]')`));
   await app.eval('settings', `document.querySelector('[data-testid=quit]').click()`);
   await waitFor('the app to quit', () => app.app.exitCode !== null || app.app.signalCode !== null, 10_000);
@@ -1050,8 +1054,6 @@ it('Open at login is off until turned on; on, the app starts hidden in the menu 
   await app.summon();
   await armed();
   await app.eval('overlay', bar(`querySelector('.gear').click()`));
-  await waitFor('quick settings', () => app.read('overlay', `!!${bar(`querySelector('.more')`)}`));
-  await app.eval('overlay', bar(`querySelector('.more').click()`));
   await waitFor('the setting', () => app.read('settings', `!!document.querySelector('[data-testid=open-at-login]')`));
   expect(await app.read('settings', `document.querySelector('[data-testid=open-at-login]').checked`)).toBe(false);
   // The privacy policy and terms are a click away.

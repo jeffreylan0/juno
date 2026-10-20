@@ -5,8 +5,9 @@
  * page fills the window with its own background and its content comes in
  * with a short rise. They go at once: content fading out would leave the
  * empty window on screen for a moment. The top bar drags the window; the
- * page's own ✕ closes it (`onClose` for the panel), and so does Escape,
- * unless something on the page took it first (a menu, an editor); ⌘Q quits.
+ * page's own ✕ closes it (`onClose` for the panel). Escape closes all of
+ * the app (the bar, the panel, settings), whatever on the page has the
+ * keyboard (a menu, an editor); ⌘Q quits.
  *
  * Both are made hidden at start and kept. Settings tell the native core
  * when their page has drawn, so that, asked for before then, they never
@@ -58,12 +59,18 @@ export function cardWindow(opts: CardOptions): void {
     opts.onEnter?.();
   });
 
-  // Escape closes the card, as its ✕ does, once the page's own handlers have
-  // had it: a menu or an editor that closes on Escape marks it handled.
-  addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || e.repeat) return;
-    setTimeout(() => !e.defaultPrevented && window.close());
-  });
+  // Escape closes all of the app, not a menu or an editor on the page: it is
+  // taken here, before anything on the page hears it.
+  addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key !== 'Escape' || e.repeat) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void browser.runtime.sendMessage({ type: 'app:escape' }).catch(() => {});
+    },
+    { capture: true },
+  );
 
   // ⌘Q quits the app from its windows, as in any Mac app (it has no menu bar of its own).
   document.addEventListener('keydown', (e) => {

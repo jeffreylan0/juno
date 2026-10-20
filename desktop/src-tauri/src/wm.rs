@@ -19,7 +19,7 @@
 //!   does summoning the bar (left open behind other apps, it would come
 //!   forward with the app). Asked for before its page has drawn, it waits
 //!   for that (`window_show`), so it never flashes white or empty. Opening
-//!   it takes the bar away.
+//!   it takes the bar away. One size: it never goes full screen.
 //!
 //! The panel and settings are cards like the bar, with no title bar to see
 //! (their top bar drags them): on macOS ordinary windows whose title bar is
@@ -445,7 +445,10 @@ pub fn make_settings(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     }
     let window = card(app, SETTINGS, "web/settings.html", "Juno Settings")
         .inner_size(SETTINGS_SIZE.0, SETTINGS_SIZE.1)
-        .min_inner_size(520.0, 420.0)
+        // One size (smaller only on a smaller screen): never full screen,
+        // zoomed, or filling the screen when dragged to its edge.
+        .resizable(false)
+        .maximizable(false)
         // At the panel's level: opened after it, so above it.
         .always_on_top(true)
         .build()?;

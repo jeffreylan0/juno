@@ -3,8 +3,8 @@
  * as its controls. A ✕ that finishes the chat (the bar and the panel close),
  * the selection modes in the middle as one segmented control, then the chats
  * (the panel, open on its list), the ghost (the next selection starts a
- * temporary chat) and a gear that expands the bar into a short settings
- * menu, and Send, when selections wait for it (the setting). While the panel
+ * temporary chat) and a gear that opens settings, and Send, when
+ * selections wait for it (the setting). While the panel
  * shows, the chats, ghost and gear are the panel's, and fold away. The
  * instruction shows above the row only when it adds something (a selection
  * to adjust, a warning); the cursor tooltip says the rest. A note the app
@@ -21,7 +21,6 @@
 import type { SelectionKind } from '@shared/payload';
 import { ICON_PATHS, svgIcon } from '@/lib/icons';
 import { KIND_ICON as ICONS, KIND_LABEL, KIND_ORDER } from '@/lib/kinds';
-import { getSettings, settingsItem, type Settings } from '@/lib/storage';
 
 /** Marks the app's own controls, which a selection never starts on. */
 export const UI_ATTR = 'data-sai-ui';
@@ -47,11 +46,11 @@ export const BAR_STYLE = `
 .bar[data-place^='middle-'] { bottom: auto; top: 50%; transform: translateY(-50%); }
 .bar[data-place='top-center'] { transform: translateX(-50%); }
 .bar[data-place='middle-center'] { transform: translate(-50%, -50%); }
-/* A note or the settings widen the bar while open. */
+/* A note widens the bar while it shows. */
 .bar.wide { width: min(460px, calc(100vw - 32px)); }
 .bar button { font: inherit; }
 /* ✕ on the left | the modes in the middle | chats, ghost, gear (and Send) on
-   the right, however wide the bar is (a note or the settings widen it). The
+   the right, however wide the bar is (a note widens it). The
    two sides share any room equally and are at least as wide as each other
    (buttons are 32 px, 2 px apart; Send 6 px off), so the modes stay centred.
    While the panel has the chats, ghost and gear, they fold away and the bar
@@ -78,13 +77,13 @@ export const BAR_STYLE = `
   width: 32px; height: 32px; padding: 0; border: 0; border-radius: 9px; cursor: pointer; overflow: hidden;
   background: transparent; color: var(--sai-bar-muted, #b2a79c);
 }
-.close:hover, .chats:hover, .gear:hover, .gear[aria-expanded='true'], .ghost:hover { color: var(--sai-bar-fg, #f7f1ea); background: rgba(255, 255, 255, 0.08); }
+.close:hover, .chats:hover, .gear:hover, .ghost:hover { color: var(--sai-bar-fg, #f7f1ea); background: rgba(255, 255, 255, 0.08); }
 .ghost[aria-pressed='true'], .ghost[aria-pressed='true']:hover { color: var(--sai-bar-fg, #f7f1ea); background: rgba(255, 255, 255, 0.14); }
 .close svg, .chats svg, .gear svg, .ghost svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .close svg { width: 16px; height: 16px; }
 /* The instruction, above the row, when it adds something. What could be wide
-   (it, a note, the settings) never sets the bar's width: width 0, at least the bar's. */
-.say, .note, .settings { width: 0; min-width: 100%; box-sizing: border-box; }
+   (it, a note) never sets the bar's width: width 0, at least the bar's. */
+.say, .note { width: 0; min-width: 100%; box-sizing: border-box; }
 .say {
   display: none; padding: 10px 14px 0; font-size: 13px; text-align: center; color: var(--sai-bar-muted, #b2a79c);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -133,32 +132,6 @@ export const BAR_STYLE = `
 .note-actions button.primary { color: #1c1714; background: #f7f1ea; border-color: transparent; }
 .note-actions button.primary:hover { background: #fff; }
 
-/* The quick settings, opened by the gear. */
-.settings {
-  max-height: 0; overflow-y: auto; overscroll-behavior: contain;
-  transition: max-height 220ms ease;
-  border-top: 1px solid transparent;
-}
-.settings.open { max-height: min(46vh, 340px); border-top-color: var(--sai-bar-line, rgba(222, 220, 209, 0.14)); }
-.settings-inner { display: flex; flex-direction: column; gap: 12px; padding: 14px 18px 14px; }
-.field { display: flex; flex-direction: column; gap: 6px; }
-.field > span { font-size: 12px; color: var(--sai-bar-muted, #b2a79c); }
-.field select {
-  font: inherit; font-size: 13px; padding: 7px 30px 7px 10px; border-radius: 9px; cursor: pointer;
-  color: var(--sai-bar-fg, #f7f1ea); background-color: rgba(255, 255, 255, 0.06); border: 1px solid var(--sai-bar-line, rgba(222, 220, 209, 0.14));
-  /* The native arrow sits hard against the edge and ignores our padding. */
-  -webkit-appearance: none; -moz-appearance: none; appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23a6a39b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right 10px center; background-size: 12px 12px;
-}
-.field select::-ms-expand { display: none; }
-.field select option { color: #1c1714; background: #fff; }
-.more {
-  align-self: flex-start; font-size: 13px; cursor: pointer;
-  border: 0; background: none; padding: 0; color: var(--sai-bar-muted, #b2a79c); text-decoration: underline; text-underline-offset: 2px;
-}
-.more:hover { color: var(--sai-bar-fg, #f7f1ea); }
-
 /* Small light tooltips: they come up after the pointer rests a moment. */
 .hint {
   position: fixed; left: 0; top: 0; z-index: 1; pointer-events: none; white-space: nowrap; box-sizing: border-box;
@@ -169,7 +142,7 @@ export const BAR_STYLE = `
   opacity: 0; visibility: hidden; transition: opacity 120ms ease, visibility 0s linear 120ms;
 }
 .hint.on { opacity: 1; visibility: visible; transition: opacity 120ms ease; }
-@media (prefers-reduced-motion: reduce) { .settings, .hint, .hint.on { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .hint, .hint.on { transition: none; } }
 `;
 
 /** Shown while a drawn box waits to be adjusted and sent (Send, or Enter). */
@@ -228,13 +201,10 @@ export class Bar {
   readonly hintEl: HTMLElement;
   private say: HTMLElement;
   private note: HTMLElement;
-  private settings: HTMLElement;
-  private settingsInner: HTMLElement;
   private gear: HTMLButtonElement;
   private ghost: HTMLButtonElement;
   private ask: HTMLButtonElement;
   private chips = new Map<SelectionKind, HTMLButtonElement>();
-  private settingsBuilt = false;
   private drawing = false;
   private adjusting = false;
   /** The mode being selected in, or null while the bar waits between selections. */
@@ -252,12 +222,6 @@ export class Bar {
     this.hintEl.className = 'hint';
     this.hintEl.setAttribute('role', 'tooltip');
     this.hintEl.setAttribute(UI_ATTR, 'hint');
-
-    this.settings = document.createElement('div');
-    this.settings.className = 'settings';
-    this.settingsInner = document.createElement('div');
-    this.settingsInner.className = 'settings-inner';
-    this.settings.append(this.settingsInner);
 
     this.note = document.createElement('div');
     this.note.className = 'note';
@@ -281,8 +245,7 @@ export class Bar {
     this.setGhost(false);
 
     this.gear = this.button('gear', 'Settings', 'Settings', svgIcon(ICON_PATHS.gear));
-    this.gear.setAttribute('aria-expanded', 'false');
-    this.gear.addEventListener('click', () => void this.toggleSettings());
+    this.gear.addEventListener('click', () => void browser.runtime.sendMessage({ type: 'options:open' }).catch(() => {}));
 
     const chats = this.button('chats', 'Chats', 'Your chats', svgIcon(ICON_PATHS.menu));
     chats.addEventListener('click', () => this.handlers.onChats());
@@ -295,7 +258,7 @@ export class Bar {
     end.append(chats, this.ghost, this.gear, this.ask);
     row.append(start, this.buildChips(), end);
     // The instruction above the row, when it shows (it is "loud").
-    this.el.append(this.say, row, this.note, this.settings);
+    this.el.append(this.say, row, this.note);
   }
 
   /** Where on the screen the bar sits (the setting). */
@@ -306,9 +269,7 @@ export class Bar {
   /** The panel is open: the ghost, settings and chats are on it, not here. */
   setPanelOpen(open: boolean): void {
     this.el.classList.toggle('panel-open', open);
-    if (!open) return;
-    this.closeSettings();
-    if (this.hintFor?.matches('.chats, .ghost, .gear')) this.hideHint();
+    if (open && this.hintFor?.matches('.chats, .ghost, .gear')) this.hideHint();
   }
 
   /** Which mode is being selected in; null while the bar waits. */
@@ -329,10 +290,7 @@ export class Bar {
   setDrawing(drawing: boolean): void {
     this.drawing = drawing;
     this.say.classList.toggle('gone', drawing);
-    if (drawing) {
-      this.closeSettings();
-      this.hideHint();
-    }
+    if (drawing) this.hideHint();
   }
 
   /** A selection is drawn and waiting: say how to adjust and send it. */
@@ -406,9 +364,9 @@ export class Bar {
     this.say.classList.toggle('loud', this.adjusting);
   }
 
-  /** The bar widens while a note or the settings need the room. */
+  /** The bar widens while a note needs the room. */
   private widen(): void {
-    this.el.classList.toggle('wide', this.note.classList.contains('on') || this.settings.classList.contains('open'));
+    this.el.classList.toggle('wide', this.note.classList.contains('on'));
   }
 
   /** A quiet icon button with a short tooltip (`hint`) and a fuller name for screen readers. */
@@ -488,73 +446,6 @@ export class Bar {
     }
     return wrap;
   }
-
-  private closeSettings(): void {
-    this.settings.classList.remove('open');
-    this.gear.setAttribute('aria-expanded', 'false');
-    this.widen();
-  }
-
-  private async toggleSettings(): Promise<void> {
-    if (this.settings.classList.contains('open')) return this.closeSettings();
-    if (!this.settingsBuilt) {
-      await this.buildSettings();
-      this.settingsBuilt = true;
-    }
-    this.settings.classList.add('open');
-    this.gear.setAttribute('aria-expanded', 'true');
-    this.widen();
-  }
-
-  /**
-   * The quick settings: only how selecting works, since that is what the bar
-   * is for. Who answers is picked in the panel, next to the macros; keys
-   * and macros are on the settings page, which has the room.
-   */
-  private async buildSettings(): Promise<void> {
-    const settings = await getSettings();
-    const save = async (patch: Partial<Settings>) => {
-      const current = await getSettings();
-      await settingsItem.setValue({ ...current, ...patch });
-    };
-
-    this.settingsInner.append(
-      field(
-        'After drawing a selection',
-        [
-          ['send', 'Send right away'],
-          ['adjust', 'Let me adjust it first, then press ↑'],
-        ],
-        settings.adjustBox ? 'adjust' : 'send',
-        (v) => void save({ adjustBox: v === 'adjust' }).catch(() => {}),
-      ),
-    );
-
-    const more = document.createElement('button');
-    more.type = 'button';
-    more.className = 'more';
-    more.textContent = 'All settings';
-    more.addEventListener('click', () => void browser.runtime.sendMessage({ type: 'options:open' }).catch(() => {}));
-    this.settingsInner.append(more);
-  }
-}
-
-function field(name: string, options: [string, string][], value: string, onChange: (v: string) => void): HTMLElement {
-  const wrap = document.createElement('label');
-  wrap.className = 'field';
-  const title = document.createElement('span');
-  title.textContent = name;
-  const select = document.createElement('select');
-  for (const [v, text] of options) {
-    const option = document.createElement('option');
-    option.value = v;
-    option.textContent = text;
-    option.selected = v === value;
-    select.append(option);
-  }
-  select.addEventListener('change', () => onChange(select.value));
-  wrap.append(title, select);
-  return wrap;
 }
 
 function label(kind: SelectionKind): string {

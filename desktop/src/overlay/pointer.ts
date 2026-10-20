@@ -69,7 +69,7 @@ export function trackPointer(t: Transport, doc: Document = document): () => void
   };
   // At once when a selection is armed, or the pointer would go through to
   // the app before the first drag; and, while anything shows, on a timer for
-  // whatever moves or grows (the gear's settings, a note).
+  // whatever moves or grows (a note).
   let timer: ReturnType<typeof setInterval> | undefined;
   /** Hides the window after two frames, if nothing came back meanwhile. */
   const hideWhenClear = () =>

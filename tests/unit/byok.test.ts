@@ -73,7 +73,7 @@ const anthropicStream = (text: string, usage = { input_tokens: 20, cache_creatio
   ]);
 
 describe('Anthropic requests', () => {
-  it('sends only the headers Anthropic documents, and the current large model for screenshots', async () => {
+  it('sends only the headers Anthropic documents, the current large model for screenshots, room to think, and a fallback', async () => {
     const calls: Call[] = [];
     const c = ctx(() => anthropicStream('Read: a box\n\nAnswer: 4'), calls);
     const { text, done } = await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'anthropic' }));
@@ -81,10 +81,13 @@ describe('Anthropic requests', () => {
     expect(calls[0]!.url).toBe(ANTHROPIC_URL);
     const headers = calls[0]!.init.headers as Record<string, string>;
     // No browser-access header: no page sends it (the native core does: vault.rs).
-    expect(Object.keys(headers).sort()).toEqual(['anthropic-version', 'content-type', 'x-api-key']);
-    const body = JSON.parse(String(calls[0]!.init.body)) as { model: string; max_tokens: number };
+    expect(Object.keys(headers).sort()).toEqual(['anthropic-beta', 'anthropic-version', 'content-type', 'x-api-key']);
+    expect(headers['anthropic-beta']).toBe('server-side-fallback-2026-07-01');
+    const body = JSON.parse(String(calls[0]!.init.body)) as { model: string; max_tokens: number; fallbacks?: string };
     expect(body.model).toBe('claude-sonnet-5-5');
-    expect(body.max_tokens).toBe(4096);
+    // Thinking counts toward it: 4,096 cut hard answers off, or left none.
+    expect(body.max_tokens).toBe(32_000);
+    expect(body.fallbacks).toBe('default');
     expect(done?.model).toEqual({ vendor: 'anthropic', model: 'claude-sonnet-5-5' });
   });
 
@@ -130,6 +133,75 @@ describe('Anthropic requests', () => {
     expect(isTransient(error?.code)).toBe(true);
   });
 
+  it('reads the answer after the thinking, which streams first (and empty)', async () => {
+    const c = ctx(() =>
+      sse([
+        { data: { type: 'message_start', message: { usage: { input_tokens: 5 } } } },
+        { data: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } } },
+        { data: { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } } },
+        { data: { type: 'content_block_stop', index: 0 } },
+        { data: { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } } },
+        { data: { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Answer: 4' } } },
+        { data: { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 900 } } },
+        { data: { type: 'message_stop' } },
+      ]),
+    );
+    const { text, error, done } = await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'anthropic' }));
+    expect(error).toBeUndefined();
+    expect(text).toBe('Answer: 4');
+    expect(done?.usage?.outputTokens).toBe(900);
+  });
+
+  const stopping = (stop: string, text?: string, category?: string) =>
+    sse([
+      { data: { type: 'message_start', message: { usage: { input_tokens: 5 } } } },
+      ...(text ? [{ data: { type: 'content_block_delta', delta: { type: 'text_delta', text } } }] : []),
+      { data: { type: 'message_delta', delta: { stop_reason: stop, stop_details: category ? { type: 'refusal', category } : null }, usage: { output_tokens: 9 } } },
+      { data: { type: 'message_stop' } },
+    ]);
+
+  it('says a safeguard declined, in words, instead of "an empty answer"', async () => {
+    const c = ctx(() => stopping('refusal', undefined, 'bio'));
+    const { error } = await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'anthropic' }));
+    expect(error?.code).toBe('declined');
+    expect(error?.message).toBe('Claude declined to answer this (its biology safeguard). Try rewording it, or pick another model.');
+    expect(isTransient(error?.code)).toBe(false);
+    const asked = await collect(callModel({ plan: plan() }, 'large', ctx(() => stopping('refusal', 'Partial', 'reasoning_extraction')), { provider: 'byok', vendor: 'anthropic' }));
+    expect(asked.error?.message).toContain('Ask for the steps of the solution instead');
+  });
+
+  it('says when the length limit cut an answer short, or left none', async () => {
+    const cut = await collect(callModel({ plan: plan() }, 'large', ctx(() => stopping('max_tokens', 'The first half')), { provider: 'byok', vendor: 'anthropic' }));
+    expect(cut.text).toBe('The first half');
+    expect(cut.error).toMatchObject({ code: 'cut-off', message: 'The answer reached its length limit and stops here. Ask it to go on.' });
+    const none = await collect(callModel({ plan: plan() }, 'large', ctx(() => stopping('max_tokens')), { provider: 'byok', vendor: 'anthropic' }));
+    expect(none.error?.message).toContain('spent its whole length limit thinking');
+    expect(isTransient(none.error?.code)).toBe(true);
+  });
+
+  it('asks Haiku without a fallback, and again without one when an account turns it down', async () => {
+    const calls: Call[] = [];
+    await collect(callModel({ plan: plan({ parts: [{ kind: 'text', text: 'x' }], route: 'small' }) }, 'small', ctx(() => anthropicStream('ok'), calls), { provider: 'byok', vendor: 'anthropic' }));
+    expect(JSON.parse(String(calls[0]!.init.body)).model).toBe('claude-haiku-5-5');
+    expect(JSON.parse(String(calls[0]!.init.body))).not.toHaveProperty('fallbacks');
+
+    const tries: Call[] = [];
+    const refuses = ctx(
+      (call) =>
+        JSON.parse(String(call.init.body)).fallbacks
+          ? json(400, { type: 'error', error: { type: 'invalid_request_error', message: 'fallbacks: not available for this organization' } })
+          : anthropicStream('ok'),
+      tries,
+    );
+    const opus = { provider: 'byok' as const, vendor: 'anthropic' as const, model: { vendor: 'anthropic' as const, model: 'claude-opus-5-5' } };
+    const first = await collect(callModel({ plan: plan() }, 'large', refuses, opus));
+    expect(first.error).toBeUndefined();
+    expect(first.text).toBe('ok');
+    expect((await collect(callModel({ plan: plan({ question: 'And why?' }) }, 'large', refuses, opus))).text).toBe('ok');
+    // Asked with it once, then without it from then on.
+    expect(tries.map((t) => 'fallbacks' in JSON.parse(String(t.init.body)))).toEqual([true, false, false]);
+  });
+
   it('treats a stream with no text as a failure, not an empty answer', async () => {
     const c = ctx(() => sse([{ data: { type: 'message_start', message: { usage: {} } } }, { data: { type: 'message_stop' } }]));
     const { error } = await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'anthropic' }));
@@ -146,7 +218,16 @@ describe('OpenAI requests', () => {
     expect(Object.keys(calls[0]!.init.headers as Record<string, string>).sort()).toEqual(['authorization', 'content-type']);
     const body = JSON.parse(String(calls[0]!.init.body)) as { model: string; max_completion_tokens: number };
     expect(body.model).toBe('gpt-6-sol');
-    expect(body.max_completion_tokens).toBe(4096);
+    expect(body.max_completion_tokens).toBe(32_000);
+  });
+
+  it('says when a filter stopped the answer, or the length limit cut it short', async () => {
+    const ending = (finish: string, text?: string) =>
+      sse([...(text ? [{ data: { choices: [{ delta: { content: text } }] } }] : []), { data: { choices: [{ delta: {}, finish_reason: finish }] } }, { data: '[DONE]' }]);
+    const filtered = await collect(callModel({ plan: plan() }, 'large', ctx(() => ending('content_filter', 'Part')), { provider: 'byok', vendor: 'openai' }));
+    expect(filtered.error).toMatchObject({ code: 'declined', message: 'ChatGPT declined to answer this. Try rewording it, or pick another model.' });
+    const cut = await collect(callModel({ plan: plan() }, 'large', ctx(() => ending('length')), { provider: 'byok', vendor: 'openai' }));
+    expect(cut.error?.code).toBe('cut-off');
   });
 
   it('never asks OpenAI to store the answer; a temporary chat also asks for an in-memory prompt cache', async () => {

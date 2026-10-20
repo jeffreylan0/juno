@@ -38,21 +38,10 @@ export function ChatMenu({
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // The panel re-renders while an answer streams, with a new onClose each
-  // time; reading it through a ref keeps these effects from re-running (and
-  // the search box from stealing focus back from a rename in progress).
-  const close = useRef(onClose);
-  close.current = onClose;
+  // Once, when it opens: not again as the panel re-renders while an answer
+  // streams, which would take the focus back from a rename in progress.
   useEffect(() => {
     searchRef.current?.focus({ preventScroll: true });
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
-      // Only the menu closes, not the panel (card.ts).
-      e.preventDefault();
-      close.current();
-    };
-    addEventListener('keydown', onKey);
-    return () => removeEventListener('keydown', onKey);
   }, []);
 
   const shown = useMemo(() => search(chats, query), [chats, query]);
@@ -178,14 +167,14 @@ function ChatRow({
   );
 }
 
-/** An inline title editor: Enter or leaving it saves, Escape cancels (null). */
+/** An inline title editor: Enter or leaving it saves. */
 export function TitleInput({ initial, onDone, className = '' }: { initial: string; onDone: (title: string | null) => void; className?: string }) {
   const [value, setValue] = useState(initial);
   const done = useRef(false);
-  const finish = (t: string | null) => {
+  const finish = (t: string) => {
     if (done.current) return;
     done.current = true;
-    const clean = t?.replace(/\s+/g, ' ').trim();
+    const clean = t.replace(/\s+/g, ' ').trim();
     onDone(clean ? clean : null);
   };
   return (
@@ -203,11 +192,6 @@ export function TitleInput({ initial, onDone, className = '' }: { initial: strin
         if (e.key === 'Enter') {
           e.preventDefault();
           finish(value);
-        } else if (e.key === 'Escape') {
-          // Cancel the rename only, not the drawer around it.
-          e.preventDefault();
-          e.stopPropagation();
-          finish(null);
         }
       }}
     />

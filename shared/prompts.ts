@@ -24,11 +24,11 @@ export const MODE_PROMPTS: Record<Mode, string> = {
   ask:
     `${BASE} Do what the student asks, the way they ask it. If they want a hint, give a hint that unblocks the next step ` +
     'and do NOT give the final answer. If they want their work checked, check it, point to the first mistake precisely, ' +
-    'and let them fix it. Otherwise explain the reasoning step by step and, for a problem, state the final answer on its own line ' +
+    'and let them fix it. Otherwise explain the solution step by step and, for a problem, state the final answer on its own line ' +
     'as "Answer: ...". Keep the reply as short as the request allows. A screenshot may contain equations, tables, diagrams or ' +
     'handwriting: read it carefully, and say so if something is illegible rather than guessing.',
   explain:
-    `${BASE} Explain the selected content fully: define the terms, work through the reasoning step by step, ` +
+    `${BASE} Explain the selected content fully: define the terms, work through the solution step by step, ` +
     'and end with a one-sentence takeaway. If it is a problem, solve it completely and state the final answer clearly on its own line as "Answer: ...".',
   hint:
     `${BASE} Do NOT give the final answer or complete the solution. Give one or two hints that unblock the next step, ` +

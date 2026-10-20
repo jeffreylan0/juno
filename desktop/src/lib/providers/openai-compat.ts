@@ -4,7 +4,7 @@
  */
 import type { AskRequest, Attachment, Mode, Plan } from '@shared/payload';
 import { attachmentsPrompt, defaultQuestion, selectionPrompt, systemPrompt } from '@shared/prompts';
-import { ensureVendorOk, vendorFetch, type VendorName } from './errors';
+import { cutOff, declined, ensureVendorOk, vendorFetch, type VendorName } from './errors';
 import { ProviderError } from './types';
 
 export type ContentPart =
@@ -136,6 +136,7 @@ export async function* streamOpenAIChat(
   let outputTokens = 0;
   let cacheRead: number | undefined;
   let sawText = false;
+  let finish: string | null | undefined;
   for await (const data of sseData(res)) {
     if (data === '[DONE]') break;
     let chunk: OpenAIChunk;
@@ -145,6 +146,7 @@ export async function* streamOpenAIChat(
       continue;
     }
     if (chunk.error) throw new ProviderError(`${vendor} stopped partway: ${chunk.error.message ?? 'unknown error'}. Try again.`, 'http');
+    finish = chunk.choices?.[0]?.finish_reason ?? finish;
     const delta = chunk.choices?.[0]?.delta;
     const text = delta?.content || delta?.refusal;
     if (text) {
@@ -157,6 +159,8 @@ export async function* streamOpenAIChat(
       cacheRead = chunk.usage.prompt_tokens_details?.cached_tokens ?? cacheRead;
     }
   }
+  if (finish === 'content_filter') throw declined(vendor === 'OpenAI' ? 'ChatGPT' : 'The AI');
+  if (finish === 'length') throw cutOff(sawText);
   if (!sawText) throw new ProviderError(`${vendor} sent back an empty answer. Try again.`, 'empty');
   return { inputTokens, outputTokens, cacheRead };
 }

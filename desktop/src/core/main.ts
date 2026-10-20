@@ -319,6 +319,15 @@ browser.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
     case 'options:open':
       void transport.invoke('settings_open', { hash: null });
       return;
+    case 'app:escape':
+      // Escape, in the panel or settings: everything goes. The chat is finished only if it showed.
+      return reply(
+        (async () => {
+          if (barUp || panelShown) await finishChat();
+          await transport.invoke('window_close').catch(() => {});
+        })(),
+        sendResponse,
+      );
     case 'chat:temporary':
       return reply(
         serial(() => setTemporary(W, msg.on)).then((current) => {

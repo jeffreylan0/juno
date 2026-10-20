@@ -49,7 +49,12 @@ export const HOSTED_MODELS: Record<'anthropic' | 'openai', string[]> = {
  */
 export const LIMITS = { messages: 100, images: 20, imageChars: 7_000_000, textChars: 200_000 };
 
-const MAX_OUTPUT_TOKENS = 4096;
+/**
+ * Room for the thinking as well as the answer (the fast models think a little
+ * first, and it counts toward this): at most about $0.008 an answer at the
+ * fast models' price, where 4,096 could cut a hard answer short.
+ */
+const MAX_OUTPUT_TOKENS = 16_000;
 const ROLES = ['system', 'user', 'assistant'] as const;
 /** A screenshot, inline: never a URL the vendor would fetch. */
 const IMAGE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
@@ -230,7 +235,7 @@ export function anthropicToOpenAI(): TransformStream<Uint8Array, Uint8Array> {
         if (!data) continue;
         let msg: {
           type?: string;
-          delta?: { type?: string; text?: string };
+          delta?: { type?: string; text?: string; stop_reason?: string | null };
           message?: { usage?: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } };
           usage?: { output_tokens?: number };
           error?: { type?: string; message?: string };
@@ -248,6 +253,9 @@ export function anthropicToOpenAI(): TransformStream<Uint8Array, Uint8Array> {
           send(controller, { choices: [{ index: 0, delta: { content: msg.delta.text } }] });
         } else if (msg.type === 'message_delta') {
           output = msg.usage?.output_tokens ?? output;
+          // Why it stopped, as OpenAI says it: cut off at the limit, or declined by a safeguard.
+          const reason = { max_tokens: 'length', refusal: 'content_filter' }[msg.delta?.stop_reason ?? ''];
+          if (reason) send(controller, { choices: [{ index: 0, delta: {}, finish_reason: reason }] });
         } else if (msg.type === 'error') {
           send(controller, { error: { message: msg.error?.message ?? 'The AI stopped partway.', type: msg.error?.type } });
         }

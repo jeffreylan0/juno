@@ -419,6 +419,8 @@ export class ChatEngine {
             // A stop keeps whatever arrived; only an empty stop needs saying.
             if (!text.trim()) done.error = 'Stopped before an answer arrived.';
           } else {
+            // A declined answer is no answer, however much of it came first.
+            if (chunk.code === 'declined') text = '';
             done.error = chunk.message;
             done.errorCode = chunk.code;
             void this.recordStatus(current, { ok: false, code: chunk.code, message: chunk.message });

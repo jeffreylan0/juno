@@ -19,10 +19,11 @@ import { KeyField } from './KeyField';
 import { LocalServer } from './LocalServer';
 import { Permissions } from './Permissions';
 
+/** As in settings (Options.tsx): the plan first, in a build with accounts. */
 const CHOICES: { id: Choice; name: string; sub: string }[] = [
+  ...(ACCOUNTS ? [{ id: 'hosted' as const, name: 'Your plan', sub: `Hosted answers, with a ${BRAND.name} account` }] : []),
   { id: 'key', name: 'API key', sub: 'Claude or ChatGPT, your own key' },
   { id: 'local', name: 'Local model', sub: 'On this computer' },
-  ...(ACCOUNTS ? [{ id: 'hosted' as const, name: `${BRAND.name} account`, sub: 'Hosted answers' }] : []),
 ];
 
 export function Setup({

@@ -44,7 +44,7 @@ import {
   type Settings,
 } from '@/lib/storage';
 import { Icon } from '@/ui/icons';
-import { DEFAULT_THEME } from '@/lib/themes';
+import { DEFAULT_THEME, THEMES } from '@/lib/themes';
 import { hasHosted, useAccount, useExtrasOpen, type AccountState } from '@/ui/useAccount';
 import { useKeyStatus } from '@/ui/useKeyStatus';
 import { MAC } from '../os';
@@ -62,9 +62,10 @@ import { ThemePicker } from './ThemePicker';
 import { useDebounced } from './useDebounced';
 import { AccountSection } from './Account';
 
+/** Who can answer, the plan first (in a build with accounts: lib/account/config.ts). */
 const CHOICES: { id: Choice; name: string; sub: string }[] = [
+  ...(ACCOUNTS ? [{ id: 'hosted' as const, name: 'Your plan', sub: 'Hosted answers' }] : []),
   { id: 'key', name: 'API key', sub: 'Claude or ChatGPT' },
-  { id: 'hosted', name: 'Hosted', sub: 'Your plan' },
   { id: 'local', name: 'Local model', sub: 'This computer' },
 ];
 
@@ -198,8 +199,16 @@ export function Options() {
                   ))}
                 </div>
               </div>
-              <ThemePicker value={extras ? settings.theme : DEFAULT_THEME} locked={!extras} onChange={(theme) => void save({ theme })} />
-              {!extras && <ToPlan label={unlockLabel(account)} what="Every other theme" />}
+              {extras ? (
+                <ThemePicker value={settings.theme} onChange={(theme) => void save({ theme })} />
+              ) : (
+                <div className="themes-split">
+                  <ThemePicker value={DEFAULT_THEME} themes={THEMES.filter((t) => t.id === DEFAULT_THEME)} onChange={() => {}} />
+                  <Locked label={unlockLabel(account)} what="Every other theme">
+                    <ThemePicker value={DEFAULT_THEME} themes={THEMES.filter((t) => t.id !== DEFAULT_THEME)} onChange={() => {}} />
+                  </Locked>
+                </div>
+              )}
             </Section>
             <SelectingSection settings={settings} save={save} locked={extras ? null : unlockLabel(account)} />
             <PrivacySection settings={settings} save={save} account={account} />
@@ -265,15 +274,29 @@ function SideMenu({ sections }: { sections: { id: string; title: string }[] }) {
 /** What a locked extra's button says: a guest can unlock this computer (where the build sells it), a signed-in account gets Plus (lib/extras.ts). */
 const unlockLabel = (account: AccountState) => (account.user || !UNLOCK ? 'Get Plus' : 'Unlock');
 
-/** A locked extra's way to it: a white button to the plan, at the top. */
+/** A locked extra's way to it: why, and a white button to the plan (at the top). */
 function ToPlan({ label, what }: { label: string; what: string }) {
   return (
-    <span className="key-row to-plan" data-testid="to-plan">
+    <div className="to-plan" data-testid="to-plan">
+      <span>
+        {what}, with {label === 'Unlock' ? 'the unlock or Plus' : 'Plus'}.
+      </span>
       <button type="button" className="unlock-btn" onClick={() => document.getElementById('plan')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
         {label}
       </button>
-      <small className="help">{what}, with {label === 'Unlock' ? 'the unlock or Plus' : 'Plus'}.</small>
-    </span>
+    </div>
+  );
+}
+
+/** A locked extra: greyed and out of reach, its way to the plan laid over it (`fit`: only as wide as it). */
+function Locked({ label, what, fit = false, children }: { label: string; what: string; fit?: boolean; children: ReactNode }) {
+  return (
+    <div className={`locked-area${fit ? ' fit' : ''}`}>
+      <div className="locked" inert>
+        {children}
+      </div>
+      <ToPlan label={label} what={what} />
+    </div>
   );
 }
 
@@ -340,15 +363,17 @@ function AnswersSection({
   const choice = choiceOf(settings);
 
   const choose = (next: Choice) => void save(patchFor(next, settings, keys));
-  // Offered once the account's plan includes hosted answers (or already picked).
   const hosted = hasHosted(account);
-  const offered = CHOICES.filter((c) => c.id !== 'hosted' || hosted || choice === 'hosted');
   const ent = account.entitlement;
 
   return (
-    <Section id="answers" title="Answers" sub="Who answers your questions: your own API key, your plan, or a model on this computer.">
+    <Section
+      id="answers"
+      title="Answers"
+      sub={`Who answers your questions: ${ACCOUNTS ? 'your plan, ' : ''}your own API key, or a model on this computer.`}
+    >
       <div className="cards" role="radiogroup" aria-label="Who answers">
-        {offered.map((c) => (
+        {CHOICES.map((c) => (
           <label key={c.id} className={`card${choice === c.id ? ' on' : ''}`} data-testid={`answer-${c.id}`}>
             <input type="radio" name="answers" checked={choice === c.id} onChange={() => choose(c.id)} />
             <b>{c.name}</b>
@@ -363,7 +388,7 @@ function AnswersSection({
           </p>
         ) : (
           <p className="help warn" data-testid="hosted-help">
-            {account.user ? "Your plan doesn't include hosted answers." : 'Sign in under Account first.'}
+            {account.user ? "Your plan doesn't include hosted answers yet: Plus does (at the top)." : 'Sign up or sign in at the top first.'}
           </p>
         ))}
 
@@ -481,6 +506,32 @@ function MacrosSection({ settings, save, locked }: { settings: Settings; save: (
     saveMacros(next);
   };
   const changed = JSON.stringify(macros.map(({ name, prompt: p }) => ({ name, p }))) !== JSON.stringify(DEFAULT_MACROS.map(({ name, prompt: p }) => ({ name, p })));
+  // While the extras are locked, the macros past the free ones are greyed, under the way to the plan.
+  const cut = locked ? Math.min(FREE_MACROS, macros.length) : macros.length;
+  const row = (m: Macro, i: number) => (
+    <li key={m.id} className="macro-row" data-testid="macro-row">
+      <input
+        className="macro-name"
+        value={m.name}
+        placeholder="Button name"
+        aria-label="Button name"
+        maxLength={24}
+        onChange={(e) => update(macros.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+      />
+      <textarea
+        className="macro-prompt"
+        rows={2}
+        value={m.prompt}
+        placeholder="Content"
+        aria-label="Content"
+        onChange={(e) => update(macros.map((x, j) => (j === i ? { ...x, prompt: e.target.value } : x)))}
+      />
+      <button type="button" className="tool" title="Remove" aria-label={`Remove ${m.name || 'macro'}`} onClick={() => update(macros.filter((_, j) => j !== i))}>
+        ✕
+      </button>
+    </li>
+  );
+  const what = `More than ${FREE_MACROS} macros`;
 
   return (
     <Section id="macros" title="Macros" sub="Buttons above the question box, each asking its own saved question in one click.">
@@ -490,31 +541,12 @@ function MacrosSection({ settings, save, locked }: { settings: Settings; save: (
             Reset to the defaults
           </button>
         )}
-        <ol className="macro-list">
-          {macros.map((m, i) => (
-            <li key={m.id} className={`macro-row${locked && i >= FREE_MACROS ? ' locked' : ''}`} inert={!!locked && i >= FREE_MACROS} data-testid="macro-row">
-              <input
-                className="macro-name"
-                value={m.name}
-                placeholder="Button name"
-                aria-label="Button name"
-                maxLength={24}
-                onChange={(e) => update(macros.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
-              />
-              <textarea
-                className="macro-prompt"
-                rows={2}
-                value={m.prompt}
-                placeholder="Content"
-                aria-label="Content"
-                onChange={(e) => update(macros.map((x, j) => (j === i ? { ...x, prompt: e.target.value } : x)))}
-              />
-              <button type="button" className="tool" title="Remove" aria-label={`Remove ${m.name || 'macro'}`} onClick={() => update(macros.filter((_, j) => j !== i))}>
-                ✕
-              </button>
-            </li>
-          ))}
-        </ol>
+        <ol className="macro-list">{macros.slice(0, cut).map(row)}</ol>
+        {locked && cut < macros.length && (
+          <Locked label={locked} what={what}>
+            <ol className="macro-list">{macros.slice(cut).map((m, i) => row(m, cut + i))}</ol>
+          </Locked>
+        )}
         <button
           type="button"
           className="secondary"
@@ -524,13 +556,23 @@ function MacrosSection({ settings, save, locked }: { settings: Settings; save: (
         >
           Add macro
         </button>
-        {locked && <ToPlan label={locked} what={`More than ${FREE_MACROS} macros`} />}
+        {locked && cut === macros.length && <ToPlan label={locked} what={what} />}
       </div>
     </Section>
   );
 }
 
 // ── 3. Selecting ─────────────────────────────────────────────────────────
+
+/** The bar's place and the panel's (lib/extras.ts says which, while the extras are locked). */
+function Places({ place, save }: { place: Pick<Settings, 'barPlace' | 'panelPlace'>; save: (patch: Partial<Settings>) => Promise<void> }) {
+  return (
+    <div className="places">
+      <PlacePicker label="Bar" value={place.barPlace} onChange={(v) => void save({ barPlace: v })} />
+      <PlacePicker label="Panel" value={place.panelPlace} onChange={(v) => void save({ panelPlace: v })} />
+    </div>
+  );
+}
 
 function SelectingSection({ settings, save, locked }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void>; locked: string | null }) {
   const place = withinPlan(settings, !locked);
@@ -553,11 +595,13 @@ function SelectingSection({ settings, save, locked }: { settings: Settings; save
 
       <div className="field" data-testid="places">
         <span className="field-label">Where the bar and the panel go</span>
-        <div className={`places${locked ? ' locked' : ''}`} inert={!!locked}>
-          <PlacePicker label="Bar" value={place.barPlace} onChange={(v) => void save({ barPlace: v })} />
-          <PlacePicker label="Panel" value={place.panelPlace} onChange={(v) => void save({ panelPlace: v })} />
-        </div>
-        {locked && <ToPlan label={locked} what="Your own place for them" />}
+        {locked ? (
+          <Locked label={locked} what="Your own place for them" fit>
+            <Places place={place} save={save} />
+          </Locked>
+        ) : (
+          <Places place={place} save={save} />
+        )}
         <PanelSizeNote />
       </div>
 
