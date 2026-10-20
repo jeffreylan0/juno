@@ -1,13 +1,12 @@
 /**
  * The signed-in account, as the settings page and the panel see it: who is
  * signed in, what the account may use, and how the cloud copy is doing. All
- * three live in storage.local and follow every change. Also the extras
- * (lib/extras.ts) and the unlock that opens them without an account.
+ * three live in storage.local and follow every change. Also whether the
+ * extras are open (lib/extras.ts).
  */
 import { useEffect, useState } from 'react';
 import { ACCOUNTS } from '@/lib/account/config';
 import { entitlementItem, sessionItem, syncStatusItem, type AccountUser, type Entitlement, type SyncStatus } from '@/lib/account/session';
-import { unlockItem, type Unlock } from '@/lib/account/unlock';
 import { watchExtras } from '@/lib/extras';
 
 export interface AccountState {
@@ -45,14 +44,4 @@ export function useExtrasOpen(): boolean {
   const [open, setOpen] = useState(!ACCOUNTS);
   useEffect(() => watchExtras(setOpen), []);
   return open;
-}
-
-/** The unlock bought on this computer (or entered from another), if any. */
-export function useUnlock(): Unlock | null {
-  const [unlock, setUnlock] = useState<Unlock | null>(null);
-  useEffect(() => {
-    void unlockItem.getValue().then(setUnlock, () => {});
-    return unlockItem.watch(setUnlock);
-  }, []);
-  return unlock;
 }

@@ -2,7 +2,6 @@
  * Shared eval plumbing: problem loading, a file-backed cache, and request
  * builders for each route. Runs in Node with tsx.
  */
-import 'dotenv/config';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +9,13 @@ import { JSDOM } from 'jsdom';
 import { estimateTokens, type AskRequest, type Mode, type Part, type Plan } from '@shared/payload';
 import type { CacheStore, CachedResponse } from '@/lib/cache';
 import { chooseRoute } from '@/lib/router';
+
+// The eval's keys, from .env when there is one (Node reads it itself).
+try {
+  process.loadEnvFile();
+} catch {
+  // No .env: the environment as it is.
+}
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const PROBLEMS_DIR = join(ROOT, 'eval', 'problems');

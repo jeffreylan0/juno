@@ -48,8 +48,6 @@ export class FakeSupabase {
   used = new Map<string, number>();
   chats: Row[] = [];
   objects = new Map<string, { type: string; bytes: Uint8Array }>();
-  /** Google sign-ins in flight: the code handed back, and the challenge it was asked with. */
-  pkce = new Map<string, { challenge: string; email: string }>();
   /** Google ID tokens it takes (signInWithIdToken), with the hash of the nonce each carries. */
   idTokens = new Map<string, { nonceHash: string; email: string }>();
   /** Every request, for assertions: "METHOD path". */
@@ -206,14 +204,6 @@ export class FakeSupabase {
       if (!user || !this.users.has(user)) return this.json(400, { code: 400, error_code: 'refresh_token_not_found', msg: 'Invalid Refresh Token' });
       this.refresh.delete(body.refresh_token!);
       return this.json(200, this.session(this.users.get(user)!));
-    }
-    if (path === 'token' && url.searchParams.get('grant_type') === 'pkce') {
-      const flow = this.pkce.get(body.auth_code ?? '');
-      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body.code_verifier ?? '')));
-      const challenge = btoa(String.fromCharCode(...digest)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-      if (!flow || flow.challenge !== challenge) return this.json(400, { code: 400, error_code: 'flow_state_not_found', msg: 'invalid flow state' });
-      this.pkce.delete(body.auth_code!);
-      return this.json(200, this.session(this.userByEmail(flow.email) ?? this.addUser(flow.email)));
     }
     if (path === 'token' && url.searchParams.get('grant_type') === 'id_token') {
       const token = this.idTokens.get(body.id_token ?? '');

@@ -4,7 +4,7 @@
  * prices). Only the two numbers, on this computer: no question, no answer,
  * no chat. A new month starts from zero.
  */
-import { storage } from '@wxt-dev/storage';
+import { defineItem } from './storage';
 
 export interface MonthUsage {
   /** "2026-10". */
@@ -14,7 +14,7 @@ export interface MonthUsage {
   costUsd: number;
 }
 
-export const usageItem = storage.defineItem<MonthUsage | null>('local:usage', { fallback: null });
+export const usageItem = defineItem<MonthUsage | null>('usage', null);
 
 export const monthOf = (at: Date): string => `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}`;
 

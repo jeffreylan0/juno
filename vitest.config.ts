@@ -1,8 +1,8 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
-// The app's modules under jsdom, with a fake WebExtension `browser`
-// (tests/setup.ts) where the app puts its own (desktop/src/platform).
+// The app's modules under jsdom, with the app's own `browser`
+// (desktop/src/platform) over a native core in memory (tests/setup.ts).
 export default defineConfig({
   resolve: {
     alias: [

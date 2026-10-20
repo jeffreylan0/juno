@@ -23,7 +23,7 @@ The release lists `SHA256SUMS`, the fingerprint of each file. On a Mac, `shasum 
 2. Open it from Applications. macOS says it "could not verify Juno is free of malware". Click **Done**, not Move to Trash.
 3. Open **System Settings → Privacy & Security**, scroll down to *"Juno" was blocked*, click **Open Anyway** and enter your password. This is needed once per build.
    (If you use Terminal, `xattr -dr com.apple.quarantine "/Applications/Juno.app"` does the same thing.)
-4. The app lives in the menu bar, with no Dock icon. The first time, it opens its setup (*Choose who answers*, below), which also asks for **Screen Recording**:
+4. The app lives in the menu bar, with no Dock icon. The first time, it plays a short intro (sign up or in there, or continue without an account), then opens its setup (*Choose who answers*, below), which also asks for **Screen Recording**:
    - Click *Open System Settings*.
    - Switch **Juno** on under *Screen & System Audio Recording*.
    - Click **Restart Juno**. (If you skip it, the bar asks again the first time you select something.)
@@ -33,7 +33,7 @@ The release lists `SHA256SUMS`, the fingerprint of each file. On a Mac, `shasum 
 ## Install on Windows
 
 1. Run the `-setup.exe`. If Windows says *Windows protected your PC*, click **More info → Run anyway**.
-2. It installs for your account only, so no administrator password is needed. Leave *Run Juno* ticked at the end. The setup opens (*Choose who answers*, below), and Juno's blue icon is in the system tray; click **^** next to the clock if it's hidden.
+2. It installs for your account only, so no administrator password is needed. Leave *Run Juno* ticked at the end. A short intro plays, then the setup opens (*Choose who answers*, below), and Juno's blue icon is in the system tray; click **^** next to the clock if it's hidden.
 
 Windows asks for no permissions.
 
@@ -41,13 +41,25 @@ Windows asks for no permissions.
 
 The first time you open Juno, it asks who should answer. Pick one, then **Start using Juno**:
 
-- **API key** (Claude or ChatGPT): paste an Anthropic or OpenAI API key and press **Save**; Juno tells from the key whose it is, and checks it at once. Get one at [console.anthropic.com](https://console.anthropic.com/settings/keys) or [platform.openai.com](https://platform.openai.com/api-keys). API use is pay-as-you-go and is billed separately from a Claude or ChatGPT subscription. If you were given a key for testing, paste that.
+- **API key** (Claude or ChatGPT): paste an Anthropic or OpenAI API key and press **Save**; Juno tells from the key whose it is, and checks it at once. Get one at [console.anthropic.com](https://console.anthropic.com/settings/keys) or [platform.openai.com](https://platform.openai.com/api-keys). API use is pay-as-you-go and is billed separately from a Claude or ChatGPT subscription. Make a key just for Juno, with a spend limit, and read *Keep your API key safe* below.
 - **Local model**: a model running on your own computer, such as one served by Ollama. It must be a model that reads images. (In the app, a server on another computer needs an `https://` address or a `.local` name.)
 - **Juno account**: sign in with Google or an emailed code, for hosted answers if your plan includes them.
 
 You can change it later in Settings (the gear on the bar, or right-click the menu bar or tray icon and choose **Settings…**) under **Answers**.
 
 Once saved, your key is never shown again, only its last four characters. It stays on your computer, in a file only your user account can read (on Windows also encrypted for your account), and no part of the app's windows can read it back: the app's core adds it to each request itself, and only ever sends it to the company that issued it. When you ask, only your selection and your question go to the AI you chose. The app collects no analytics.
+
+## Keep your API key safe
+
+An API key is like a credit card: whoever has it can run up charges on your account. Juno never sends it anywhere but the company that issued it, but it can't protect a key that is shared, pasted elsewhere or read by other software on your computer. So:
+
+1. **Make a key just for Juno, with a limit.** At Anthropic, make a workspace for Juno (Console → Settings → Workspaces), give it a monthly spend limit, and make the key in it. At OpenAI, make a project for Juno with a budget, and the key in that project. A leaked key then costs at most that limit.
+2. **Never share it.** Not in a message, an email, a document, a screenshot or a screen share, and never with another tester: each person makes their own. Nobody from Juno will ever ask for it.
+3. **Paste it only into Juno's settings,** and clear your clipboard after (copy any other text).
+4. **Install Juno only from the release page,** and check the download (above). Don't run other apps or browser extensions you don't trust: anything running as you can read your files.
+5. **If you think a key leaked,** delete it at once in the console where you made it (Anthropic: Settings → API keys; OpenAI: API keys), make a new one, and look at the usage page for anything you didn't do.
+
+Coming from an earlier test build or the old Chrome extension: those kept keys less carefully. Delete the old key in the console and make a new one, remove the extension in Chrome (`chrome://extensions`), and on a Mac delete `~/Library/Application Support/org.humanbn.selectionai` if it is still there (on Windows, `%APPDATA%\org.humanbn.selectionai` and `%LOCALAPPDATA%\org.humanbn.selectionai`). Juno deletes the old key file by itself when it starts, but a key that was ever kept less safely is best replaced.
 
 ## Use it
 
@@ -67,9 +79,9 @@ In the panel:
 
 Settings → **Selecting** → *Where the bar and the panel go* picks a part of the screen for each: click one of the nine squares. The bar sits at that part's outer edge (the bottom of the screen to start), and the panel in its corner or side (top right to start).
 
-Settings → **Appearance** has *Light or dark* (always light, always dark, or following your computer) and the colour themes, Ember (orange) to start. Without a plan, Ember is the theme, the bar and the panel keep their usual places, and two macros are in use; the rest show greyed, with a button to unlock them.
+Settings → **Appearance** has *Light or dark* (always light, always dark, or following your computer) and the colour themes, Ember (orange) to start. Without a plan, Ember is the theme, the bar and the panel keep their usual places, and two macros are in use; the rest show greyed, with a button to unlock them. Without an account, the unlock is bought once and holds on that computer (the plan then says *Plus*); after reinstalling, *Restore* brings it back.
 
-Settings opens from the gear on the bar, always in front of the panel, and goes away when you close it (or press **Esc**). Its top shows who you are (*Guest* until you sign in, with *Sign up* and *Sign in* buttons) and your plan: with Plus, the hosted answers left this month in a white badge; otherwise how many answers you got this month (and, with your own key, roughly what they cost), and who answers. The settings follow, the most used first; once you scroll down to them, a list of them appears at the side to jump between.
+Settings opens from the gear on the bar, always in front of the panel, and goes away when you close it (or press **Esc**). Its top shows who you are (*Guest* until you sign in, with a *Sign up or sign in* button) and your plan: with Plus, the hosted answers left this month in a white badge; otherwise how many answers you got this month (and, with your own key, roughly what they cost), and who answers. The settings follow, the most used first; once you scroll down to them, a list of them appears at the side to jump between.
 
 ## What to look for
 
@@ -105,4 +117,4 @@ If the app doesn't start or shows nothing, also attach its log, which holds only
   2. Remove it with **−**.
   3. Open the app and turn it on again.
 - **Uninstalling on a Mac:** quit the app and drag it to the Trash. To also remove your settings, key and chats, delete `~/Library/Application Support/com.humanbn.juno`.
-- **Uninstalling on Windows:** go to Settings → Apps → Installed apps → Juno → Uninstall.
+- **Uninstalling on Windows:** go to Settings → Apps → Installed apps → Juno → Uninstall, and tick *Delete the application data* to also remove your settings, key and chats.

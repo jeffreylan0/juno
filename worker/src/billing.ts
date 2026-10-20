@@ -263,15 +263,14 @@ export function donePage(request: Request): Response {
   return page(title, `${line} You can close this tab.`);
 }
 
-/** A page of fixed text (`more`: markup the caller built from checked values only). */
-export function page(title: string, line: string, more = ''): Response {
+/** A page of fixed text. */
+export function page(title: string, line: string): Response {
   const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · Juno</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fbf8f5;color:#1c1714;font:16px/1.5 system-ui,sans-serif}
 main{max-width:28rem;padding:2rem;text-align:center}h1{font-size:1.4rem;margin:0 0 .5rem}p{margin:0;color:#6b625a}
-code{display:inline-block;margin:1rem 0 .25rem;padding:.4rem .7rem;border-radius:8px;background:#f4ece3;color:#1c1714;font:600 1.05rem ui-monospace,monospace;letter-spacing:.04em;user-select:all}
-@media (prefers-color-scheme:dark){body{background:#221d1a;color:#f7f1ea}p{color:#b2a79c}code{background:#2c2622;color:#f7f1ea}}</style>
-<main><h1>${title}</h1><p>${line}</p>${more}</main></html>`;
+@media (prefers-color-scheme:dark){body{background:#221d1a;color:#f7f1ea}p{color:#b2a79c}}</style>
+<main><h1>${title}</h1><p>${line}</p></main></html>`;
   return new Response(html, {
     headers: {
       'content-type': 'text/html; charset=utf-8',

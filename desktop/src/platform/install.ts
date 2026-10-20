@@ -3,10 +3,6 @@
  * `browser` (browser.ts) in place before anything else runs, then swaps in
  * the app's ways of keeping screenshots, reaching the network and opening
  * links.
- *
- * Order matters: WXT's storage helper (@wxt-dev/storage, used by
- * lib/storage.ts) reads `globalThis.browser` when it is first imported, so
- * nothing imported here may import it in turn.
  */
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { setImageStore } from '@/lib/images';

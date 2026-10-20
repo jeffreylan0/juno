@@ -4,7 +4,6 @@
  * screenshots) going up and coming down, the newer version winning.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fakeBrowser } from '@webext-core/fake-browser';
 import type { Plan } from '@shared/payload';
 import { FakeSupabase } from '../support/fake-supabase';
 import { priceLabel, type Offer } from '@/lib/account/billing';
@@ -37,13 +36,10 @@ import {
 import { MemoryImageStore, setImageStore, storePlanImages } from '@/lib/images';
 import { DEFAULT_SETTINGS, settingsItem } from '@/lib/storage';
 
-// The app's own Google client, when a test sets one (lib/account/config.ts).
-const google = vi.hoisted(() => ({ clientId: '' }));
+// The app's own Google client (lib/account/config.ts).
 vi.mock('@/lib/account/config', async (real) => ({
   ...(await real<typeof import('@/lib/account/config')>()),
-  get GOOGLE_CLIENT_ID() {
-    return google.clientId;
-  },
+  GOOGLE_CLIENT_ID: 'desktop.apps.googleusercontent.com',
 }));
 
 const realFetch = globalThis.fetch;
@@ -53,8 +49,6 @@ let sync: ChatSync | null = null;
 const gone: string[] = [];
 
 beforeEach(() => {
-  fakeBrowser.reset();
-  google.clientId = '';
   store = new MemoryImageStore();
   setImageStore(store);
   fake = new FakeSupabase();
@@ -116,33 +110,7 @@ describe('signing in', () => {
     expect((await sessionItem.getValue())?.accessToken).toBe(s.accessToken);
   });
 
-  it('signs in with Google in the browser (PKCE), back on the app’s link', async () => {
-    const redirect = 'com.humanbn.juno://auth/callback';
-    const identity = {
-      getRedirectURL: () => redirect,
-      launchWebAuthFlow: vi.fn(async ({ url, interactive }: { url: string; interactive: boolean }) => {
-        const u = new URL(url);
-        expect(interactive).toBe(true);
-        expect(`${u.origin}${u.pathname}`).toBe(`${fake.url}/auth/v1/authorize`);
-        expect(u.searchParams.get('provider')).toBe('google');
-        expect(u.searchParams.get('redirect_to')).toBe(redirect);
-        expect(u.searchParams.get('code_challenge_method')).toBe('s256');
-        fake.pkce.set('code-1', { challenge: u.searchParams.get('code_challenge')!, email: 'g@example.com' });
-        return `${redirect}?code=code-1`;
-      }),
-    };
-    (fakeBrowser as unknown as { identity: typeof identity }).identity = identity;
-    const s = await signInWithGoogle();
-    expect(s.user.email).toBe('g@example.com');
-    expect(identity.launchWebAuthFlow).toHaveBeenCalledOnce();
-
-    // Closing Google's window is not an error worth more than a sentence.
-    identity.launchWebAuthFlow.mockRejectedValueOnce(new Error('The user did not approve access.'));
-    await expect(signInWithGoogle()).rejects.toMatchObject({ code: 'cancelled' });
-  });
-
-  it('signs in with Google on its own page when the app has its own client, back to this computer', async () => {
-    google.clientId = 'desktop.apps.googleusercontent.com';
+  it('signs in with Google on its own page, with the app’s own client, back to this computer', async () => {
     const back = 'http://127.0.0.1:50123';
     let sent: URLSearchParams | null = null;
     let answer = (q: URLSearchParams) => `${back}/?state=${q.get('state')}&code=g-code`;
@@ -154,7 +122,7 @@ describe('signing in', () => {
         return answer(u.searchParams);
       }),
     };
-    (fakeBrowser as unknown as { identity: typeof identity }).identity = identity;
+    Object.assign(browser, { identity });
     // The Worker (worker/src/google.ts): the code and the PKCE verifier, for Google's ID token.
     const worker = vi.fn(async (body: { code: string; verifier: string; redirect_uri: string }) => {
       const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body.verifier)));
@@ -187,6 +155,10 @@ describe('signing in', () => {
     answer = () => `${back}/?state=${sent!.get('state')}&error=access_denied`;
     await expect(signInWithGoogle()).rejects.toMatchObject({ code: 'server' });
     expect(worker).toHaveBeenCalledOnce();
+
+    // Closing the browser's tab is not an error worth more than a sentence.
+    identity.launchLoopbackFlow.mockRejectedValueOnce(new Error('Sign-in timed out'));
+    await expect(signInWithGoogle()).rejects.toMatchObject({ code: 'cancelled' });
   });
 
   it('refuses an address that is not one before asking the server', async () => {

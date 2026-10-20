@@ -2,11 +2,11 @@
  * Signing in, staying signed in, and signing out, against Supabase Auth's
  * REST API directly (no SDK: a few calls, and nothing to bundle).
  *
- *  - Google, in the student's browser (platform/browser.ts). With the app's
- *    own Google client (GOOGLE_CLIENT_ID), the app runs Google's sign-in
- *    itself: back to a one-time listener on this computer, the Worker trades
- *    the code for Google's ID token, and Supabase signs in with that. Without
- *    it, Supabase runs it and the answer comes back through the app's link.
+ *  - Google, in the student's browser (platform/browser.ts), with the app's
+ *    own Google client (GOOGLE_CLIENT_ID): back to a one-time listener on
+ *    this computer, the Worker trades the code for Google's ID token, and
+ *    Supabase signs in with that. A build without the client offers email
+ *    codes only.
  *  - Email: a one-time code (6–10 digits) sent by Supabase, typed back here.
  *
  * The session (access and refresh tokens) is kept like the API keys, in the
@@ -18,8 +18,7 @@
  * the core and an open settings window refreshing together do not sign the
  * student out.
  */
-import { storage } from '@wxt-dev/storage';
-import { GATEWAY_URL } from '../storage';
+import { defineItem, GATEWAY_URL } from '../storage';
 import { ACCOUNTS, GOOGLE_CLIENT_ID, SUPABASE_KEY, SUPABASE_URL } from './config';
 
 export interface AccountUser {
@@ -71,8 +70,8 @@ export interface Billing {
   cancelAtPeriodEnd: boolean;
 }
 
-export const sessionItem = storage.defineItem<AccountSession | null>('local:account', { fallback: null });
-export const entitlementItem = storage.defineItem<Entitlement | null>('local:entitlement', { fallback: null });
+export const sessionItem = defineItem<AccountSession | null>('account', null);
+export const entitlementItem = defineItem<Entitlement | null>('entitlement', null);
 
 /** How the cloud copy of the chats is doing (account/sync.ts writes it). */
 export type SyncStatus =
@@ -81,7 +80,7 @@ export type SyncStatus =
   | { state: 'syncing' }
   | { state: 'ok'; at: number }
   | { state: 'error'; message: string; at: number };
-export const syncStatusItem = storage.defineItem<SyncStatus>('local:syncStatus', { fallback: { state: 'off' } });
+export const syncStatusItem = defineItem<SyncStatus>('syncStatus', { state: 'off' });
 
 export type AccountErrorCode = 'config' | 'network' | 'rate-limit' | 'bad-code' | 'bad-email' | 'cancelled' | 'signed-out' | 'server';
 
@@ -171,9 +170,13 @@ const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padSt
 
 const unfinished = () => new AccountError("Google sign-in didn't finish. Try again.", 'server');
 
+/** Whether this build signs in with Google: only with its own client. */
+export const GOOGLE = ACCOUNTS && !!GOOGLE_CLIENT_ID;
+
 export async function signInWithGoogle(): Promise<AccountSession> {
   need();
-  return await keep(toSession(GOOGLE_CLIENT_ID ? await googleItself() : await googleBySupabase()));
+  if (!GOOGLE) throw new AccountError("Google sign-in isn't set up in this build. Use your email instead.", 'server');
+  return await keep(toSession(await googleItself()));
 }
 
 /** The browser's part; closing it, or waiting too long, is no more than a sentence. */
@@ -188,7 +191,7 @@ async function inBrowser(flow: () => Promise<string>): Promise<URLSearchParams> 
   const params = new URLSearchParams(returned.search);
   for (const [k, v] of new URLSearchParams(returned.hash.slice(1))) if (!params.has(k)) params.set(k, v);
   // What came back is not shown: a web page can send the browser to the
-  // app's link, or to the listener, while a sign-in waits, with any text.
+  // listener, while a sign-in waits, with any text.
   if (params.get('error')) console.warn('[selection-ai] Google sign-in failed:', params.get('error'));
   return params;
 }
@@ -235,23 +238,9 @@ async function googleItself(): Promise<Record<string, unknown>> {
   return await auth('token?grant_type=id_token', { provider: 'google', id_token: got.id_token, nonce });
 }
 
-/** Supabase's sign-in page, back through the app's link (on Supabase's redirect allow-list). */
-async function googleBySupabase(): Promise<Record<string, unknown>> {
-  const verifier = random();
-  const url = `${SUPABASE_URL}/auth/v1/authorize?${new URLSearchParams({
-    provider: 'google',
-    redirect_to: browser.identity.getRedirectURL(),
-    code_challenge: b64url(await sha256(verifier)),
-    code_challenge_method: 's256',
-  })}`;
-  const code = (await inBrowser(() => browser.identity.launchWebAuthFlow({ url, interactive: true }))).get('code');
-  if (!code) throw unfinished();
-  return await auth('token?grant_type=pkce', { auth_code: code, code_verifier: verifier });
-}
-
 // ── Email code ───────────────────────────────────────────────────────────
 
-export const isEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+const isEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 
 /** Emails a sign-in code; makes the account if there is none. */
 export async function sendEmailCode(email: string): Promise<void> {

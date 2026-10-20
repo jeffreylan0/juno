@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "net",
+  "description": "Fetch, for the two pages that reach the network: the core (hosted answers, a local model on this computer, a .local name or an address the student gave) and settings (accounts on Supabase, the Worker, a model list). API keys never go this way: the core's vault sends them (vault.rs).",
+  "windows": ["core", "settings"],
+  "permissions": [
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://*" },
+        { "url": "http://localhost:*" },
+        { "url": "http://127.0.0.1:*" },
+        { "url": "http://*.local:*" }
+      ]
+    }
+  ]
+}

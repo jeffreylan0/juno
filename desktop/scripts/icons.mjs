@@ -11,7 +11,7 @@
  *
  * Rendered with Playwright's Chromium, so the PNGs match the SVG exactly.
  */
-import { chromium } from '@playwright/test';
+import { chromium } from 'playwright-core';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

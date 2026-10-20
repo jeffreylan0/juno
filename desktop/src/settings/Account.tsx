@@ -13,6 +13,7 @@ import { offers, openPortal, priceLabel, startCheckout, type Offer } from '@/lib
 import { ACCOUNTS } from '@/lib/account/config';
 import {
   AccountError,
+  GOOGLE,
   refreshEntitlement,
   sendEmailCode,
   signInWithGoogle,
@@ -47,6 +48,7 @@ export function AccountSection({ account, settings, save }: { account: AccountSt
   return (
     <section id="account-settings" data-testid="section-account">
       <h2>Account</h2>
+      <p className="section-sub">Your cloud storage, and deleting your account.</p>
       <AccountSettings account={account} settings={settings} save={save} />
     </section>
   );
@@ -91,14 +93,20 @@ export function SignIn({ onCancel }: { onCancel?: () => void } = {}) {
   };
 
   return (
-    <div className="field" data-testid="sign-in">
-      <p className="help">Optional: for hosted answers and cloud sync.</p>
+    <div className="sign-in" data-testid="sign-in">
       {!sentTo ? (
         <>
-          <button type="button" className="secondary" disabled={!!busy} onClick={google} data-testid="google-sign-in">
-            {busy === 'google' ? 'Waiting for Google…' : 'Continue with Google'}
-          </button>
-          <form className="key-row" onSubmit={onSend}>
+          {GOOGLE && (
+            <>
+              <button type="button" className="secondary" disabled={!!busy} onClick={google} data-testid="google-sign-in">
+                {busy === 'google' ? 'Waiting for Google…' : 'Continue with Google'}
+              </button>
+              <span className="or" aria-hidden="true">
+                or
+              </span>
+            </>
+          )}
+          <form onSubmit={onSend}>
             <input
               type="email"
               autoComplete="email"
@@ -109,7 +117,7 @@ export function SignIn({ onCancel }: { onCancel?: () => void } = {}) {
               onChange={(e) => setEmail(e.target.value)}
             />
             <button type="submit" className="secondary" disabled={!email.trim() || !!busy} data-testid="send-code">
-              {busy === 'send' ? 'Sending…' : 'Email me a code'}
+              {busy === 'send' ? 'Sending…' : 'Send code'}
             </button>
           </form>
         </>
@@ -118,7 +126,7 @@ export function SignIn({ onCancel }: { onCancel?: () => void } = {}) {
           <p className="help" data-testid="code-sent">
             We sent a code to <b>{sentTo}</b>. It can take a minute.
           </p>
-          <form className="key-row" onSubmit={onVerify}>
+          <form onSubmit={onVerify}>
             <input
               inputMode="numeric"
               autoComplete="one-time-code"
@@ -155,11 +163,6 @@ export function SignIn({ onCancel }: { onCancel?: () => void } = {}) {
           {error}
         </p>
       )}
-      {onCancel && !busy && (
-        <button type="button" className="link" onClick={onCancel}>
-          Not now
-        </button>
-      )}
       <small className="help">
         By signing in, you agree to the{' '}
         <a className="link" href={BRAND.terms} target="_blank" rel="noopener noreferrer">
@@ -171,6 +174,11 @@ export function SignIn({ onCancel }: { onCancel?: () => void } = {}) {
         </a>
         .
       </small>
+      {onCancel && !busy && (
+        <button type="button" className="link" onClick={onCancel}>
+          Not now
+        </button>
+      )}
     </div>
   );
 }

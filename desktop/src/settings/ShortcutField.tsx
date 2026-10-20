@@ -1,7 +1,6 @@
 /**
- * Settings → Selecting → Keyboard shortcut, in the app. The shortcut works in
- * every app; if another app already holds it, the system refuses it and this
- * says so (the menu bar icon still works).
+ * Settings → Selecting → Keyboard shortcut. If another app already holds
+ * it, the system refuses it and this says so (the menu bar icon still works).
  */
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
@@ -27,12 +26,10 @@ export function ShortcutField() {
           Start selecting: <kbd>{keys || '…'}</kbd>
         </span>
       </span>
-      {status?.error ? (
+      {status?.error && (
         <small className="help bad" data-testid="shortcut-taken">
           Another app is using {keys}. Click {BRAND.iconName} instead, or quit that app and restart {BRAND.name}.
         </small>
-      ) : (
-        <small className="help">Works in every app.</small>
       )}
     </div>
   );

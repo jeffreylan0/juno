@@ -1,6 +1,7 @@
 # Hosted answers and billing (see src/index.ts). Secrets are set with
 # `wrangler secret put`, never committed: SUPABASE_URL, SUPABASE_SECRET_KEY,
-# ANTHROPIC_API_KEY, OPENAI_API_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET.
+# ANTHROPIC_API_KEY, OPENAI_API_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
+# GOOGLE_CLIENT_SECRET, UNLOCK_SIGNING_KEY.
 name = "juno"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
@@ -19,7 +20,8 @@ STRIPE_PRICES = "plus_semester:120,plus_year:365"
 # "on" once Stripe Tax is set up in the Stripe dashboard.
 STRIPE_TAX = ""
 # The one-time unlock for students without an account (src/unlock.ts): the
-# lookup key of a one-time Stripe price. Empty: not on offer.
+# lookup key of a one-time Stripe price. Its licenses are signed with the
+# UNLOCK_SIGNING_KEY secret (scripts/unlock-key.mjs). Either missing: not on offer.
 UNLOCK_PRICE = "unlock"
 # Google sign-in's desktop client id (public; supabase/README.md, step 3).
 # Its secret: npx wrangler secret put GOOGLE_CLIENT_SECRET.

@@ -6,12 +6,14 @@
  *
  *  1. Answers: who answers (your API key, hosted or a local model), and
  *     only what that choice needs below it.
- *  2. Asking: the macros, the default prompt, and whether a selection is
- *     asked about straight away.
- *  3. Appearance: light or dark, and the colour theme.
- *  4. Selecting: the shortcut, adjusting a box, where the bar and panel go.
- *  5. Chats & privacy: how many chats are kept, deleting them, what is sent.
- *  6. Account (signed in: cloud storage, deleting it), Permissions (macOS),
+ *  2. Asking: whether a selection is asked about straight away, and the
+ *     default prompt.
+ *  3. Macros: the buttons above the question box.
+ *  4. Appearance: light or dark, and the colour theme.
+ *  5. Selecting: the shortcut, adjusting a box, where the bar and panel go,
+ *     notices.
+ *  6. Chats & privacy: how many chats are kept, deleting them, what is sent.
+ *  7. Account (signed in: cloud storage, deleting it), Permissions (macOS),
  *     and Juno (version, updates, login, the privacy policy and terms, Quit).
  *
  * Text is kept short: a label, and a line of help only where the choice
@@ -24,6 +26,7 @@ import { DEFAULT_MACROS, DEFAULT_PROMPT } from '@shared/prompts';
 import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import { listChats } from '@/lib/chats';
+import { UNLOCK } from '@/lib/account/unlock';
 import { FREE_MACROS, withinPlan } from '@/lib/extras';
 import { MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
 import type { KeyModel } from '@/lib/providers/byok';
@@ -48,6 +51,7 @@ import { MAC } from '../os';
 import { AppSection } from './AppSection';
 import { choiceOf, keyPatch, patchFor, type Choice } from './choices';
 import { Dashboard } from './Dashboard';
+import { Intro } from './Intro';
 import { KeyField } from './KeyField';
 import { LocalServer } from './LocalServer';
 import { Permissions } from './Permissions';
@@ -80,6 +84,7 @@ const SEND: { id: SendBehavior; label: string; help?: string }[] = [
 const SECTIONS = (signedIn: boolean) => [
   { id: 'answers', title: 'Answers' },
   { id: 'asking', title: 'Asking' },
+  { id: 'macros', title: 'Macros' },
   { id: 'appearance', title: 'Appearance' },
   { id: 'selecting', title: 'Selecting' },
   { id: 'privacy', title: 'Chats & privacy' },
@@ -140,6 +145,7 @@ export function Options() {
   }, []);
 
   if (!settings || !keys) return <main className="options" />;
+  if (!settings.introSeen) return <Intro account={account} onDone={() => void save({ introSeen: true })} />;
   if (!settings.setupDone) return <Setup settings={settings} keys={keys} account={account} save={save} />;
 
   const sections = SECTIONS(!!account.user);
@@ -172,8 +178,9 @@ export function Options() {
               onKeySaved={() => setSaved(Date.now())}
               rememberModels={rememberModels}
             />
-            <AskingSection settings={settings} save={save} locked={extras ? null : unlockLabel(account)} />
-            <Section id="appearance" title="Appearance">
+            <AskingSection settings={settings} save={save} />
+            <MacrosSection settings={settings} save={save} locked={extras ? null : unlockLabel(account)} />
+            <Section id="appearance" title="Appearance" sub="Light or dark, and the colours of the bar, the panel and settings.">
               <div className="field">
                 <span className="field-label">Light or dark</span>
                 <div className="segments" role="radiogroup" aria-label="Light or dark" data-testid="scheme">
@@ -198,11 +205,11 @@ export function Options() {
             <PrivacySection settings={settings} save={save} account={account} />
             <AccountSection account={account} settings={settings} save={save} />
             {MAC && (
-              <Section id="permissions" title="Permissions">
+              <Section id="permissions" title="Permissions" sub="What macOS lets Juno do, and the one thing it asks for.">
                 <Permissions />
               </Section>
             )}
-            <Section id="app" title={BRAND.name}>
+            <Section id="app" title={BRAND.name} sub="The version, updates, opening at login, and quitting.">
               <AppSection settings={settings} save={save} />
             </Section>
           </div>
@@ -255,8 +262,8 @@ function SideMenu({ sections }: { sections: { id: string; title: string }[] }) {
   );
 }
 
-/** What a locked extra's button says: a guest can unlock them, a signed-in account gets Plus (lib/extras.ts). */
-const unlockLabel = (account: AccountState) => (account.user ? 'Get Plus' : 'Unlock');
+/** What a locked extra's button says: a guest can unlock this computer (where the build sells it), a signed-in account gets Plus (lib/extras.ts). */
+const unlockLabel = (account: AccountState) => (account.user || !UNLOCK ? 'Get Plus' : 'Unlock');
 
 /** A locked extra's way to it: a white button to the plan, at the top. */
 function ToPlan({ label, what }: { label: string; what: string }) {
@@ -270,10 +277,12 @@ function ToPlan({ label, what }: { label: string; what: string }) {
   );
 }
 
-function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+/** A section of settings: its title, a sentence on what it is for, and its fields. */
+function Section({ id, title, sub, children }: { id: string; title: string; sub: string; children: ReactNode }) {
   return (
     <section id={id} data-testid={`section-${id}`}>
       <h2>{title}</h2>
+      <p className="section-sub">{sub}</p>
       {children}
     </section>
   );
@@ -337,7 +346,7 @@ function AnswersSection({
   const ent = account.entitlement;
 
   return (
-    <Section id="answers" title="Answers">
+    <Section id="answers" title="Answers" sub="Who answers your questions: your own API key, your plan, or a model on this computer.">
       <div className="cards" role="radiogroup" aria-label="Who answers">
         {offered.map((c) => (
           <label key={c.id} className={`card${choice === c.id ? ' on' : ''}`} data-testid={`answer-${c.id}`}>
@@ -434,13 +443,39 @@ function KeyAndModel({
 
 // ── 2. Asking ────────────────────────────────────────────────────────────
 
-function AskingSection({ settings, save, locked }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void>; locked: string | null }) {
-  const [macros, setMacros] = useState<Macro[]>(settings.macros);
+function AskingSection({ settings, save }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void> }) {
   const [prompt, setPrompt] = useState(settings.defaultPrompt);
-  // Blank rows are drafts nobody finished; they are kept on screen, not saved.
-  const saveMacros = useDebounced((ms: Macro[]) => void save({ macros: sanitizeMacros(ms.filter((m) => m.name.trim() && m.prompt.trim())) }));
   const savePrompt = useDebounced((v: string) => void save({ defaultPrompt: v.trim() ? v : DEFAULT_PROMPT }));
+  return (
+    <Section id="asking" title="Asking" sub="What happens once a selection is made.">
+      <div className="field">
+        <span className="field-label">After you select</span>
+        <Radios name="send" value={settings.sendBehavior} options={SEND} onChange={(v) => void save({ sendBehavior: v })} />
+      </div>
 
+      <label className="field">
+        <span className="field-label">Default prompt</span>
+        <small className="help">Fills the question box after each selection.</small>
+        <input
+          value={prompt}
+          maxLength={120}
+          data-testid="default-prompt"
+          placeholder="Empty"
+          onChange={(e) => {
+            setPrompt(e.target.value);
+            savePrompt(e.target.value);
+          }}
+        />
+      </label>
+    </Section>
+  );
+}
+
+/** The macros: each a card with its button name, its content and ✕; past the free ones, greyed while the extras are locked. */
+function MacrosSection({ settings, save, locked }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void>; locked: string | null }) {
+  const [macros, setMacros] = useState<Macro[]>(settings.macros);
+  // Blank cards are drafts nobody finished; they are kept on screen, not saved.
+  const saveMacros = useDebounced((ms: Macro[]) => void save({ macros: sanitizeMacros(ms.filter((m) => m.name.trim() && m.prompt.trim())) }));
   const update = (next: Macro[]) => {
     setMacros(next);
     saveMacros(next);
@@ -448,19 +483,15 @@ function AskingSection({ settings, save, locked }: { settings: Settings; save: (
   const changed = JSON.stringify(macros.map(({ name, prompt: p }) => ({ name, p }))) !== JSON.stringify(DEFAULT_MACROS.map(({ name, prompt: p }) => ({ name, p })));
 
   return (
-    <Section id="asking" title="Asking">
+    <Section id="macros" title="Macros" sub="Buttons above the question box, each asking its own saved question in one click.">
       <div className="field" data-testid="asking">
-        <div className="head">
-          <span className="field-label">Macros</span>
-          {changed && (
-            <button type="button" className="link" onClick={() => update(DEFAULT_MACROS.map((m) => ({ ...m })))}>
-              Reset
-            </button>
-          )}
-        </div>
+        {changed && (
+          <button type="button" className="link" onClick={() => update(DEFAULT_MACROS.map((m) => ({ ...m })))}>
+            Reset to the defaults
+          </button>
+        )}
         <ol className="macro-list">
           {macros.map((m, i) => (
-            // Past the free ones, kept but greyed while the extras are locked.
             <li key={m.id} className={`macro-row${locked && i >= FREE_MACROS ? ' locked' : ''}`} inert={!!locked && i >= FREE_MACROS} data-testid="macro-row">
               <input
                 className="macro-name"
@@ -474,8 +505,8 @@ function AskingSection({ settings, save, locked }: { settings: Settings; save: (
                 className="macro-prompt"
                 rows={2}
                 value={m.prompt}
-                placeholder="What it asks"
-                aria-label="Prompt"
+                placeholder="Content"
+                aria-label="Content"
                 onChange={(e) => update(macros.map((x, j) => (j === i ? { ...x, prompt: e.target.value } : x)))}
               />
               <button type="button" className="tool" title="Remove" aria-label={`Remove ${m.name || 'macro'}`} onClick={() => update(macros.filter((_, j) => j !== i))}>
@@ -495,26 +526,6 @@ function AskingSection({ settings, save, locked }: { settings: Settings; save: (
         </button>
         {locked && <ToPlan label={locked} what={`More than ${FREE_MACROS} macros`} />}
       </div>
-
-      <label className="field">
-        <span className="field-label">Default prompt</span>
-        <input
-          value={prompt}
-          maxLength={120}
-          data-testid="default-prompt"
-          placeholder="Empty"
-          onChange={(e) => {
-            setPrompt(e.target.value);
-            savePrompt(e.target.value);
-          }}
-        />
-        <small className="help">Fills the question box after each selection.</small>
-      </label>
-
-      <div className="field">
-        <span className="field-label">After you select</span>
-        <Radios name="send" value={settings.sendBehavior} options={SEND} onChange={(v) => void save({ sendBehavior: v })} />
-      </div>
     </Section>
   );
 }
@@ -524,7 +535,7 @@ function AskingSection({ settings, save, locked }: { settings: Settings; save: (
 function SelectingSection({ settings, save, locked }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void>; locked: string | null }) {
   const place = withinPlan(settings, !locked);
   return (
-    <Section id="selecting" title="Selecting">
+    <Section id="selecting" title="Selecting" sub="How a selection starts and ends, and where the bar and the panel appear.">
       <ShortcutField />
 
       <div className="field">
@@ -594,7 +605,7 @@ function PrivacySection({
   const cloud = !!account.user && !!account.entitlement?.cloud && settings.cloudSync;
 
   return (
-    <Section id="privacy" title="Chats & privacy">
+    <Section id="privacy" title="Chats & privacy" sub="What Juno keeps on this computer, and what it sends.">
       <ChatsField limit={settings.chatLimit} cloud={cloud} save={save} />
 
       <div className="field" data-testid="what-is-sent">

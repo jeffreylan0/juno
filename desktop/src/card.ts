@@ -37,10 +37,14 @@ export function cardWindow(opts: CardOptions): void {
   // An attribute, not a class: the pages have classes of their own (settings' `.card`).
   root.dataset.card = 'in';
 
-  // The top bar, wherever it is not a control, moves the window.
+  // The top bar, wherever it is not a control, moves the window. No text
+  // selection starts with it: the system takes the drag, so the page never
+  // hears the button come up, and a selection begun here would keep
+  // scrolling the page while the window moves.
   document.addEventListener('mousedown', (e) => {
     const target = e.target as Element | null;
     if (e.button !== 0 || !target?.closest(opts.drag) || target.closest(CONTROLS)) return;
+    e.preventDefault();
     void getCurrentWindow().startDragging().catch(() => {});
   });
 

@@ -5,6 +5,8 @@ interface ImportMetaEnv {
   readonly WXT_SUPABASE_KEY?: string;
   /** Google sign-in in the app's own name: a desktop OAuth client's ID. */
   readonly WXT_GOOGLE_CLIENT_ID?: string;
+  /** The unlock's public key (worker/scripts/unlock-key.mjs). */
+  readonly WXT_UNLOCK_KEY?: string;
   /** Hosted answers: the Worker's address. */
   readonly WXT_GATEWAY_URL?: string;
 }

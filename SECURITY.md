@@ -18,12 +18,12 @@ Please report it privately through GitHub: the repository's **Security** tab →
 The design assumes these attackers:
 
 - **Whatever is on screen.** A web page, a document or a window title may plant instructions for the model in what is selected or in the title sent with it (prompt injection).
-- **Other software or users on the computer.** This includes other users' accounts and apps that try to claim the app's link (`com.humanbn.juno://`).
+- **Other software or users on the computer.** This includes other users' accounts, and web pages that try to reach the app through the browser.
 - **Someone on the network.**
 - **Another account, or an abusive one.** For example, an account that signs up free and scripts requests.
 - **A compromised dependency or build step.** For example, a package or GitHub Action that turns malicious.
 
-The design doesn't defend against malware running as the student's own user account. Neither does any desktop app; the operating system is the boundary there.
+The design doesn't defend against malware running as the student's own user account: it can read what that user can read, the key file included. Neither does any desktop app; the operating system is the boundary there. What limits the harm of a key stolen that way, or leaked any other way, is the key itself: one made only for Juno, in a workspace or project with a monthly spend limit, never shared (TESTERS.md, *Keep your API key safe*; the key field says so too).
 
 ## Controls, by part
 
@@ -36,18 +36,19 @@ The design doesn't defend against malware running as the student's own user acco
   - Only the core can send with a key (`vendor_fetch`), and only to four endpoints: `POST /v1/messages` and `GET /v1/models` at `https://api.anthropic.com`, `POST /v1/chat/completions` and `GET /v1/models` at `https://api.openai.com`. The URL is parsed, and anything else (another host, port, path, method, query beyond `limit`, a login or fragment in the URL, plain HTTP) is refused. The client is HTTPS-only and follows no redirect, so no response can carry the key elsewhere. The key header is marked sensitive and never logged; errors name only how the request failed.
   - So even a page that was taken over (a crafted answer getting past the sanitizer, a malicious package) can't read a key or send it anywhere but to its own company, asking a question.
   - On disk: `secrets.json`, mode 0600 from the moment it is written; on Windows also encrypted for the user with DPAPI, so a copy of the file is useless on another computer or account.
+  - No stray copies: once Juno has its own store, the secrets file an earlier build (Selection AI) left behind is deleted at start (`store.rs`, `adopt_earlier_store`); the earliest Windows builds kept it unencrypted in the roaming profile.
   - Tested: Rust tests pin the allowlist and the file; an end-to-end test saves a key, then tries from every window to read it (by name, with everything, straight from the native core), write it, remove it, and send it from the wrong window or to another address, and checks that each attempt fails.
 - **Commands check their caller:** only the hidden core window can take a screenshot (only while the bar is up), bring up the bar, open the panel or send with a key; only the overlay steers its own pointer handling, and only the panel resizes itself. Only Settings can put a key in or remove one, start Google's sign-in listener, or change "Open at login". The overlay can't read the account session: `storage_get` refuses it, and changes to it are announced without their values (any page can listen to any event), so each window reads it back through that check.
 - **Only the app's own pages, in every window:** each window refuses to navigate anywhere but the app's own pages (`wm.rs` `own_page`), so no link, whatever got it into an answer, can turn the panel into another site asking for a key. SVG and MathML links lose their `href` when an answer is sanitized, and a click on any other link opens the student's browser.
-- **Network:** the HTTP allowlist covers `https://*`, plus plain HTTP to `localhost`, `127.0.0.1` and `*.local`. Nothing else is reachable, not even the cloud metadata address.
+- **Network:** only the core and settings may fetch at all (`capabilities/net.json`); the bar and the panel, which show what others wrote, have no network. The HTTP allowlist covers `https://*`, plus plain HTTP to `localhost`, `127.0.0.1` and `*.local`. Nothing else is reachable, not even the cloud metadata address. API keys never go this way: only the vault sends them.
 - **CSP:** `script-src 'self'`, no objects or frames, and no remote images, media or fonts.
 - **Code:** no remote code, no `eval`; React's and DOMPurify's HTML-string paths are removed at build time (`desktop/harden-libs.ts`).
 - **Storage:** secrets live in a file only the user's account can read (and, on Windows, encrypted for it), in local (never roaming) app data.
 - **Size limits:** storage writes, screenshots and freeform outlines all have size caps.
 - **Windows start-at-login:** the Run entry's path is quoted, so Windows can't run a different program planted in the install folder's parent.
-- **Deep links:** they are accepted only while a sign-in is pending, and show only fixed text.
+- **No link scheme:** the app registers none, so no web page or other app can hand it a link.
 - **Sign-in:** Google sign-in uses PKCE. Sign-out revokes the session on the server.
-- **Google's return (src-tauri/src/oauth.rs, RFC 8252):** with the app's own Google client, Google sends the browser back to a listener the app opens for one sign-in on `127.0.0.1` (never other addresses on the network), on a port the system picks, for ten minutes at most. It takes only `GET /?code=…` or `/?error=…`, answers with a fixed page under `default-src 'none'`, and hands the query to Settings with its port, so an older sign-in's listener isn't mistaken for this one. Settings checks the `state` it sent, and the code is useless without the PKCE verifier it kept. The ID token Google issues carries the hash of a nonce only Settings knows, and Supabase checks it. Google's error text is never shown.
+- **Google's return (src-tauri/src/oauth.rs, RFC 8252):** Google sends the browser back to a listener the app opens for one sign-in on `127.0.0.1` (never other addresses on the network), on a port the system picks, for ten minutes at most. It takes only `GET /?code=…` or `/?error=…`, answers with a fixed page under `default-src 'none'`, and hands the query to Settings with its port, so an older sign-in's listener isn't mistaken for this one. Settings checks the `state` it sent, and the code is useless without the PKCE verifier it kept. The ID token Google issues carries the hash of a nonce only Settings knows, and Supabase checks it. Google's error text is never shown.
 - **Cloud copies:** chats already on a computer are never copied into another account that signs in there.
 - **Test hook:** the test-only HTTP hook isn't compiled into releases, and it refuses any request that comes from a browser.
 - **Screen capture on Windows:** the app's windows are left out of captures (display affinity) only while the app takes its own screenshot, so recordings, screen sharing and remote desktops show the app like any other window.
@@ -74,7 +75,7 @@ The design doesn't defend against malware running as the student's own user acco
   - Subscriptions and passes are read back fresh from Stripe, so refunds and chargebacks end a pass.
   - Events for deleted accounts are acknowledged instead of retried.
 - **Google sign-in (`/auth/google`):** the Worker holds the Google client secret (a desktop app can't keep one), takes only a code meant for `http://127.0.0.1:<port>` with a well-formed PKCE verifier, and returns only the ID token: no access or refresh token for the student's Google account leaves Google. A stolen code is useless without the verifier.
-- **The unlock (`/unlock/*`, no session, `worker/src/unlock.ts`):** its Checkout pages are rate-limited per address. A code is 60 random bits; one typed in is checked against its exact form before it goes into a Stripe search, so it can't widen the query. Only a paid checkout marked as an unlock gives its code, and a refunded or disputed payment restores nothing. The webhook ignores unlock checkouts, so none gives an account a plan.
+- **The unlock (`/unlock/*`, no session, `worker/src/unlock.ts`):** it holds on one computer, with nothing to pass around. The app sends its computer's id (a salted SHA-256 of the system's machine id, `device.rs`: the machine id itself never leaves); the Worker puts it on the payment and, once Stripe says it is paid, signs a license for that id alone with an ECDSA P-256 key (`UNLOCK_SIGNING_KEY`, a Worker secret). The app accepts a license only if the public key built into it (`WXT_UNLOCK_KEY`) verifies it and its id is this computer's, so a license copied to another computer, or edited, opens nothing. Checkout pages are rate-limited per address; the id is checked against its exact form before it goes into a Stripe search, so it can't widen the query; a claim for another computer's checkout gets nothing; a refunded or disputed payment restores nothing. The webhook ignores unlock checkouts, so none gives an account a plan.
 - **Responses:** JSON is sent `nosniff`, and the HTML pages have a strict CSP. Logs carry no prompt text.
 
 **Prompt caching**
@@ -107,6 +108,7 @@ Anthropic and OpenAI keep a short-lived cache of a prompt's beginning, so a foll
   - Dependabot covers actions, npm and Cargo.
   - pnpm installs only releases at least a day old and runs no dependency install scripts.
   - `pnpm audit` and `cargo audit` were clean on 2026-10-13.
+  - Each dependency earns its place (2026-10-20 review, below): what the app no longer needed was removed.
 
 ## Audit, 2026-10-13
 
@@ -149,17 +151,30 @@ Five parts were reviewed separately against the standards above, and every findi
 | Build | The desktop build skipped the library hardening | Info | Added |
 | Build | The Firefox sources archive left out the lockfile and `shared/`, so reviewers couldn't rebuild | Low | The whole workspace minus build output; a rebuild from it is byte-identical |
 
+## Review, 2026-10-20
+
+After a tester lost money to someone using their API key, every way a key could leave a student's computer was traced. The app sends a key nowhere but its own company (the vault, above), and no page can read one; no path in the current code leaks it. The likely paths are outside the code: a key written into a document or message (a project document once carried a live key), a key typed into the retired browser extension or an earlier build, or other software running as the student. What changed:
+
+| Part | Finding | Severity | Fixed by |
+| --- | --- | --- | --- |
+| Process | A live API key written into a project document; testers told they might be "given a key" | High | Revoke it; each tester makes their own key with a spend limit (TESTERS.md, *Keep your API key safe*; the key field says so) |
+| App | An earlier build's secrets file stayed behind once Juno had its own (unencrypted on the earliest Windows builds) | Medium | Deleted at start |
+| App | The bar and the panel, which show text others wrote, could fetch any `https` address | Low | Network only for the core and settings |
+| App | A link scheme was registered for a second Google sign-in path through Supabase's page | Low | Path and scheme removed; Google only through the app's own client |
+| App | The unlock was a code anyone could pass on | Medium (revenue) | A license signed for one computer |
+| Build | 12 npm packages and 26 crates the app didn't need: the extension-era storage helper and its test fake, `dotenv`, `@types/katex`, `@playwright/test` (for `playwright-core`), `tauri-plugin-deep-link`, the HTTP plugin's cookie and charset features, a second `windows` crate; and KaTeX's WOFF and TrueType fonts (0.9 MB of the app's pages) | Info | Removed |
+
 ## Known limits (not fixed yet, and why)
 
 - **Unsigned app builds:** the Mac build isn't notarized and the Windows build isn't signed, so testers see warnings and can't tell a genuine build from a lookalike except by its checksum or attestation. This needs an Apple Developer ID and a Windows signing certificate (see the checklist below).
 - **Updates aren't pinned to a version in their signature:** the updater checks every download against the update key, but `latest.json` itself isn't signed, so someone able to serve a different `latest.json` (GitHub, or the network if TLS failed) could point apps at an older genuine release. The updater's `requireSignedVersion` closes that once the Tauri CLI that signs the releases records the version in the signature; check that, then turn it on in `tauri.conf.json`.
-- **App secrets aren't encrypted at rest on macOS and Linux:** there the secrets file is protected by its permissions only (on Windows, DPAPI encrypts it too). Once the Mac app is signed with a Developer ID, the file's contents can move to the Keychain without prompts.
+- **App secrets aren't encrypted at rest on macOS and Linux:** there the secrets file is protected by its permissions only (on Windows, DPAPI encrypts it too, though any program running as the same user can still ask Windows to decrypt it). Once the Mac app is signed with a Developer ID, the key can move to the Keychain, where another app reading it makes macOS ask the student first; with ad hoc signing, every build would ask for the keychain password, which is why it isn't there now.
 - **Window titles go to the AI:** in the app, the title of the window under the selection goes to the AI with the selection (for example an email subject). A setting to leave it out is a product decision.
 - **Email codes are the weakest sign-in:** NIST no longer treats email as a strong second channel. Google sign-in is offered. Passkeys would be the next step.
 - **CAPTCHA isn't wired into sign-in yet.** Turn it on before the free plan includes hosted answers.
 - **Hosted answers are counted per answer, not per token.** That holds because the Worker allows only the fast model (about $0.0005 an answer); the size caps bound one answer's cost. Bigger hosted models would need metering by cost.
 - **Builds aren't reproducible:** the Rust toolchain and the runner images aren't pinned.
-- **The extras are held back by the app itself** (`desktop/src/lib/extras.ts`): every theme, the bar's and panel's places, more than two macros. The app is open source, so someone who builds it can turn them on, and someone who edits its local storage can fake an unlock. That is accepted: they cost nothing to serve. What costs money (hosted answers, cloud storage) is enforced by the Worker and the database. An unlock code is checked once, when it is entered, so refunding one doesn't relock computers already unlocked.
+- **The extras are held back by the app itself** (`desktop/src/lib/extras.ts`): every theme, the bar's and panel's places, more than two macros. The app is open source, so someone who builds it can turn them on; editing its storage can't, since an unlock is a signed license for one computer. That is accepted: they cost nothing to serve. What costs money (hosted answers, cloud storage) is enforced by the Worker and the database. A license is checked on the computer, so refunding one doesn't relock the computer it was bought on, but *Restore* gives nothing for it.
 
 ## Owner's checklist
 
@@ -218,14 +233,15 @@ Beyond strong passwords and business accounts:
   - Billing alerts on Cloudflare.
   - Supabase Pro's spend cap and usage alerts.
   - Stripe Radar on.
-- **A key for testers:** make it in its own workspace with a low limit, and revoke it when testing ends.
+- **No shared keys for testers:** each tester makes their own, in a workspace or project of its own with a low limit (TESTERS.md). A key that was ever put in a document, a message or a screenshot (a tester guide, a PDF) is revoked at once and replaced; anyone who got the file has it.
+- **The unlock's signing key:** `node worker/scripts/unlock-key.mjs` makes the pair; the private half goes only to `npx wrangler secret put UNLOCK_SIGNING_KEY` (then delete the file), the public half into the `WXT_UNLOCK_KEY` variable. If it leaks, anyone can make licenses (extras only, nothing that costs money): make a new pair, put both halves in place, and ship a build; buyers press *Restore* once.
 
 ### 4. Services: follow `supabase/README.md`, which now includes
 
 - **Supabase:**
   - Data API on, *Automatically expose new tables* off, *automatic RLS* on.
   - 8-digit codes that expire in 10 minutes, *Confirm email* and *Secure password change* on, anonymous sign-ins off.
-  - Auth rate limits, the Site URL, exact redirect URLs, SSL enforced, and no direct Postgres access.
+  - Auth rate limits, the Site URL, no redirect URLs, SSL enforced, and no direct Postgres access.
   - The Security Advisor after each migration, and backups (Pro; point-in-time recovery for production).
 - **Stripe:**
   - The restricted key with only the listed permissions, and the webhook with the listed events.
