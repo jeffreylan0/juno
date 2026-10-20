@@ -12,7 +12,7 @@
     "@selection-ai/shared": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250101.0",
+    "@cloudflare/workers-types": "^5.20261014.1",
     "typescript": "^5.7.0",
     "wrangler": "^4.149.0"
   }
