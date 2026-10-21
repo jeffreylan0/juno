@@ -6,7 +6,7 @@
  */
 import type { AskChunk, AskRequest, ModelRef, Provider, Route } from '@shared/payload';
 import { hashRequest } from '../cache';
-import { HOSTED_MODEL } from '@shared/models';
+import { ANSWER_COST, HOSTED_MODEL } from '@shared/models';
 import { modelFor } from '../router';
 import { byokDriver } from './byok';
 import { gatewayDriver } from './gateway';
@@ -34,7 +34,8 @@ export interface CallOptions {
 export function resolveModel(opts: CallOptions, route: Route, ctx: ProviderContext): ModelRef {
   if (opts.provider === 'mock') return MOCK_MODEL;
   if (opts.provider === 'local') return { vendor: 'local', model: ctx.settings.localModel };
-  if (opts.provider === 'gateway') return { vendor: opts.vendor, model: HOSTED_MODEL[opts.vendor] };
+  // Hosted answers: the plan's model picked, or the vendor's fast one.
+  if (opts.provider === 'gateway') return opts.model && Object.hasOwn(ANSWER_COST, opts.model.model) ? opts.model : { vendor: opts.vendor, model: HOSTED_MODEL[opts.vendor] };
   if (opts.model && opts.model.vendor !== 'mock' && opts.model.vendor !== 'local') return opts.model;
   return modelFor(opts.vendor, route);
 }

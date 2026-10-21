@@ -1,11 +1,10 @@
 /**
- * Account: optional. Signing in (Google, or a code sent by email) is what
- * plans hang on: hosted answers and cloud storage, bought with Stripe
+ * Account: optional. Signing up or in (a code sent by email, or Google) is
+ * what plans hang on: hosted answers and cloud storage, bought with Stripe
  * (lib/account/billing.ts) or given by hand (supabase/README.md). The top
  * of settings (Dashboard.tsx) shows who is signed in and the plan
- * (PlanDetails); further down are the account's settings: cloud storage,
- * deleting the account. Without a Supabase project in the build there is
- * no account at all.
+ * (PlanLine, PlanActions); further down, deleting the account. Without a
+ * Supabase project in the build there is no account at all.
  */
 import { useEffect, useState, type FormEvent } from 'react';
 import { BRAND } from '@/brand';
@@ -13,7 +12,6 @@ import { offers, openPortal, priceLabel, startCheckout, type Offer } from '@/lib
 import { ACCOUNTS } from '@/lib/account/config';
 import {
   AccountError,
-  GOOGLE,
   refreshEntitlement,
   sendEmailCode,
   signInWithGoogle,
@@ -21,64 +19,127 @@ import {
   type Entitlement,
   type SyncStatus,
 } from '@/lib/account/session';
-import type { Settings } from '@/lib/storage';
 import type { AccountState } from '@/ui/useAccount';
 
-type Save = (patch: Partial<Settings>) => Promise<void>;
 
-
-/** The first-run setup's account step: signing in, or who is signed in and the plan. */
+/** The first-run setup's account step: signing up or in, or who is signed in and the plan. */
 export function AccountCard({ account }: { account: AccountState }) {
   useAccountRefresh(account.user?.id);
   if (!ACCOUNTS || !account.ready) return null;
-  if (!account.user) return <SignIn />;
+  if (!account.user) return <SignUpOrIn />;
   return (
     <div className="field" data-testid="signed-in">
       <span className="help">
         Signed in as <b>{account.user.email}</b>
       </span>
-      {account.entitlement && <PlanDetails ent={account.entitlement} />}
+      {account.entitlement && (
+        <>
+          <PlanLine ent={account.entitlement} />
+          <PlanActions ent={account.entitlement} />
+        </>
+      )}
     </div>
   );
 }
 
-/** Settings → Account: cloud storage and deleting the account, once signed in. */
-export function AccountSection({ account, settings, save }: { account: AccountState; settings: Settings; save: Save }) {
+/** Settings → Account: deleting the account, once signed in (where chats are kept: Chats & privacy). */
+export function AccountSection({ account }: { account: AccountState }) {
   if (!ACCOUNTS || !account.user) return null;
   return (
     <section id="account-settings" data-testid="section-account">
       <h2>Account</h2>
-      <p className="section-sub">Your cloud storage, and deleting your account.</p>
-      <AccountSettings account={account} settings={settings} save={save} />
+      <p className="section-sub">Deleting your account, and everything in it.</p>
+      <DeleteAccount account={account} />
     </section>
   );
 }
 
+/** Seconds between codes: Supabase's own least wait between emails to one address. */
+const RESEND_S = 60;
+/** When the next code may be sent (kept while this page is open, if signing in is put away and taken up again). */
+let sendAfter = 0;
 
-/** Signing in or up: one and the same (an account is made the first time). `onCancel`: a way back. */
-export function SignIn({ onCancel }: { onCancel?: () => void } = {}) {
+/** Seconds left until the next code may be sent, ticking down; and a way to start the wait. */
+function useResendWait(): [number, (seconds: number) => void] {
+  const [until, setUntil] = useState(sendAfter);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (until <= Date.now()) return;
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [until]);
+  const start = (seconds: number) => setUntil((sendAfter = Date.now() + seconds * 1000));
+  return [Math.max(0, Math.ceil((until - now) / 1000)), start];
+}
+
+export type SignMode = 'up' | 'in';
+
+/**
+ * The way into an account: Sign up and Sign in, each opening its own form.
+ * `why`: a line under the two, until one is pressed. `onOpen`: told when a
+ * form opens or closes.
+ */
+export function SignUpOrIn({ why, onOpen }: { why?: string; onOpen?: (open: boolean) => void }) {
+  const [mode, setMode] = useState<SignMode | null>(null);
+  const open = (next: SignMode | null) => {
+    setMode(next);
+    onOpen?.(!!next);
+  };
+  if (mode) return <SignIn mode={mode} onCancel={() => open(null)} />;
+  return (
+    <>
+      <div className="sign-buttons">
+        <button type="button" className="primary" data-testid="sign-up" onClick={() => open('up')}>
+          Sign up
+        </button>
+        <button type="button" className="secondary" data-testid="sign-in" onClick={() => open('in')}>
+          Sign in
+        </button>
+      </div>
+      {why && (
+        <small className="help" data-testid="account-why">
+          {why}
+        </small>
+      )}
+    </>
+  );
+}
+
+/**
+ * Signing up or in: the email address and its code, or Google. Signing up
+ * asks for a name too (Google gives its own). `onCancel`: a way back.
+ */
+export function SignIn({ mode: start, onCancel }: { mode: SignMode; onCancel?: () => void }) {
+  const [mode, setMode] = useState(start);
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState<'google' | 'send' | 'verify' | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<{ message: string; code?: string } | null>(null);
+  const [wait, startWait] = useResendWait();
+  const up = mode === 'up';
+  const words = up ? 'Sign up' : 'Sign in';
 
   const run = async (what: NonNullable<typeof busy>, fn: () => Promise<unknown>) => {
     setBusy(what);
-    setError('');
+    setError(null);
     try {
       await fn();
     } catch (err) {
-      if ((err as AccountError).code !== 'cancelled' || what !== 'google') setError((err as Error).message);
+      const e = err as AccountError;
+      // Closing Google's page is no error worth showing.
+      if (e.code !== 'cancelled' || what !== 'google') setError({ message: e.message, code: e.code });
+      if (e.wait) startWait(e.wait);
     } finally {
       setBusy(null);
     }
   };
 
-  const google = () => void run('google', signInWithGoogle);
   const send = (to: string) => {
     void run('send', async () => {
-      await sendEmailCode(to);
+      await sendEmailCode(to, up);
+      startWait(RESEND_S);
       setSentTo(to.trim());
       setCode('');
     });
@@ -89,22 +150,25 @@ export function SignIn({ onCancel }: { onCancel?: () => void } = {}) {
   };
   const onVerify = (e: FormEvent) => {
     e.preventDefault();
-    if (sentTo) void run('verify', () => verifyEmailCode(sentTo, code));
+    if (sentTo) void run('verify', () => verifyEmailCode(sentTo, code, up ? name : undefined));
   };
+  /** A send button's words: counting down while another code can't go yet. */
+  const sendLabel = (label: string) => (busy === 'send' ? 'Sending…' : wait ? `${label} (${wait})` : label);
 
   return (
-    <div className="sign-in" data-testid="sign-in">
+    <div className="sign-in" data-testid="sign-in-form" data-mode={mode}>
       {!sentTo ? (
         <>
-          {GOOGLE && (
-            <>
-              <button type="button" className="secondary" disabled={!!busy} onClick={google} data-testid="google-sign-in">
-                {busy === 'google' ? 'Waiting for Google…' : 'Continue with Google'}
-              </button>
-              <span className="or" aria-hidden="true">
-                or
-              </span>
-            </>
+          {up && (
+            <input
+              autoComplete="name"
+              placeholder="Your name"
+              aria-label="Name"
+              maxLength={80}
+              value={name}
+              data-testid="name-input"
+              onChange={(e) => setName(e.target.value)}
+            />
           )}
           <form onSubmit={onSend}>
             <input
@@ -116,10 +180,21 @@ export function SignIn({ onCancel }: { onCancel?: () => void } = {}) {
               data-testid="email-input"
               onChange={(e) => setEmail(e.target.value)}
             />
-            <button type="submit" className="secondary" disabled={!email.trim() || !!busy} data-testid="send-code">
-              {busy === 'send' ? 'Sending…' : 'Send code'}
+            <button
+              type="submit"
+              className="secondary"
+              disabled={!email.trim() || (up && !name.trim()) || !!busy || wait > 0}
+              data-testid="send-code"
+            >
+              {sendLabel('Send code')}
             </button>
           </form>
+          <span className="or" aria-hidden="true">
+            or
+          </span>
+          <button type="button" className="secondary" disabled={!!busy} onClick={() => void run('google', signInWithGoogle)} data-testid="google-sign-in">
+            {busy === 'google' ? 'Waiting for Google…' : 'Continue with Google'}
+          </button>
         </>
       ) : (
         <>
@@ -138,19 +213,19 @@ export function SignIn({ onCancel }: { onCancel?: () => void } = {}) {
               onChange={(e) => setCode(e.target.value)}
             />
             <button type="submit" className="secondary" disabled={code.replace(/\D/g, '').length < 6 || !!busy} data-testid="verify-code">
-              {busy === 'verify' ? 'Checking…' : 'Sign in'}
+              {busy === 'verify' ? 'Checking…' : words}
             </button>
           </form>
           <span className="key-row">
-            <button type="button" className="link" disabled={!!busy} onClick={() => send(sentTo)}>
-              Send a new code
+            <button type="button" className="link" disabled={!!busy || wait > 0} data-testid="resend-code" onClick={() => send(sentTo)}>
+              {sendLabel('Send a new code')}
             </button>
             <button
               type="button"
               className="link"
               onClick={() => {
                 setSentTo(null);
-                setError('');
+                setError(null);
               }}
             >
               Use another email
@@ -160,11 +235,26 @@ export function SignIn({ onCancel }: { onCancel?: () => void } = {}) {
       )}
       {error && (
         <p className="help bad" data-testid="account-error">
-          {error}
+          {error.message}
+          {error.code === 'no-account' && (
+            <>
+              {' '}
+              <button
+                type="button"
+                className="link"
+                onClick={() => {
+                  setMode('up');
+                  setError(null);
+                }}
+              >
+                Sign up instead
+              </button>
+            </>
+          )}
         </p>
       )}
       <small className="help">
-        By signing in, you agree to the{' '}
+        By {up ? 'signing up' : 'signing in'}, you agree to the{' '}
         <a className="link" href={BRAND.terms} target="_blank" rel="noopener noreferrer">
           terms
         </a>{' '}
@@ -209,8 +299,8 @@ export function useAccountRefresh(userId: string | undefined): string {
   return error;
 }
 
-/** Cloud storage (if the plan has it) and deleting the account. */
-function AccountSettings({ account, settings, save }: { account: AccountState; settings: Settings; save: Save }) {
+/** Deleting the account, after asking. */
+function DeleteAccount({ account }: { account: AccountState }) {
   const ent = account.entitlement;
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -228,66 +318,61 @@ function AccountSettings({ account, settings, save }: { account: AccountState; s
   };
 
   return (
-    <>
-      {ent && (
-        <div className="field" data-testid="cloud">
-          <span className="field-label">Cloud storage</span>
-          {ent.cloud ? (
-            <>
-              <label className="check">
-                <input type="checkbox" checked={settings.cloudSync} data-testid="cloud-sync" onChange={(e) => void save({ cloudSync: e.target.checked })} />
-                Keep my chats in the cloud too
-              </label>
-              <small className="help">On every computer you sign in on.</small>
-              {settings.cloudSync && <SyncLine status={account.sync} />}
-            </>
-          ) : (
-            <p className="help" data-testid="no-cloud">
-              Not included in your plan.
-            </p>
-          )}
+    <div className="field">
+      {!confirming ? (
+        <button type="button" className="secondary" onClick={() => setConfirming(true)} data-testid="delete-account">
+          Delete account
+        </button>
+      ) : (
+        <div className="confirm-row">
+          <span>
+            Delete your account and everything in the cloud?{ent?.billing?.active ? ' Your plan ends now, without a refund.' : ''} Chats on this
+            computer stay.
+          </span>
+          <button type="button" className="danger" disabled={deleting} onClick={() => void remove()} data-testid="confirm-delete-account">
+            {deleting ? 'Deleting…' : 'Delete account'}
+          </button>
+          <button type="button" className="secondary" disabled={deleting} onClick={() => setConfirming(false)}>
+            Cancel
+          </button>
         </div>
       )}
-
-      <div className="field">
-        {!confirming ? (
-          <button type="button" className="secondary" onClick={() => setConfirming(true)} data-testid="delete-account">
-            Delete account
-          </button>
-        ) : (
-          <div className="confirm-row">
-            <span>
-              Delete your account and everything in the cloud?{ent?.billing?.active ? ' Your plan ends now, without a refund.' : ''} Chats on this
-              computer stay.
-            </span>
-            <button type="button" className="danger" disabled={deleting} onClick={() => void remove()} data-testid="confirm-delete-account">
-              {deleting ? 'Deleting…' : 'Delete account'}
-            </button>
-            <button type="button" className="secondary" disabled={deleting} onClick={() => setConfirming(false)}>
-              Cancel
-            </button>
-          </div>
-        )}
-        {error && <p className="help bad">{error}</p>}
-      </div>
-    </>
+      {error && <p className="help bad">{error}</p>}
+    </div>
   );
 }
 
 const day = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
 
-/** The plan line: which plan, and what is next for it. */
-function planStatus(ent: Entitlement): string {
+/** What is next for the plan, said after its name ("until February 15, 2027"), and a payment that failed. */
+function planWhen(ent: Entitlement): { when: string; warn: string } {
   const b = ent.billing;
-  if (!b?.active) return b && (b.status === 'incomplete' || b.status === 'unpaid') ? "Your last payment didn't go through." : '';
-  if (b.kind === 'pass') return b.periodEnd ? `Until ${day(b.periodEnd)}.` : '';
-  if (b.status === 'past_due') return "Your last payment didn't go through. Update your card to keep it.";
-  if (!b.periodEnd) return '';
-  return b.cancelAtPeriodEnd ? `Ends on ${day(b.periodEnd)}.` : `Renews on ${day(b.periodEnd)}.`;
+  if (!b?.active) return { when: '', warn: b && (b.status === 'incomplete' || b.status === 'unpaid') ? "Your last payment didn't go through." : '' };
+  if (b.status === 'past_due') return { when: '', warn: "Your last payment didn't go through. Update your card to keep it." };
+  if (!b.periodEnd) return { when: '', warn: '' };
+  return { when: `${b.kind === 'subscription' && !b.cancelAtPeriodEnd ? 'renews' : 'until'} ${day(b.periodEnd)}`, warn: '' };
 }
 
-/** The plan, with the hosted answers left this month in a badge, and buying or managing it. */
-export function PlanDetails({ ent }: { ent: Entitlement }) {
+/** The plan, in bold, and what is next for it: under the account's email address. */
+export function PlanLine({ ent }: { ent: Entitlement }) {
+  const { when, warn } = planWhen(ent);
+  return (
+    <>
+      <span className="plan-line" data-testid="plan-name">
+        <b>{ent.planName || 'Free'}</b>
+        {when && ` ${when}`}
+      </span>
+      {warn && (
+        <span className="help bad" data-testid="plan-status">
+          {warn}
+        </span>
+      )}
+    </>
+  );
+}
+
+/** Buying a plan (for an account that pays for nothing yet) or managing the one it has. */
+export function PlanActions({ ent }: { ent: Entitlement }) {
   const [list, setList] = useState<Offer[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -307,35 +392,16 @@ export function PlanDetails({ ent }: { ent: Entitlement }) {
     }
   };
 
-  // Upgrades are offered to accounts that pay for nothing yet.
   const upgrades = !ent.billing?.active ? (list ?? []).filter((o) => o.plan.id !== ent.plan) : [];
   const plan = upgrades[0]?.plan;
-  const status = planStatus(ent);
-  const left = Math.max(0, ent.quota - ent.used);
 
   return (
     <>
-      <div className="plan-head">
-        <span className="plan-name" data-testid="plan-name">
-          {ent.planName || 'Free'}
-        </span>
-        {ent.quota > 0 && (
-          <span className="answers-left" data-testid="hosted-left" title={`${left} of ${ent.quota} hosted answers left this month`}>
-            {left.toLocaleString()}
-          </span>
-        )}
-      </div>
-      {ent.quota > 0 && <small className="help">Hosted answers left this month</small>}
-      {status && (
-        <p className="help" data-testid="plan-status">
-          {status}
-        </p>
-      )}
       {plan && (
         <div className="upgrade" data-testid="upgrade">
           <p className="help">
-            <b>{plan.name}</b>: up to {plan.monthly_questions.toLocaleString()} hosted answers a month, no key needed
-            {plan.cloud ? ', and cloud sync' : ''}.{upgrades.every((o) => !o.interval) ? ' Paid once; nothing renews.' : ' Renews until you cancel, any time.'}
+            <b>{plan.name}</b>: up to {plan.monthly_questions.toLocaleString()} hosted answers a month (fewer with the larger models), no key needed
+            {plan.cloud ? ', and your chats in the cloud' : ''}.{upgrades.every((o) => !o.interval) ? ' Paid once; nothing renews.' : ' Renews until you cancel, any time.'}
           </p>
           <div className="key-row">
             {upgrades.map((o) => (
@@ -368,7 +434,8 @@ export function PlanDetails({ ent }: { ent: Entitlement }) {
   );
 }
 
-function SyncLine({ status }: { status: SyncStatus }) {
+/** How the cloud copy of the chats is doing (Settings → Chats & privacy). */
+export function SyncLine({ status }: { status: SyncStatus }) {
   const [, tick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 30_000);

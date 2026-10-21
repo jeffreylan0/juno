@@ -15,6 +15,11 @@
  *    than what the limit keeps is not downloaded at all.
  *  - Temporary chats are never copied anywhere.
  *
+ * Signing out with the chats kept in the account: once everything is up,
+ * the account's chats leave this computer (signOut), so whoever uses it next
+ * can't read them; signing in again brings them back down. Kept on this
+ * computer only (cloudSync off), they stay.
+ *
  * Who owns the chats on this computer: the first account to sign in here
  * gets them uploaded. Another account signing in later gets its own chats
  * downloaded, and never gets the chats already here uploaded: not when it
@@ -152,6 +157,44 @@ export class ChatSync {
     this.loaded = Promise.resolve(null);
     await stateItem.removeValue();
     await this.status({ state: 'off' });
+  }
+
+  /**
+   * Signing out: the last changes go up (and down), then, with every sync
+   * held until `end` (the sign-out itself) is done, this account's chats
+   * leave this computer (the cloud keeps them). Not when they are kept here
+   * only; and if anything could not go up, nothing is removed. Returns the
+   * chats removed, and how many of the account's stay here.
+   */
+  async signOut(end: () => Promise<void>): Promise<{ removed: string[]; kept: number }> {
+    if (!ACCOUNTS || !(await getSettings()).cloudSync) {
+      await end();
+      return { removed: [], kept: 0 };
+    }
+    await this.now();
+    const resume = await this.pause();
+    try {
+      const s = await this.state();
+      const { state } = await syncStatusItem.getValue();
+      // Another account's chats, here before this one signed in, were never this one's to take.
+      const own = (await listChats()).map((c) => c.id).filter((id) => !s?.foreign?.includes(id));
+      const removed: string[] = [];
+      let kept = 0;
+      // Not in the account at all (a plan without cloud storage): nothing to say.
+      if (state === 'off' || state === 'not-allowed') kept = 0;
+      else if (!s || state !== 'ok' || s.wipe || s.dirty.length || Object.keys(s.deleted).length) kept = own.length;
+      else {
+        for (const id of own) if (await this.hooks.serial(() => removeSyncedChat(id))) removed.push(id);
+        // Signing in again pulls everything, so the chats come back.
+        s.cursor = null;
+        this.known.clear();
+        await this.save(s);
+      }
+      await end();
+      return { removed, kept };
+    } finally {
+      resume();
+    }
   }
 
   /** "Delete all chats": the cloud copies go too, including any this computer no longer keeps. */

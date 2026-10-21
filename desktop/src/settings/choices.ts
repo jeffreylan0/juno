@@ -3,7 +3,7 @@
  * one choice, kept as the provider, vendor and model fields (lib/storage.ts).
  */
 import type { KeyStatus, KeyVendor as Vendor } from '@/lib/providers/types';
-import { withAnswerChoice, type Settings } from '@/lib/storage';
+import { hostedModelOf, withAnswerChoice, type Settings } from '@/lib/storage';
 
 /** Your own API key (Anthropic's or OpenAI's), hosted answers, or a local model. */
 export type Choice = 'key' | 'hosted' | 'local';
@@ -17,8 +17,8 @@ export function patchFor(next: Choice, settings: Settings, keys: KeyStatus): Par
   }
   if (next === 'local') return { provider: 'local' };
   // Only the fields hosted answers set, so nothing newer stored meanwhile is undone.
-  const { provider, vendor, modelOverride } = withAnswerChoice(settings, 'hosted');
-  return { provider, vendor, modelOverride };
+  const { provider, vendor, hostedModel } = withAnswerChoice(settings, `hosted:${hostedModelOf(settings)}`);
+  return { provider, vendor, hostedModel };
 }
 
 /** Answers from `vendor`, with your key; coming back to it keeps the model picked for it before. */

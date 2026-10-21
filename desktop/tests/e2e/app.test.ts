@@ -256,6 +256,8 @@ it('the panel: ✕ first, then the chats menu; text at the system’s size; noti
   // Linux sizes as Windows does: 14 px body text.
   expect(await app.read('panel', `getComputedStyle(document.documentElement).fontSize`)).toBe('14px');
 
+  // Nothing can answer yet: beside Send, a hazard sign says so instead of a list of greyed choices.
+  expect(await app.read('panel', `document.querySelector('[data-testid=setup-needed]')?.textContent`)).toBe('Set up required');
   // Shown, the panel brings the notice back (no AI picked yet), over the end of the chat, on a timer.
   await waitFor('the notice back', () => app.read('panel', `!!document.querySelector('[data-testid=notice]')`));
   expect(await app.read('panel', `document.querySelector('[data-testid=notice]').textContent`)).toContain('Pick who answers');
@@ -850,9 +852,10 @@ it('the gear on the bar opens settings: the app’s own shortcut, no blocked sit
   expect(text).not.toContain('Blocked sites');
   expect(text).not.toContain("browser's PDF viewer");
   expect(text).toContain("its window's title, to the AI you picked");
-  expect(text).toContain('only your account can read');
-  // A development build carries no update key.
-  expect(text).toContain("Updates aren't set up in this build");
+  expect(text).toContain('only your user account can read');
+  // A development build carries no update key: nothing about updates, and nothing about the build.
+  expect(text).not.toContain('this build');
+  expect(await app.read('settings', `!!document.querySelector('[data-testid=auto-update]')`)).toBe(false);
   expect(text).toContain('Quit Juno');
 
   // Closed, settings are only hidden: opened again (at a section), they are on screen at once, there.
@@ -935,7 +938,8 @@ it('an API key goes in once and no page can read it back: kept privately, sent b
   expect(await app.read('settings', `document.querySelector('[data-testid=other-key]').textContent`)).toContain('Anthropic …WXYZ');
   const kept = JSON.parse(readFileSync(secrets, 'utf8')) as { keys: Record<string, string> };
   expect(kept.keys).toEqual({ anthropic: key, openai: openaiKey });
-  // An admin key can't answer: refused, and nothing changes.
+  // An admin key can't answer: refused, and nothing changes. (Saving waits for the OpenAI key's check.)
+  await waitFor('the OpenAI key checked', () => app.read('settings', `!!document.querySelector('[data-testid=key-status]')`), 30_000);
   await app.eval('settings', `document.querySelector('[data-testid=add-key]').click()`);
   await type('sk-ant-admin01-e2e-x');
   await waitFor('the refusal', async () => (await app.read<string>('settings', `document.querySelector('[data-testid=key-status]')?.textContent ?? ''`)).includes('admin key'));
@@ -980,8 +984,14 @@ it('settings open on a dashboard: who you are, this month’s answers and who an
   // Not signed in (this build has no accounts): a guest, with a blank picture.
   expect(await app.read('settings', `document.querySelector('[data-testid=profile-name]').textContent`)).toBe('Guest');
   expect(await app.read('settings', `!!document.querySelector('[data-testid=avatar] svg')`)).toBe(true);
-  expect(await app.read('settings', `document.querySelector('[data-testid=answers-this-month]').textContent`)).toBe('0 answers');
-  expect(await app.read('settings', `document.querySelector('[data-testid=who-answers]').textContent`)).toContain('No one yet');
+  // Usage: without a plan, the horseshoe counts this month's answers; then who answers.
+  expect(await app.read('settings', `document.querySelector('[data-testid=gauge-count]').textContent`)).toBe('0');
+  expect(await app.read('settings', `document.querySelector('[data-testid=gauge]').getAttribute('aria-label')`)).toBe('0 answers this month');
+  expect(await app.read('settings', `document.querySelector('[data-testid=who-answers]').textContent`)).toBe('Pick who answers below.');
+  // Chats & privacy: the chats, what is sent, then the panel's notices; deleting them all in red.
+  expect(await app.read('settings', `[...document.querySelectorAll('#privacy > .field')].map((f) => f.dataset.testid || f.id)`)).toEqual(['chats', 'what-is-sent', 'notices']);
+  expect(await app.read('settings', `document.querySelector('[data-testid=delete-chats]').className`)).toBe('danger');
+  expect(await app.read('settings', `!!document.querySelector('[data-testid=temporary-default]')`)).toBe(true);
   // The settings follow the dashboard, the most used first.
   expect(await app.read('settings', `[...document.querySelectorAll('.sections > section')].map((s) => s.id).slice(0, 6)`)).toEqual([
     'answers',

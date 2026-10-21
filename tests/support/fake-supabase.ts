@@ -10,6 +10,8 @@
 export interface FakeUser {
   id: string;
   email: string;
+  /** The name given when signing up (user_metadata.full_name). */
+  name?: string;
 }
 
 interface Row {
@@ -50,6 +52,8 @@ export class FakeSupabase {
   objects = new Map<string, { type: string; bytes: Uint8Array }>();
   /** Google ID tokens it takes (signInWithIdToken), with the hash of the nonce each carries. */
   idTokens = new Map<string, { nonceHash: string; email: string }>();
+  /** Seconds before another code may be emailed; 0: no wait. */
+  emailWait = 0;
   /** Every request, for assertions: "METHOD path". */
   log: string[] = [];
   private n = 0;
@@ -178,7 +182,7 @@ export class FakeSupabase {
       expires_in: 3600,
       expires_at: Math.floor(Date.now() / 1000) + 3600,
       refresh_token: refresh,
-      user: { id: user.id, email: user.email },
+      user: { id: user.id, email: user.email, user_metadata: user.name ? { full_name: user.name } : {} },
     };
   }
 
@@ -186,8 +190,17 @@ export class FakeSupabase {
     const body = (await req.json().catch(() => ({}))) as Record<string, string>;
     if (path === 'otp') {
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email ?? '')) return this.json(400, { error_code: 'email_address_invalid', msg: 'Invalid email' });
+      if (this.emailWait) {
+        return this.json(429, { code: 429, error_code: 'over_email_send_rate_limit', msg: `For security purposes, you can only request this after ${this.emailWait} seconds.` });
+      }
       const email = body.email!.toLowerCase();
-      if (!this.userByEmail(email)) this.addUser(email);
+      // Signing in (create_user false) only finds an account; signing up makes one.
+      if (!this.userByEmail(email)) {
+        if ((body as unknown as { create_user?: boolean }).create_user === false) {
+          return this.json(422, { code: 422, error_code: 'otp_disabled', msg: 'Signups not allowed for otp' });
+        }
+        this.addUser(email);
+      }
       this.codes.set(email, String(100000 + Math.floor(Math.random() * 900000)));
       return this.json(200, {});
     }
@@ -211,6 +224,12 @@ export class FakeSupabase {
       const hash = Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
       if (body.provider !== 'google' || !token || token.nonceHash !== hash) return this.json(400, { code: 400, error_code: 'bad_jwt', msg: 'Invalid ID token' });
       return this.json(200, this.session(this.userByEmail(token.email) ?? this.addUser(token.email)));
+    }
+    if (path === 'user' && req.method === 'PUT') {
+      const user = this.users.get(this.access.get((req.headers.get('authorization') ?? '').replace(/^Bearer /, ''))?.user ?? '');
+      if (!user) return this.json(401, { code: 401, error_code: 'bad_jwt', msg: 'invalid JWT' });
+      user.name = (body as unknown as { data?: { full_name?: string } }).data?.full_name ?? user.name;
+      return this.json(200, { id: user.id, email: user.email, user_metadata: user.name ? { full_name: user.name } : {} });
     }
     if (path === 'logout') return new Response(null, { status: 204, headers: CORS });
     return this.json(404, { msg: 'no route' });

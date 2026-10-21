@@ -22,7 +22,9 @@
 --                  never really deleted by the apps: a deleted chat becomes
 --                  a tombstone so other computers delete it too.
 --   screenshots    a private storage bucket, one folder per account.
---   usage          hosted answers used per month, counted by the Worker.
+--   usage          hosted answers used per month, counted by the Worker in
+--                  answers from the fast models (a bigger model's answer
+--                  counts more: ANSWER_COST in shared/models.ts).
 --
 -- Signed-in students reach their own rows with their session token and the
 -- publishable key; row level security keeps each account to its own. The
@@ -37,7 +39,7 @@ grant usage on schema public to anon, authenticated, service_role;
 create table if not exists public.plans (
   id text primary key check (id ~ '^[a-z][a-z0-9_-]{0,31}$'),
   name text not null,
-  -- Hosted answers a month (0: none).
+  -- Hosted answers a month (0: none), counted in fast-model answers.
   monthly_questions integer not null check (monthly_questions >= 0),
   -- Cloud storage for chats and their screenshots.
   cloud boolean not null default false,
@@ -49,7 +51,7 @@ create table if not exists public.plans (
 -- their metadata (supabase/README.md).
 insert into public.plans (id, name, monthly_questions, cloud, rank) values
   ('free', 'Free', 0, false, 0),
-  ('plus', 'Plus', 3000, true, 10),
+  ('plus', 'Plus', 1500, true, 10),
   ('unlimited', 'Unlimited', 100000, true, 100)
 on conflict (id) do nothing;
 
@@ -345,19 +347,24 @@ alter table public.usage enable row level security;
 revoke all on public.usage from anon, authenticated, service_role;
 drop policy if exists "own usage" on public.usage;
 
--- Called by the Worker (secret key) before each hosted answer: counts one if
--- the account has any left this month, in one statement so two answers at
--- once cannot both take the last one.
-create or replace function public.use_answer(p_user uuid)
+-- Called by the Worker (secret key) before each hosted answer: counts what
+-- the answer's model costs (p_cost, in fast-model answers) if the account has
+-- that much left this month, in one statement so two answers at once cannot
+-- both take the last of it.
+drop function if exists public.use_answer(uuid);
+create or replace function public.use_answer(p_user uuid, p_cost integer default 1)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   q integer := coalesce((public.account_of(p_user) ->> 'quota')::integer, 0);
   u integer;
   p date := (date_trunc('month', now() at time zone 'utc'))::date;
 begin
-  if q > 0 then
-    insert into public.usage as x (user_id, period, used) values (p_user, p, 1)
-    on conflict (user_id, period) do update set used = x.used + 1 where x.used < q
+  if p_cost is null or p_cost < 1 then
+    raise exception 'A cost of at least one' using errcode = '22023';
+  end if;
+  if q >= p_cost then
+    insert into public.usage as x (user_id, period, used) values (p_user, p, p_cost)
+    on conflict (user_id, period) do update set used = x.used + p_cost where x.used + p_cost <= q
     returning x.used into u;
   end if;
   if u is null then
@@ -366,16 +373,17 @@ begin
   end if;
   return jsonb_build_object('ok', true, 'used', u, 'quota', q, 'period', p);
 end $$;
-revoke execute on function public.use_answer(uuid) from public, anon, authenticated;
-grant execute on function public.use_answer(uuid) to service_role;
+revoke execute on function public.use_answer(uuid, integer) from public, anon, authenticated;
+grant execute on function public.use_answer(uuid, integer) to service_role;
 
--- Gives one back when the AI failed before answering.
-create or replace function public.refund_answer(p_user uuid, p_period date)
+-- Gives it back when the AI failed before answering.
+drop function if exists public.refund_answer(uuid, date);
+create or replace function public.refund_answer(p_user uuid, p_period date, p_cost integer default 1)
 returns void language sql security definer set search_path = '' as $$
-  update public.usage set used = greatest(used - 1, 0) where user_id = p_user and period = p_period
+  update public.usage set used = greatest(used - greatest(coalesce(p_cost, 1), 1), 0) where user_id = p_user and period = p_period
 $$;
-revoke execute on function public.refund_answer(uuid, date) from public, anon, authenticated;
-grant execute on function public.refund_answer(uuid, date) to service_role;
+revoke execute on function public.refund_answer(uuid, date, integer) from public, anon, authenticated;
+grant execute on function public.refund_answer(uuid, date, integer) to service_role;
 
 -- ── Deleting an account ──────────────────────────────────────────────────
 

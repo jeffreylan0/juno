@@ -6,9 +6,9 @@ Juno is a study app for macOS and Windows, made by humanbn ("we", "us"). This po
 
 ## The short version
 
-- What you select, ask and get back stays on your computer, unless you ask a question (it goes to the AI you chose) or turn on cloud sync.
+- What you select, ask and get back stays on your computer, unless you ask a question (it goes to the AI you chose) or your plan keeps your chats in your account (cloud storage).
 - Your own API key stays on your computer and is sent only to the company that issued it.
-- An account is optional. It holds your email address, your plan, how many hosted answers you used this month and, if you turn it on, a copy of your saved chats.
+- An account is optional. It holds your email address, your name if you give one when signing up, your plan, how many hosted answers you used this month and, with cloud storage, your saved chats (unless you keep them on your computer only).
 - No ads, no analytics, no tracking. We don't sell your information, and nothing you send is used to train AI models.
 
 ## What stays on your computer
@@ -37,7 +37,7 @@ Juno looks at your screen only when you select something. On macOS it needs Scre
 - **Email codes**: your email address, to send you a sign-in code through our email provider ([email provider]).
 - **Google sign-in**: Google tells us your email address, your name and profile picture, and an account ID. Juno asks Google for nothing else; your name and picture are shown only to you, in Settings.
 - **Your account** is kept by Supabase, our database provider ([region]): your email address, when you signed up and last signed in, your plan, how many hosted answers you used each month, and when you paid. For security, Supabase also keeps a log of sign-ins, with your email and IP address.
-- **Cloud sync** (on plans that include it, off until you turn it on): a copy of your saved chats and their screenshots, in a private storage space only your account can read. Temporary chats are never copied.
+- **Cloud storage** (on plans that include it; on for a new install unless you choose *This computer* in Settings → Chats & privacy, and off if you had it off before, until you choose *Your account*): your saved chats and their screenshots, in a private storage space only your account can read. Signing out removes them from the computer, once they are stored. Temporary chats are never copied.
 
 **If you buy a plan**, Stripe handles the payment. We never see your card number. We keep your Stripe customer ID, what you bought, and when it renews or ends; Stripe keeps its own payment records, as the law requires.
 
@@ -49,7 +49,7 @@ Juno looks at your screen only when you select something. On macOS it needs Scre
 
 | Company | What for |
 | --- | --- |
-| Supabase | Accounts, plans, cloud sync |
+| Supabase | Accounts, plans, cloud storage |
 | Cloudflare | Our server for hosted answers and payments |
 | Anthropic, OpenAI | Answers (hosted answers, or your own key under your agreement with them) |
 | Stripe | Payments, receipts, tax |
@@ -67,7 +67,7 @@ Each processes your information only to provide its part of Juno. They are in th
 
 ## Your choices and rights
 
-You can use Juno without an account, with your own key or a local model. You can see what your account holds in Settings, turn cloud sync off, delete any chat, and delete your account at any time.
+You can use Juno without an account, with your own key or a local model. You can see what your account holds in Settings, keep your chats on your computer only, delete any chat, and delete your account at any time.
 
 Depending on where you live (for example in the EU, the UK or California), you have the right to access, correct, delete or take a copy of your personal information, and to object to how we use it. Write to info@humanbn.com and we will answer within 30 days. We use your information to provide Juno to you (our contract with you), to keep it secure and working (our legitimate interest), and to meet legal obligations such as tax records. You may also complain to your local data protection authority.
 

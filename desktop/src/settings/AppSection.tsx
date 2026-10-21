@@ -66,11 +66,7 @@ export function AppSection({ settings, save }: { settings: Settings; save: (patc
         Version {version || '…'}
         {!off && updateLine(update) ? <> · {updateLine(update)}</> : null}
       </p>
-      {off ? (
-        <small className="help" data-testid="updates-off">
-          Updates aren't set up in this build.
-        </small>
-      ) : (
+      {!off && (
         <span className="key-row">
           <label className="check">
             <input type="checkbox" checked={settings.autoUpdate} data-testid="auto-update" onChange={(e) => void save({ autoUpdate: e.target.checked })} />

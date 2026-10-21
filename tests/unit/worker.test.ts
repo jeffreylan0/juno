@@ -13,7 +13,8 @@ import { checkout, form, prices, webhook } from '../../worker/src/billing';
 import { googleToken } from '../../worker/src/google';
 import { unlockCheckout, unlockClaim, unlockDone, unlockPrice, unlockRestore } from '../../worker/src/unlock';
 import { LIMITS, anthropicToOpenAI, cacheScope, callVendor, parseAsk, scoped, toAnthropic } from '../../worker/src/models';
-import type { Env } from '../../worker/src/index';
+import worker, { type Env } from '../../worker/src/index';
+import { ANSWER_COST } from '@shared/models';
 
 const SUPABASE_URL = 'https://proj.supabase.co';
 const env = { SUPABASE_URL, SUPABASE_SECRET_KEY: 'sb_secret_x' } as Env;
@@ -106,15 +107,14 @@ describe('who is asking', () => {
 describe('what may be asked', () => {
   const messages = [{ role: 'user', content: 'hi' }];
   const png = 'data:image/png;base64,iVBORw0KGgo=';
-  it('allows exactly the apps’ own models and refuses the rest before anything is spent', () => {
-    expect(parseAsk({ model: 'anthropic/claude-haiku-5-5', messages }).model).toBe('claude-haiku-5-5');
-    expect(parseAsk({ model: 'openai/gpt-6-luna', messages }).vendor).toBe('openai');
-    expect(() => parseAsk({ model: 'anthropic/claude-opus-5-5', messages })).toThrow("can't use");
-    // The slower, pricier models are for your own key only.
-    expect(() => parseAsk({ model: 'anthropic/claude-sonnet-5-5', messages })).toThrow("can't use");
-    expect(() => parseAsk({ model: 'openai/gpt-6-sol', messages })).toThrow("can't use");
+  it('allows exactly the models a plan prices, each from its own vendor, and refuses the rest before anything is spent', () => {
+    for (const model of Object.keys(ANSWER_COST)) {
+      const vendor = model.startsWith('gpt-') ? 'openai' : 'anthropic';
+      expect(parseAsk({ model: `${vendor}/${model}`, messages })).toMatchObject({ vendor, model });
+    }
+    expect(() => parseAsk({ model: 'openai/claude-opus-5-5', messages })).toThrow("can't use");
+    expect(() => parseAsk({ model: 'anthropic/gpt-6-sol', messages })).toThrow("can't use");
     expect(() => parseAsk({ model: 'anthropic/claude-haiku-5-5-preview', messages })).toThrow("can't use");
-    expect(() => parseAsk({ model: 'openai/gpt-6-astra', messages })).toThrow("can't use");
     expect(() => parseAsk({ model: 'mistral/large', messages })).toThrow("can't use");
     expect(() => parseAsk({ model: 'anthropic/claude-haiku-4-5-20251001', messages: [] })).toThrow();
   });
@@ -191,6 +191,60 @@ describe('prompt caches, one per chat', () => {
     const messages = scoped([{ role: 'system', content: 'Be brief.' }, shot('QUJD')], scope);
     expect(messages[0]).toEqual({ role: 'system', content: `Chat ${scope}.` });
     expect(toAnthropic(messages).system).toBe(`Chat ${scope}.\n\nBe brief.`);
+  });
+});
+
+describe('hosted answers, counted by model', () => {
+  it('takes a model’s cost from the month, gives it back when no answer came, and says when too little is left', async () => {
+    const { jwk, sign } = await signer();
+    const url = 'https://ask.supabase.co';
+    const askEnv = { SUPABASE_URL: url, SUPABASE_SECRET_KEY: 'sb_secret_x', AI_GATEWAY_ID: '', ANTHROPIC_API_KEY: 'k' } as Env;
+    const rpcs: Array<[string, { p_cost?: number }]> = [];
+    let left = 40;
+    const sent: Array<{ model: string; fallbacks?: string; beta: string | null }> = [];
+    vi.stubGlobal('fetch', async (input: string, init: RequestInit) => {
+      if (input.endsWith('/jwks.json')) return new Response(JSON.stringify({ keys: [jwk] }));
+      if (input.includes('/rest/v1/rpc/')) {
+        const name = input.split('/rpc/')[1]!;
+        const body = JSON.parse(String(init.body)) as { p_cost: number };
+        rpcs.push([name, body]);
+        if (name === 'refund_answer') {
+          left += body.p_cost;
+          return Response.json(null);
+        }
+        const ok = left >= body.p_cost;
+        if (ok) left -= body.p_cost;
+        return Response.json({ ok, used: 1500 - left, quota: 1500, period: '2026-10-01' });
+      }
+      const body = JSON.parse(String(init.body)) as { model: string; fallbacks?: string };
+      sent.push({ model: body.model, fallbacks: body.fallbacks, beta: new Headers(init.headers).get('anthropic-beta') });
+      return new Response('{}', { status: 529 }); // busy: nothing answered
+    });
+    const ask = async (model: string) => {
+      const token = await sign(good({ iss: `${url}/auth/v1` }));
+      const res = await worker.fetch(
+        new Request('https://w/ask', { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ model, messages }) }),
+        askEnv,
+      );
+      return { status: res.status, message: ((await res.json()) as { error: { message: string } }).error.message };
+    };
+    const messages = [{ role: 'user', content: 'hi' }];
+
+    // Sonnet takes 30, with Anthropic's own fallback for a question its safeguards decline; no answer, so the 30 come back.
+    expect((await ask('anthropic/claude-sonnet-5-5')).status).toBe(503);
+    expect(rpcs).toEqual([
+      ['use_answer', { p_user: USER, p_cost: 30 }],
+      ['refund_answer', { p_user: USER, p_period: '2026-10-01', p_cost: 30 }],
+    ]);
+    expect(sent[0]).toEqual({ model: 'claude-sonnet-5-5', fallbacks: 'default', beta: 'server-side-fallback-2026-07-01' });
+    expect(left).toBe(40);
+
+    // 40 left: not enough for Opus (65), which says to pick a faster model; Haiku (1) still goes.
+    expect(await ask('anthropic/claude-opus-5-5')).toEqual({ status: 402, message: "Not enough of this month's answers left for this model. Pick a faster one." });
+    expect((await ask('anthropic/claude-haiku-5-5')).status).toBe(503);
+    expect(sent.at(-1)).toMatchObject({ model: 'claude-haiku-5-5', fallbacks: undefined });
+    left = 0;
+    expect(await ask('anthropic/claude-haiku-5-5')).toEqual({ status: 402, message: "You've used all your hosted answers this month." });
   });
 });
 

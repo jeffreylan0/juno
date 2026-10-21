@@ -23,7 +23,7 @@ The release lists `SHA256SUMS`, the fingerprint of each file. On a Mac, `shasum 
 2. Open it from Applications. macOS says it "could not verify Juno is free of malware". Click **Done**, not Move to Trash.
 3. Open **System Settings → Privacy & Security**, scroll down to *"Juno" was blocked*, click **Open Anyway** and enter your password. This is needed once per build.
    (If you use Terminal, `xattr -dr com.apple.quarantine "/Applications/Juno.app"` does the same thing.)
-4. The app lives in the menu bar, with no Dock icon. The first time, it plays a short intro (sign up or in there, or continue without an account), then opens its setup (*Choose who answers*, below), which also asks for **Screen Recording**:
+4. The app lives in the menu bar, with no Dock icon. The first time, it plays a short intro (*Sign up* or *Sign in* there, or continue without an account), then opens its setup (*Choose who answers*, below), which also asks for **Screen Recording**:
    - Click *Open System Settings*.
    - Switch **Juno** on under *Screen & System Audio Recording*.
    - Click **Restart Juno**. (If you skip it, the bar asks again the first time you select something.)
@@ -41,11 +41,11 @@ Windows asks for no permissions.
 
 The first time you open Juno, it asks who should answer. Pick one, then **Start using Juno**:
 
-- **Your plan**: sign up or in with an emailed code (or Google), for hosted answers if your plan includes them.
+- **Your plan**: *Sign up* (your name and an emailed code) or *Sign in* (an emailed code), or **Continue with Google** for either, for hosted answers if your plan includes them. A plan's answers can come from Claude Haiku, Sonnet, Opus or Fable, or GPT-6 Luna, Sol or Astra: the faster models leave you the most answers, and the picker shows how many each has left.
 - **API key** (Claude or ChatGPT): paste an Anthropic or OpenAI API key and press **Save**; Juno tells from the key whose it is, and checks it at once. Get one at [console.anthropic.com](https://console.anthropic.com/settings/keys) or [platform.openai.com](https://platform.openai.com/api-keys). API use is pay-as-you-go and is billed separately from a Claude or ChatGPT subscription. Make a key just for Juno, with a spend limit, and read *Keep your API key safe* below.
 - **Local model**: a model running on your own computer, such as one served by Ollama. It must be a model that reads images. (In the app, a server on another computer needs an `https://` address or a `.local` name.)
 
-You can change it later in Settings (the gear on the bar, or right-click the menu bar or tray icon and choose **Settings…**) under **Answers**.
+You can change it later in Settings (the gear on the bar, or right-click the menu bar or tray icon and choose **Settings…**) under **Answers**, or with the picker beside **Send** in the panel: both show the same list, with what isn't set up yet greyed out. Until something is set up, the panel shows a yellow **Set up required** instead.
 
 Once saved, your key is never shown again, only its last four characters. It stays on your computer, in a file only your user account can read (on Windows also encrypted for your account), and no part of the app's windows can read it back: the app's core adds it to each request itself, and only ever sends it to the company that issued it. When you ask, only your selection and your question go to the AI you chose. The app collects no analytics.
 
@@ -75,13 +75,15 @@ In the panel:
 - **⌘⇧O** on a Mac or **Ctrl+Shift+O** on Windows starts a new chat: the current one is finished (and kept in the chat menu), and the bar comes up for the next selection.
 - Scroll up while an answer is coming in and the panel stays where you are; scroll back to the bottom and it follows the answer again.
 - Resize the panel by its edges and it keeps that size from then on. Settings → **Selecting** shows the saved size, with a link to let it grow with the chat again.
-- Notices (no key, no connection, an old chat deleted) go by themselves after 5 seconds. Settings → **Selecting** → *Notices in the panel* turns them off; the first one you ever see has a link there.
+- Notices (no key, no connection, an old chat deleted) go by themselves after 5 seconds. Settings → **Chats & privacy** → *Notices in the panel* turns them off; the first one you ever see has a link there.
 
 Settings → **Selecting** → *Where the bar and the panel go* picks a part of the screen for each: click one of the nine squares. The bar sits at that part's outer edge (the bottom of the screen to start), and the panel in its corner or side (top right to start).
 
 Settings → **Appearance** has *Light or dark* (always light, always dark, or following your computer) and the colour themes, Ember (orange) to start. Without a plan, Ember is the theme, the bar and the panel keep their usual places, and two macros are in use; the rest show greyed, with a button to unlock them. Without an account, the unlock is bought once and holds on that computer (the plan then says *Plus*); after reinstalling, *Restore* brings it back.
 
-Settings opens from the gear on the bar, always in front of the panel, and goes away when you close it (or press **Esc**). Its top shows who you are (*Guest* until you sign in, with a *Sign up or sign in* button) and your plan: with Plus, the hosted answers left this month in a white badge; otherwise how many answers you got this month (and, with your own key, roughly what they cost), and who answers. The settings follow, the most used first; once you scroll down to them, a list of them appears at the side to jump between.
+Settings opens from the gear on the bar, always in front of the panel, and goes away when you close it (or press **Esc**). Its top shows who you are (*Guest* until you sign in, with **Sign up** and **Sign in**) and your plan in bold, with when it renews or ends, then **Manage billing** and **Sign out**. Beside it, *Usage*: with a plan, a horseshoe of this month's hosted answers left, with how many the model you picked has left in the middle; otherwise how many answers you got this month. Under it, who answers (*You're using your plan*, *API key* or *local model*). The settings follow, the most used first; once you scroll down to them, a list of them appears at the side to jump between.
+
+Settings → **Chats & privacy** keeps your chats. With a plan that includes cloud storage they are kept in your account (and on this computer) on a new install; if you had turned cloud storage off before, it stays off until you choose *Your account*. When they are in your account, signing out takes them off this computer, so the next person to use it can't open them; signing in again brings them back. Choose *This computer* to keep them here only: they then stay after you sign out, and anyone using your computer account could open them in Juno. *Start every chat as temporary* makes each new chat temporary (never saved); the ghost turns it off for a chat. **Delete all chats** is the red button.
 
 ## What to look for
 

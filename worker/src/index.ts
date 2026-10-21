@@ -31,6 +31,7 @@ import { stillSignedIn, verifySession, type Session } from './auth';
 import { BillingError, checkout, close, donePage, portal, prices, webhook } from './billing';
 import { googleToken } from './google';
 import { readBody } from './body';
+import { ANSWER_COST } from '@selection-ai/shared/models';
 import { BadRequest, cacheScope, callVendor, parseAsk } from './models';
 import { refundAnswer, useAnswer } from './quota';
 import { accountOf } from './supabase';
@@ -122,10 +123,11 @@ async function ask(request: Request, session: Session, env: Env): Promise<Respon
   }
   const { vendor, model, body } = parseAsk(parsed);
 
-  const use = await useAnswer(session, env);
+  const cost = ANSWER_COST[model] ?? 1;
+  const use = await useAnswer(session, cost, env);
   if (!use.ok) {
     return use.quota > 0
-      ? error(402, `You've used all ${use.quota} hosted answers this month.`, 'quota')
+      ? error(402, cost > 1 && use.quota - use.used > 0 ? "Not enough of this month's answers left for this model. Pick a faster one." : "You've used all your hosted answers this month.", 'quota')
       : error(403, "Your account doesn't include hosted answers.", 'no-plan');
   }
 
@@ -133,11 +135,11 @@ async function ask(request: Request, session: Session, env: Env): Promise<Respon
   try {
     upstream = await callVendor(vendor, model, body, env, await cacheScope(session.userId, body.messages));
   } catch (err) {
-    await refundAnswer(session, use.period, env);
+    await refundAnswer(session, use.period, cost, env);
     throw err;
   }
   if (!upstream.ok || !upstream.body) {
-    await refundAnswer(session, use.period, env);
+    await refundAnswer(session, use.period, cost, env);
     // The vendor's error type only: its message can quote what was asked.
     const said = (await upstream.json().catch(() => null)) as { error?: { type?: string } } | null;
     console.error(`vendor ${vendor} ${upstream.status} ${said?.error?.type ?? ''}`);

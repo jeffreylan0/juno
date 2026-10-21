@@ -68,8 +68,9 @@ afterEach(() => {
 /** Lets storage events and the listeners they start run. */
 const settle = () => new Promise((r) => setTimeout(r, 20));
 
+/** Signs up the first time, in after that. */
 async function signIn(email: string) {
-  await sendEmailCode(email);
+  await sendEmailCode(email, !fake.userByEmail(email));
   return await verifyEmailCode(email, fake.codes.get(email)!);
 }
 
@@ -102,12 +103,27 @@ async function chatWith(id: string, image = false, temporary = false): Promise<C
 }
 
 describe('signing in', () => {
-  it('signs in with an emailed code, and says so plainly when the code is wrong', async () => {
-    await sendEmailCode('Student@Example.com');
-    await expect(verifyEmailCode('student@example.com', '000000')).rejects.toThrow("That code didn't work");
-    const s = await verifyEmailCode('student@example.com', fake.codes.get('student@example.com')!);
-    expect(s.user.email).toBe('student@example.com');
+  it('signs up with an emailed code, and the name once the code is in; says so plainly when the code is wrong', async () => {
+    await sendEmailCode('Student@Example.com', true);
+    await expect(verifyEmailCode('student@example.com', '000000', 'Ada')).rejects.toThrow("That code didn't work");
+    expect(fake.userByEmail('student@example.com')?.name).toBeUndefined(); // no name before the address is proved
+    const s = await verifyEmailCode('student@example.com', fake.codes.get('student@example.com')!, ' Ada Lovelace ');
+    expect(s.user).toMatchObject({ email: 'student@example.com', name: 'Ada Lovelace' });
+    expect(fake.userByEmail('student@example.com')?.name).toBe('Ada Lovelace');
     expect((await sessionItem.getValue())?.accessToken).toBe(s.accessToken);
+  });
+
+  it('signs in only to an account there is, and says so for an address without one', async () => {
+    await expect(sendEmailCode('new@example.com')).rejects.toMatchObject({ code: 'no-account', message: 'No account uses that email yet.' });
+    expect(fake.userByEmail('new@example.com')).toBeUndefined();
+    await signIn('new@example.com'); // signs up
+    await sendEmailCode('new@example.com'); // now signs in
+    expect(fake.codes.has('new@example.com')).toBe(true);
+  });
+
+  it('says how long to wait before another code, when the server says', async () => {
+    fake.emailWait = 37;
+    await expect(sendEmailCode('a@example.com', true)).rejects.toMatchObject({ code: 'rate-limit', wait: 37 });
   });
 
   it('signs in with Google on its own page, with the app’s own client, back to this computer', async () => {
@@ -205,15 +221,19 @@ describe('cloud copies', () => {
     return s.user.id;
   }
 
-  it('does nothing until the account has cloud storage and the student turns it on', async () => {
+  it('does nothing when the chats are kept on this computer, or the plan has no cloud storage', async () => {
     await chatWith('one');
     await signIn('a@example.com');
+    fake.entitle('a@example.com', { cloud: true });
+    await settingsItem.setValue({ ...DEFAULT_SETTINGS, cloudSync: false });
     const s = startSync();
     await s.now();
-    expect(await syncStatusItem.getValue()).toEqual({ state: 'off' }); // not turned on
-    await settingsItem.setValue({ ...DEFAULT_SETTINGS, cloudSync: true });
+    expect(await syncStatusItem.getValue()).toEqual({ state: 'off' }); // kept here
+    fake.entitle('a@example.com', { cloud: false });
+    await refreshEntitlement();
+    await settingsItem.setValue(DEFAULT_SETTINGS); // in the account, the default
     await s.now();
-    expect((await syncStatusItem.getValue()).state).toBe('not-allowed'); // turned on, not given
+    expect((await syncStatusItem.getValue()).state).toBe('not-allowed'); // not given
     expect(fake.chats).toEqual([]);
   });
 
@@ -375,6 +395,56 @@ describe('cloud copies', () => {
     fake.entitle('a@example.com', { cloud: true });
     await s.now();
     expect(fake.row(uid, 'one')).toBeDefined();
+  });
+
+  it('signing out takes the account’s chats off this computer once they are up, even one that arrives in the last sync; signing in again brings them back', async () => {
+    const one = await chatWith('one', true);
+    await chatWith('two');
+    const uid = await ready();
+    const s = startSync();
+    await s.now();
+    // Made on the student's other computer just before they sign out here: it comes down in the last sync, and goes too.
+    fake.put(uid, 'laptop', Date.now() + 5, { ...newChat(false, 'laptop'), title: 'From the laptop', updatedAt: Date.now() });
+    const { removed, kept } = await s.signOut(signOut);
+    expect(removed.sort()).toEqual(['laptop', 'one', 'two']);
+    expect(kept).toBe(0);
+    expect(await listChats()).toEqual([]);
+    expect(store.map.size).toBe(0); // the screenshot too
+    expect(await sessionItem.getValue()).toBeNull();
+
+    await ready();
+    await s.now();
+    expect((await listChats()).map((c) => c.id).sort()).toEqual(['laptop', 'one', 'two']);
+    expect(await store.get(imageIdsOf(one)[0]!)).toBeDefined();
+  });
+
+  it('signing out leaves chats here that did not reach the account, that are kept here only, or that are another’s', async () => {
+    const stay = async () => {}; // checked without signing out, to try each case in turn
+    await chatWith('a-chat');
+    await ready('a@example.com');
+    const s = startSync();
+    await s.now();
+    await signOut();
+
+    await ready('b@example.com');
+    await s.now();
+    await chatWith('b-chat');
+    await settle();
+    // B's upload can't get through: nothing goes from here, and B's one chat is said to stay.
+    const online = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (new Request(input, init).url.includes('/rest/v1/chats')) throw new TypeError('Failed to fetch');
+      return await online(input, init);
+    });
+    expect(await s.signOut(stay)).toEqual({ removed: [], kept: 1 });
+    vi.stubGlobal('fetch', online);
+    // Kept on this computer only: they stay, with nothing to say.
+    await settingsItem.setValue({ ...DEFAULT_SETTINGS, cloudSync: false });
+    expect(await s.signOut(stay)).toEqual({ removed: [], kept: 0 });
+    // In the account: B's own chat goes; A's, never B's to take, stays.
+    await settingsItem.setValue(DEFAULT_SETTINGS);
+    expect(await s.signOut(signOut)).toEqual({ removed: ['b-chat'], kept: 0 });
+    expect((await listChats()).map((c) => c.id)).toEqual(['a-chat']);
   });
 
   it('deleting the account removes its screenshots and the account; chats here stay', async () => {

@@ -7,7 +7,8 @@
  *  - The panel opens with the first selection, and that selection starts a
  *    chat; every later one joins it, whichever app it comes from.
  *  - The ghost (on the bar or the panel) makes the next selection start a
- *    temporary chat, which is never saved.
+ *    temporary chat, which is never saved. With Settings.temporaryByDefault,
+ *    every new chat starts that way, and the ghost turns it off.
  *  - ✕ or Escape, on the bar or the panel,
  *    hides both and finishes the chat: a saved chat stays in the menu, a
  *    temporary one is deleted. The next selection starts a new chat.
@@ -20,6 +21,7 @@
 import type { Plan } from '@shared/payload';
 import { discardChat, getChat, newChat, saveChat, withSelection, type Chat, type ChatSummary, type SelectionItem } from './chats';
 import { storePlanImages } from './images';
+import { getSettings } from './storage';
 
 export interface Current {
   chatId: string;
@@ -48,13 +50,18 @@ export async function allCurrent(): Promise<Array<[number, Current]>> {
     .map(([k, v]) => [Number(k.slice(PREFIX.length)), v as Current]);
 }
 
-const fresh = (temporary = false): Current => ({ chatId: crypto.randomUUID(), temporary });
+const fresh = (temporary: boolean): Current => ({ chatId: crypto.randomUUID(), temporary });
+
+/** Whether the window's chat is temporary, or the next one starts so (the ghost on the bar). */
+export async function startsTemporary(windowId: number): Promise<boolean> {
+  return (await getCurrent(windowId))?.temporary ?? (await getSettings()).temporaryByDefault;
+}
 
 /** The window's chat in progress, starting one if there is none. */
 export async function ensureCurrent(windowId: number): Promise<Current> {
   const current = await getCurrent(windowId);
   if (current) return current;
-  const next = fresh();
+  const next = fresh((await getSettings()).temporaryByDefault);
   await setCurrent(windowId, next);
   return next;
 }
@@ -80,7 +87,7 @@ async function leave(current: Current | null): Promise<void> {
  * already open reconnects after the core reloaded, and names its chat.
  */
 export async function panelOpened(windowId: number, claim?: Current): Promise<Current> {
-  const current = (await getCurrent(windowId)) ?? claim ?? fresh();
+  const current = (await getCurrent(windowId)) ?? claim ?? fresh((await getSettings()).temporaryByDefault);
   await setCurrent(windowId, current);
   return current;
 }

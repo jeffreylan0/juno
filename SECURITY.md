@@ -10,7 +10,7 @@ Please report it privately through GitHub: the repository's **Security** tab →
 | --- | --- |
 | A student's API keys (Anthropic, OpenAI) | Their own computer only, in the native core: no page of the app can read one. The core sends each only to the company that issued it. |
 | A student's sign-in session | Their own computer only. It is sent only to Supabase and the Worker. |
-| Chats and screenshots | Their own computer. With a plan that includes cloud storage, also Supabase, in the student's own rows and folder. |
+| Chats and screenshots | Their own computer. With a plan that includes cloud storage, also Supabase (unless the student keeps them on this computer only), in the student's own rows and folder; then signing out takes them off the computer. |
 | What an account has paid for | Stripe, which is the source of truth. The Worker mirrors it into Supabase. |
 | The service's secrets: AI keys, the Supabase secret key, Stripe keys, the update signing key, signing certificates | Worker secrets, GitHub Actions secrets, and the providers' dashboards. Never in the app or the repository. |
 | humanbn's money: AI spend, storage, payments | Bounded by the limits below and by spending caps the owner sets. |
@@ -47,7 +47,9 @@ The design doesn't defend against malware running as the student's own user acco
 - **Size limits:** storage writes, screenshots and freeform outlines all have size caps.
 - **Windows start-at-login:** the Run entry's path is quoted, so Windows can't run a different program planted in the install folder's parent.
 - **No link scheme:** the app registers none, so no web page or other app can hand it a link.
-- **Sign-in:** Google sign-in uses PKCE. Sign-out revokes the session on the server.
+- **Sign-in:** Google sign-in uses PKCE. *Sign in* with an email code finds an account only (`create_user: false`); only *Sign up* makes one. Sign-out revokes the session on the server.
+- **Signing out:** chats kept in the account leave the computer when the student signs out, once a last sync has sent every change up and brought down what came from elsewhere (`ChatSync.signOut`); no sync runs from then until the session is gone, so nothing comes back down meanwhile, and the next person on the computer can't open them in Juno. Signing in again brings them back. If something couldn't go up, nothing is removed and settings say how many stayed. Chats kept on this computer only stay, and settings say so when that is chosen.
+- **A sign-up's name** goes on the account only once its code is in (`PUT /auth/v1/user`), never with the request for the code, which anyone could make for any address.
 - **Google's return (src-tauri/src/oauth.rs, RFC 8252):** Google sends the browser back to a listener the app opens for one sign-in on `127.0.0.1` (never other addresses on the network), on a port the system picks, for ten minutes at most. It takes only `GET /?code=…` or `/?error=…`, answers with a fixed page under `default-src 'none'`, and hands the query to Settings with its port, so an older sign-in's listener isn't mistaken for this one. Settings checks the `state` it sent, and the code is useless without the PKCE verifier it kept. The ID token Google issues carries the hash of a nonce only Settings knows, and Supabase checks it. Google's error text is never shown.
 - **Cloud copies:** chats already on a computer are never copied into another account that signs in there.
 - **Test hook:** the test-only HTTP hook isn't compiled into releases, and it refuses any request that comes from a browser.
@@ -63,11 +65,11 @@ The design doesn't defend against malware running as the student's own user acco
   - Junk tokens are refused without calling Supabase, and key refreshes are throttled.
   - Billing actions also confirm the session is still live.
 - **Hosted answers** (unbounded-consumption controls):
-  - Only the apps' own four models are allowed.
+  - Only the models a plan prices are allowed (`ANSWER_COST`, `shared/models.ts`), each from its own vendor, and each answer takes its model's cost from the month in the same statement that checks it (`public.use_answer`), so a pricier model can't run past what is left.
   - Requests are rebuilt from text and inline screenshots only.
   - Each request is capped at 100 messages, 20 images and 200,000 characters of text, and the body is capped in bytes however it is sent.
   - Each account gets at most 10 answers a minute.
-  - An answer is refunded when the AI fails or can't be reached.
+  - An answer is refunded, at its model's cost, when the AI fails or can't be reached.
   - Prompt caches are scoped to one chat (see *Prompt caching* below), and the AI Gateway's response cache is skipped on every request.
 - **Stripe webhook:**
   - The signature uses a timestamp tolerance and a constant-time comparison.
@@ -164,6 +166,16 @@ After a tester lost money to someone using their API key, every way a key could 
 | App | The unlock was a code anyone could pass on | Medium (revenue) | A license signed for one computer |
 | Build | 12 npm packages and 26 crates the app didn't need: the extension-era storage helper and its test fake, `dotenv`, `@types/katex`, `@playwright/test` (for `playwright-core`), `tauri-plugin-deep-link`, the HTTP plugin's cookie and charset features, a second `windows` crate; and KaTeX's WOFF and TrueType fonts (0.9 MB of the app's pages) | Info | Removed |
 
+## Review, 2026-10-21
+
+Asked whether someone could read the chats of a student who signed out: they could. Signing out ended the session but left every saved chat and screenshot on the computer, readable by anyone who opened Juno there.
+
+| Part | Finding | Severity | Fixed by |
+| --- | --- | --- | --- |
+| App | A signed-out student's saved chats stayed on the computer | Medium | A new install keeps chats in the account (with a plan that has cloud storage; an earlier choice, which was off until turned on, is kept, so nothing is uploaded without having been asked for); signing out takes them off the computer after a last sync, with syncing held until the session is gone, and nothing if something couldn't go up; kept on this computer only, settings say what that means |
+| App | *Sign in* with an email made an account for any address typed | Low | Only *Sign up* makes one; *Sign in* says when no account uses the address. The name given when signing up goes on only after the code |
+| Worker | Larger hosted models would have been counted like the fast one | Medium (cost) | Each model takes its cost from the month (`ANSWER_COST`), checked and taken in one statement and refunded at the same cost |
+
 ## Known limits (not fixed yet, and why)
 
 - **Unsigned app builds:** the Mac build isn't notarized and the Windows build isn't signed, so testers see warnings and can't tell a genuine build from a lookalike except by its checksum or attestation. This needs an Apple Developer ID and a Windows signing certificate (see the checklist below).
@@ -172,7 +184,11 @@ After a tester lost money to someone using their API key, every way a key could 
 - **Window titles go to the AI:** in the app, the title of the window under the selection goes to the AI with the selection (for example an email subject). A setting to leave it out is a product decision.
 - **Email codes are the weakest sign-in:** NIST no longer treats email as a strong second channel. Google sign-in is offered. Passkeys would be the next step.
 - **CAPTCHA isn't wired into sign-in yet.** Turn it on before the free plan includes hosted answers.
-- **Hosted answers are counted per answer, not per token.** That holds because the Worker allows only the fast model (about $0.0005 an answer); the size caps bound one answer's cost. Bigger hosted models would need metering by cost.
+- **Hosted answers are counted by model, not by token.** Each model takes a fixed number of fast-model answers, set from its price with some room (README, *Plans*); the size caps bound one answer's cost. A vendor's price change needs `ANSWER_COST` changed with it.
+- **Whether an address has an account** shows in *Sign in*'s answer. Supabase's own code request says as much to anyone who asks it directly, so the app hides nothing by not saying so; its rate limits and, before launch, CAPTCHA are what slow anyone trying many addresses.
+- **A declined question can cost more than its model's share.** Sonnet, Opus and Fable ask with Anthropic's fallback, so a question their safeguards decline is answered by another model in the same request, and both are billed; for Opus the model it falls back to costs more a token. A student who sets out to be declined can make an Opus answer cost about 90 fast-model answers while being charged 65. The month's allowance and 10 answers a minute bound it.
+- **Any of the app's pages can ask the core to sign out, delete the account or delete every chat.** A page's messages name the window they come from themselves, so checking that name would stop nothing; the panel and the bar only show text, and signing out loses nothing (the account keeps the chats).
+- **Chats kept on this computer only** stay there after signing out: anyone using the same account on the computer can open them in Juno. That is the student's choice, and settings say so when it is made; keeping them in the account (the default for a plan with cloud storage) takes them off at sign-out.
 - **Builds aren't reproducible:** the Rust toolchain and the runner images aren't pinned.
 - **The extras are held back by the app itself** (`desktop/src/lib/extras.ts`): every theme, the bar's and panel's places, more than two macros. The app is open source, so someone who builds it can turn them on; editing its storage can't, since an unlock is a signed license for one computer. That is accepted: they cost nothing to serve. What costs money (hosted answers, cloud storage) is enforced by the Worker and the database. A license is checked on the computer, so refunding one doesn't relock the computer it was bought on, but *Restore* gives nothing for it.
 
