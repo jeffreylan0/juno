@@ -56,7 +56,7 @@ h1 { font-size: 15px; font-weight: 600; margin: 0; }
 
 .options { max-width: 860px; margin: 0 auto; padding: 20px 20px 80px; }
 
-/* The dashboard (Dashboard.tsx): who you are, a rule, and your plan, side by side in one card. */
+/* The dashboard (Dashboard.tsx): who you are and your plan, a rule, and usage, side by side in one card. */
 .dashboard {
   display: grid; grid-template-columns: minmax(220px, 320px) 1px minmax(0, 1fr); gap: 24px;
   margin: 0; padding: 22px 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
@@ -64,25 +64,27 @@ h1 { font-size: 15px; font-weight: 600; margin: 0; }
 .profile-rule { background: var(--line); }
 .profile { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; min-width: 0; }
 .profile-row { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.avatar { flex: none; width: 64px; height: 64px; border-radius: 50%; overflow: hidden; display: grid; place-items: center; background: var(--hover); }
+.avatar { flex: none; width: 76px; height: 76px; border-radius: 50%; overflow: hidden; display: grid; place-items: center; background: var(--hover); }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .avatar svg { width: 100%; height: 100%; fill: var(--muted); }
 .profile-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .profile-name { font-size: 24px; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
 .profile .field { align-self: stretch; }
-.plan { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.plan-line { font-size: 14px; margin-top: 2px; }
+.usage { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .plan-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-.plan-head { display: flex; align-items: center; gap: 12px; }
-.plan-name { font-size: 22px; font-weight: 600; }
-/* Hosted answers left this month: a white circle by the plan's name. */
-.answers-left {
-  display: inline-grid; place-items: center; min-width: 40px; height: 40px; padding: 0 10px; border-radius: 999px;
-  background: #fff; color: #1c1714; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums;
-  box-shadow: 0 0 0 1px var(--line), 0 1px 3px rgba(0, 0, 0, .12);
-}
-.month { display: flex; flex-direction: column; margin-top: 4px; }
-.dash-big { font-size: 26px; font-weight: 600; margin: 0; }
-.dash-who { margin-top: auto; padding-top: 6px; }
+.usage-who { align-self: center; text-align: center; }
+/* Usage: a horseshoe of what is left, in the page's own colours, filling in as it shows (Dashboard.tsx Gauge). */
+.gauge { position: relative; align-self: center; width: 184px; }
+.gauge svg { display: block; width: 100%; height: auto; overflow: visible; }
+.gauge path { fill: none; stroke-width: 14; stroke-linecap: round; }
+.gauge-track { stroke: var(--bg); }
+.gauge-fill { stroke: color-mix(in srgb, var(--fg) 68%, var(--bg)); stroke-dasharray: 100 100; transition: stroke-dashoffset 1200ms cubic-bezier(.22, .8, .25, 1); }
+.gauge-center { position: absolute; left: 0; right: 0; top: 58%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+.gauge-count { font-size: 34px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.gauge-label { font-size: 13px; }
+.gauge-note { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+@media (prefers-reduced-motion: reduce) { .gauge-fill { transition: none; } }
 /* The unlock, and every locked extra's way to it (Options.tsx): a white button. */
 .unlock { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 .unlock-btn {
@@ -185,7 +187,7 @@ input:is([type='radio'], [type='checkbox']):disabled { opacity: .5; cursor: defa
 kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font: inherit; font-size: 12px; }
 .link { border: 0; background: none; padding: 0; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; text-align: left; }
 /* A link on a line of its own sits at the start of it, not stretched across. */
-:is(.field, .sub, .profile, .plan) > button.link { align-self: flex-start; }
+:is(.field, .sub, .profile, .usage) > button.link { align-self: flex-start; }
 .link:hover { text-decoration: underline; }
 
 .key-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -220,7 +222,7 @@ button.primary { font: inherit; font-weight: 600; padding: 9px 18px; border: 0; 
 .intro-actions > .primary { min-width: 260px; }
 .intro-actions .help { color: #b2a79c; }
 .intro-actions .link { color: #f7f1ea; opacity: .8; font-size: 13px; }
-.intro-actions .sign-in { width: 300px; }
+.intro-actions .sign-in { width: 340px; }
 .intro .sign-in .help { color: #b2a79c; }
 @keyframes intro-frame { 0% { opacity: 0; transform: scale(1.45); } 30% { opacity: 1; transform: scale(1); } 80% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: translateY(var(--rise)) scale(.25); } }
 @keyframes intro-draw { from { stroke-dashoffset: 100; } }
@@ -254,10 +256,20 @@ button:disabled { opacity: .5; cursor: default; }
 label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
 .field > label.check { align-self: flex-start; }
 
-/* Signing in or up (Account.tsx SignIn): Google, then an email address, each as wide as the other. */
-.sign-in { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 320px; }
-.sign-in form { display: flex; flex-direction: column; gap: 8px; }
-.sign-in > button:not(.link), .sign-in form > * { width: 100%; align-self: stretch; }
+/* Where chats are kept (Options.tsx StorageField): the choice, then what it means under it. */
+.storage { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.storage .help { margin: 0; }
+
+/* Sign up and Sign in, side by side (Account.tsx SignUpOrIn). */
+.sign-buttons { display: flex; gap: 8px; align-self: flex-start; }
+.intro-actions .sign-buttons { align-self: center; width: 260px; }
+.intro-actions .sign-buttons button { flex: 1; }
+/* Signing up or in (Account.tsx SignIn): the name (signing up), the email address (or the code) and its button on one line, "or", then Google. */
+.sign-in { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 360px; }
+.sign-in > button:not(.link) { width: 100%; align-self: stretch; }
+.sign-in form { display: flex; gap: 8px; }
+.sign-in form input { flex: 1; min-width: 0; }
+.sign-in form button { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .sign-in > .link { align-self: flex-start; }
 .sign-in .or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
 .sign-in .or::before, .sign-in .or::after { content: ''; flex: 1; height: 1px; background: var(--line); }

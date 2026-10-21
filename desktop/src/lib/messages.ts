@@ -166,6 +166,15 @@ export interface AccountDeleteMsg {
   type: 'account:delete';
 }
 
+/**
+ * Settings → core: sign out. Chats kept in the account leave this computer
+ * first (ChatSync.signOut). Replies { ok, kept } (kept: chats that stay here
+ * because they couldn't go up) or { error }.
+ */
+export interface AccountSignOutMsg {
+  type: 'account:sign-out';
+}
+
 /** Bar → core: open the settings window. */
 export interface OptionsOpenMsg {
   type: 'options:open';
@@ -200,7 +209,8 @@ export type RuntimeMessage =
   | OptionsOpenMsg
   | AppEscapeMsg
   | SyncNowMsg
-  | AccountDeleteMsg;
+  | AccountDeleteMsg
+  | AccountSignOutMsg;
 
 export function isRuntimeMessage(x: unknown): x is RuntimeMessage {
   return !!x && typeof x === 'object' && typeof (x as { type?: unknown }).type === 'string';

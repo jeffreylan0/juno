@@ -137,6 +137,15 @@ describe('answer choice', () => {
     expect(answerChoiceOf(withAnswerChoice(auto, 'local'))).toBe('local');
   });
 
+  it('takes a plan’s model as hosted:<model>, the fast one unless another is picked', () => {
+    const plan = withAnswerChoice(DEFAULT_SETTINGS, 'hosted:claude-haiku-5-5');
+    expect([plan.provider, plan.vendor, plan.hostedModel]).toEqual(['gateway', 'anthropic', null]);
+    expect(answerChoiceOf(plan)).toBe('hosted:claude-haiku-5-5');
+    const sol = withAnswerChoice(plan, 'hosted:gpt-6-sol');
+    expect([sol.provider, sol.vendor, sol.hostedModel]).toEqual(['gateway', 'openai', 'gpt-6-sol']);
+    expect(answerChoiceOf(sol)).toBe('hosted:gpt-6-sol');
+  });
+
   it('falls back to the first macro when there is no default prompt', () => {
     expect(fallbackQuestion(DEFAULT_SETTINGS)).toBe(DEFAULT_SETTINGS.macros[0]!.prompt);
     expect(fallbackQuestion({ defaultPrompt: 'Solve it.', macros: [] })).toBe('Solve it.');
@@ -196,3 +205,19 @@ describe('settings from before v5', () => {
   });
 });
 
+describe('settings from before v7', () => {
+  it('keep their choice about the cloud (off until turned on, then), start chats saved, and drop a hosted model no plan prices', () => {
+    const s = migrateSettings({ version: 6, cloudSync: false, hostedModel: 'constructor' });
+    expect(s.cloudSync).toBe(false);
+    expect(s.temporaryByDefault).toBe(false);
+    expect(s.hostedModel).toBeNull();
+    expect(s.version).toBe(SETTINGS_VERSION);
+    expect(migrateSettings({ version: 6, cloudSync: true }).cloudSync).toBe(true);
+  });
+
+  it('a new install keeps chats in the account; a picked plan model and temporary chats are kept', () => {
+    expect(migrateSettings(null).cloudSync).toBe(true);
+    const s = migrateSettings({ version: 7, cloudSync: false, hostedModel: 'claude-opus-5-5', temporaryByDefault: true });
+    expect([s.cloudSync, s.hostedModel, s.temporaryByDefault]).toEqual([false, 'claude-opus-5-5', true]);
+  });
+});

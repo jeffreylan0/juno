@@ -1,29 +1,31 @@
 /**
- * The top of settings, in the manner of a profile page: who you are (your
- * picture, name and plan; or Guest, with signing up or in a click away but
- * never pressed on you), then your plan. Signed in to a plan with hosted
- * answers, the answers left this month, in a badge. Otherwise this month's
- * answers, what they cost on your own key, who answers, and for a guest the
- * unlock for this computer (lib/account/unlock.ts). The settings follow, the most used first
- * (Options.tsx).
+ * The top of settings, in the manner of a profile page. On the left, who you
+ * are: your picture, name and email, your plan in bold and what is next for
+ * it, then buying or managing it and signing out (or, as a guest, signing up
+ * or in a click away but never pressed on you, and the unlock for this
+ * computer: lib/account/unlock.ts). On the right, usage: a horseshoe of the
+ * month's hosted answers left, with how many the model you picked has left
+ * in its middle; without hosted answers, this month's answers. Then who
+ * answers. The settings follow, the most used first (Options.tsx).
  */
 import { useEffect, useRef, useState } from 'react';
+import { HOSTED_MODEL, answersLeft } from '@shared/models';
 import { ACCOUNTS } from '@/lib/account/config';
-import { signOut, type AccountUser } from '@/lib/account/session';
+import type { AccountUser } from '@/lib/account/session';
 import { buyUnlock, restoreUnlock, unlockOffer } from '@/lib/account/unlock';
-import type { KeyStatus } from '@/lib/providers/types';
-import { ASSISTANT, COMPANY, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
-import type { Settings } from '@/lib/storage';
+import { MODEL_NAMES } from '@/lib/router';
+import { hostedModelOf, type Settings } from '@/lib/storage';
 import { thisMonth, usageItem, type MonthUsage } from '@/lib/usage';
+import { unitsLeft } from '@/ui/ModelPicker';
 import { useExtrasOpen, type AccountState } from '@/ui/useAccount';
-import { PlanDetails, SignIn, useAccountRefresh } from './Account';
+import { PlanActions, PlanLine, SignUpOrIn, useAccountRefresh } from './Account';
 
-export function Dashboard({ settings, keys, account }: { settings: Settings; keys: KeyStatus; account: AccountState }) {
+export function Dashboard({ settings, account }: { settings: Settings; account: AccountState }) {
   return (
     <section id="dashboard" className="dashboard" data-testid="dashboard">
       <Profile account={account} />
       <span className="profile-rule" aria-hidden="true" />
-      <Plan settings={settings} keys={keys} account={account} />
+      <Usage settings={settings} account={account} />
     </section>
   );
 }
@@ -32,7 +34,10 @@ export function Dashboard({ settings, keys, account }: { settings: Settings; key
 
 function Profile({ account }: { account: AccountState }) {
   const user = account.user;
-  const [signing, setSigning] = useState(false);
+  const ent = user ? account.entitlement : null;
+  const checkError = useAccountRefresh(user?.id);
+  // What signing out left to say, shown once signed out.
+  const [leftHere, setLeftHere] = useState('');
   return (
     <div id="account" className="profile" data-testid="profile">
       <div className="profile-row">
@@ -46,30 +51,64 @@ function Profile({ account }: { account: AccountState }) {
               {user.email}
             </span>
           )}
+          {ent ? (
+            <PlanLine ent={ent} />
+          ) : user ? (
+            <span className={`help${checkError ? ' bad' : ''}`} data-testid="account-checking">
+              {checkError ? `Couldn't check your account: ${checkError}` : 'Checking…'}
+            </span>
+          ) : (
+            <GuestPlanLine />
+          )}
         </div>
       </div>
       {user ? (
-        <button type="button" className="link" data-testid="sign-out" onClick={() => void signOut()}>
-          Sign out
-        </button>
+        <>
+          {ent && <PlanActions ent={ent} />}
+          <SignOut onDone={setLeftHere} />
+        </>
       ) : (
-        ACCOUNTS &&
-        account.ready && (
-          <>
-            {/* One way in: an account is made the first time it signs in. */}
-            {!signing && (
-              <button type="button" className="primary" data-testid="sign-up" onClick={() => setSigning(true)}>
-                Sign up or sign in
-              </button>
-            )}
-            <small className="help" data-testid="account-why">
-              Unlock hosted answers and cloud storage.
-            </small>
-            {signing && <SignIn onCancel={() => setSigning(false)} />}
-          </>
-        )
+        <>
+          {leftHere && (
+            <p className="help warn" data-testid="sign-out-note">
+              {leftHere}
+            </p>
+          )}
+          <GuestUnlock />
+          {ACCOUNTS && account.ready && <SignUpOrIn why="Unlock hosted answers and cloud storage." />}
+        </>
       )}
     </div>
+  );
+}
+
+/**
+ * Signing out, through the core: chats kept in the account leave this
+ * computer first (lib/account/sync.ts). `onDone` is told of any that had to
+ * stay, not having reached the account.
+ */
+function SignOut({ onDone }: { onDone: (note: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const go = async () => {
+    setBusy(true);
+    setError('');
+    const reply = (await browser.runtime.sendMessage({ type: 'account:sign-out' }).catch((e: Error) => ({ error: e.message }))) as
+      | { ok: true; kept: number }
+      | { error: string }
+      | null;
+    setBusy(false);
+    if (!reply || 'error' in reply) return setError(`Couldn't sign out: ${reply?.error ?? 'try again'}.`);
+    const n = reply.kept;
+    onDone(n ? `${n === 1 ? 'A chat' : `${n} chats`} couldn't reach your account, so ${n === 1 ? 'it stays' : 'they stay'} on this computer.` : '');
+  };
+  return (
+    <>
+      <button type="button" className="secondary" disabled={busy} data-testid="sign-out" onClick={() => void go()}>
+        {busy ? 'Signing out…' : 'Sign out'}
+      </button>
+      {error && <p className="help bad">{error}</p>}
+    </>
   );
 }
 
@@ -111,79 +150,31 @@ function Avatar({ picture }: { picture?: string }) {
   );
 }
 
-// ── The plan ─────────────────────────────────────────────────────────────
-
-function Plan({ settings, keys, account }: { settings: Settings; keys: KeyStatus; account: AccountState }) {
-  const usage = useMonthUsage();
-  const checkError = useAccountRefresh(account.user?.id);
-  const ent = account.user ? account.entitlement : null;
-  const hosted = (ent?.quota ?? 0) > 0;
-  return (
-    <div id="plan" className="plan" data-testid="plan">
-      <span className="plan-label">Plan</span>
-      {ent ? (
-        <PlanDetails ent={ent} />
-      ) : account.user ? (
-        <p className={`help${checkError ? ' bad' : ''}`} data-testid="account-checking">
-          {checkError ? `Couldn't check your account: ${checkError}` : 'Checking…'}
-        </p>
-      ) : (
-        <GuestPlan />
-      )}
-      {!hosted && (
-        <div className="month" data-testid="dash-usage">
-          <p className="dash-big" data-testid="answers-this-month">
-            {usage.answers} {usage.answers === 1 ? 'answer' : 'answers'}
-          </p>
-          <small className="help">this month</small>
-          {usage.costUsd >= 0.005 && (
-            <p className="help" data-testid="spend-this-month">
-              About ${usage.costUsd.toFixed(2)} on your API key
-            </p>
-          )}
-        </div>
-      )}
-      <p className="help dash-who" data-testid="who-answers">
-        {whoAnswers(settings, keys)} ·{' '}
-        <a className="link" href="#answers">
-          Change
-        </a>
-      </p>
-    </div>
-  );
-}
-
-/** A guest's plan: free, or Plus by the unlock bought on this computer; the unlock offered, quietly. */
-function GuestPlan() {
+/** A guest's plan: free, or Plus by the unlock bought on this computer. A build without accounts sells nothing: no plan to name. */
+function GuestPlanLine() {
   const open = useExtrasOpen();
-  // A build without accounts sells nothing: no plan to name.
   if (!ACCOUNTS) return null;
   return (
-    <>
-      <span className="plan-name" data-testid="plan-name">
-        {open ? 'Plus' : 'Free'}
-      </span>
-      {open ? (
-        <p className="help" data-testid="unlocked">
-          Unlocked on this computer.
-        </p>
-      ) : (
-        <UnlockOffer />
-      )}
-    </>
+    <span className="plan-line" data-testid="plan-name">
+      <b>{open ? 'Plus' : 'Free'}</b>
+      {open && ' on this computer'}
+    </span>
   );
 }
 
-function UnlockOffer() {
+/** The unlock, offered to a guest, quietly. */
+function GuestUnlock() {
+  const open = useExtrasOpen();
   const [price, setPrice] = useState<string | null>(null);
   const [busy, setBusy] = useState<'buy' | 'restore' | null>(null);
   const [error, setError] = useState('');
   const stop = useRef<AbortController | null>(null);
   useEffect(() => {
+    if (!ACCOUNTS || open) return;
     void unlockOffer().then((p) => p && setPrice(new Intl.NumberFormat(undefined, { style: 'currency', currency: p.currency.toUpperCase() }).format(p.amount / 100)));
     return () => stop.current?.abort();
-  }, []);
-  if (!price) return null;
+  }, [open]);
+  if (open || !price) return null;
 
   const run = async (what: 'buy' | 'restore', fn: () => Promise<unknown>) => {
     setBusy(what);
@@ -217,21 +208,64 @@ function UnlockOffer() {
   );
 }
 
-/** Who answers, as one line. */
-function whoAnswers(s: Settings, keys: KeyStatus): string {
-  switch (s.provider) {
-    case 'byok': {
-      const model = s.modelOverride?.vendor === s.vendor ? s.modelOverride.model : MODEL_TABLE[s.vendor].large;
-      const key = keys[s.vendor] ? `your ${COMPANY[s.vendor]} key ${keys[s.vendor]}` : `no ${COMPANY[s.vendor]} key yet`;
-      return `${ASSISTANT[s.vendor]}, ${MODEL_NAMES[model] ?? model}, with ${key}`;
-    }
-    case 'local':
-      return `The local model ${s.localModel}`;
-    case 'gateway':
-      return 'Hosted answers, with your plan';
-    default:
-      return 'No one yet';
-  }
+// ── Usage ────────────────────────────────────────────────────────────────
+
+function Usage({ settings, account }: { settings: Settings; account: AccountState }) {
+  const usage = useMonthUsage();
+  const ent = account.user ? account.entitlement : null;
+  const units = unitsLeft(account);
+  // The plan's answers are counted for the model picked for them (or the fast one).
+  const model = settings.provider === 'gateway' ? hostedModelOf(settings) : HOSTED_MODEL.anthropic;
+  return (
+    <div id="usage" className="usage" data-testid="usage">
+      <span className="plan-label">Usage</span>
+      {units !== null && ent ? (
+        <Gauge part={units / ent.quota} count={answersLeft(units, model)} label="answers left" note={MODEL_NAMES[model]} />
+      ) : (
+        <Gauge part={0} count={usage.answers} label={usage.answers === 1 ? 'answer this month' : 'answers this month'} />
+      )}
+      <p className="help usage-who" data-testid="who-answers">
+        {USING[settings.provider]}
+      </p>
+    </div>
+  );
+}
+
+const USING: Record<Settings['provider'], string> = {
+  gateway: "You're using your plan.",
+  byok: "You're using your API key.",
+  local: "You're using your local model.",
+  mock: 'Pick who answers below.',
+};
+
+/** The horseshoe: a 270° arc open at the bottom, from bottom left round to bottom right (pathLength 100). */
+const ARC = 'M 43.43 156.57 A 80 80 0 1 1 156.57 156.57';
+
+/**
+ * How much of the month is left (`part`, 0 to 1), filling in when it shows
+ * and following any change; `count` and `label` in its middle.
+ */
+function Gauge({ part, count, label, note }: { part: number; count: number; label: string; note?: string }) {
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setShown(Math.min(1, Math.max(0, part))));
+    return () => cancelAnimationFrame(frame);
+  }, [part]);
+  return (
+    <div className="gauge" data-testid="gauge" data-part={Math.round(part * 1000) / 1000} role="img" aria-label={`${count.toLocaleString()} ${label}`}>
+      <svg viewBox="0 0 200 172" aria-hidden="true">
+        <path className="gauge-track" d={ARC} pathLength={100} />
+        {part > 0 && <path className="gauge-fill" d={ARC} pathLength={100} style={{ strokeDashoffset: 100 - shown * 100 }} />}
+      </svg>
+      <span className="gauge-center" aria-hidden="true">
+        <span className="gauge-count" data-testid="gauge-count">
+          {count.toLocaleString()}
+        </span>
+        <span className="gauge-label">{label}</span>
+        {note && <span className="gauge-note">{note}</span>}
+      </span>
+    </div>
+  );
 }
 
 function useMonthUsage(): MonthUsage {

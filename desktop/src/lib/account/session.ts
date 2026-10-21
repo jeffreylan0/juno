@@ -2,12 +2,15 @@
  * Signing in, staying signed in, and signing out, against Supabase Auth's
  * REST API directly (no SDK: a few calls, and nothing to bundle).
  *
+ * Two ways in, for signing up and signing in alike:
+ *
+ *  - Email: a one-time code (6–10 digits) sent by Supabase, typed back here.
+ *    Signing up makes the account (and, once the code is in, puts the name
+ *    given on it); signing in only finds one.
  *  - Google, in the student's browser (platform/browser.ts), with the app's
  *    own Google client (GOOGLE_CLIENT_ID): back to a one-time listener on
  *    this computer, the Worker trades the code for Google's ID token, and
- *    Supabase signs in with that. A build without the client offers email
- *    codes only.
- *  - Email: a one-time code (6–10 digits) sent by Supabase, typed back here.
+ *    Supabase signs in with that (making the account the first time).
  *
  * The session (access and refresh tokens) is kept like the API keys, in the
  * native core's private secrets file (store.rs). It is never put in the
@@ -82,13 +85,15 @@ export type SyncStatus =
   | { state: 'error'; message: string; at: number };
 export const syncStatusItem = defineItem<SyncStatus>('syncStatus', { state: 'off' });
 
-export type AccountErrorCode = 'config' | 'network' | 'rate-limit' | 'bad-code' | 'bad-email' | 'cancelled' | 'signed-out' | 'server';
+export type AccountErrorCode = 'config' | 'network' | 'rate-limit' | 'bad-code' | 'bad-email' | 'no-account' | 'cancelled' | 'signed-out' | 'server';
 
 export class AccountError extends Error {
   constructor(
     message: string,
     public code: AccountErrorCode,
     public status?: number,
+    /** For a rate limit: the seconds the server says to wait, when it says. */
+    public wait?: number,
   ) {
     super(message);
     this.name = 'AccountError';
@@ -124,7 +129,9 @@ function authError(path: string, status: number, data: Record<string, unknown>):
   const code = String(data.error_code ?? data.error ?? '');
   const said = String(data.msg ?? data.error_description ?? data.message ?? '');
   if (status === 429 || code.startsWith('over_')) {
-    return new AccountError('Too many tries. Wait a minute, then try again.', 'rate-limit', status);
+    // "For security purposes, you can only request this after 37 seconds."
+    const wait = Number(/after (\d+) seconds?/.exec(said)?.[1]) || undefined;
+    return new AccountError(wait ? 'Too many codes sent. Try again when the countdown ends.' : 'Too many tries. Wait a minute, then try again.', 'rate-limit', status, wait);
   }
   if (status >= 500) return new AccountError('The account service had a problem. Try again in a bit.', 'server', status);
   if (path.startsWith('token?grant_type=refresh_token') || ENDED.has(code)) {
@@ -133,6 +140,10 @@ function authError(path: string, status: number, data: Record<string, unknown>):
   if (path === 'verify') return new AccountError("That code didn't work. Check it, or send a new one.", 'bad-code', status);
   if (code === 'email_address_invalid' || (path === 'otp' && code === 'validation_failed')) {
     return new AccountError("That email address doesn't look right.", 'bad-email', status);
+  }
+  // Signing in (not up) with an address no account has.
+  if (path === 'otp' && (code === 'otp_disabled' || /signups? not allowed/i.test(said))) {
+    return new AccountError('No account uses that email yet.', 'no-account', status);
   }
   return new AccountError(said || `Sign-in failed (${status}).`, 'server', status);
 }
@@ -170,12 +181,10 @@ const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padSt
 
 const unfinished = () => new AccountError("Google sign-in didn't finish. Try again.", 'server');
 
-/** Whether this build signs in with Google: only with its own client. */
-export const GOOGLE = ACCOUNTS && !!GOOGLE_CLIENT_ID;
-
 export async function signInWithGoogle(): Promise<AccountSession> {
   need();
-  if (!GOOGLE) throw new AccountError("Google sign-in isn't set up in this build. Use your email instead.", 'server');
+  // The build's Google client (supabase/README.md, step 3); the release workflow warns when it is missing.
+  if (!GOOGLE_CLIENT_ID) throw new AccountError("Google isn't set up in this build yet. Use your email.", 'config');
   return await keep(toSession(await googleItself()));
 }
 
@@ -242,16 +251,38 @@ async function googleItself(): Promise<Record<string, unknown>> {
 
 const isEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 
-/** Emails a sign-in code; makes the account if there is none. */
-export async function sendEmailCode(email: string): Promise<void> {
+/** Emails a code. Signing up makes the account if there is none; signing in only finds one. */
+export async function sendEmailCode(email: string, signUp = false): Promise<void> {
   if (!isEmail(email)) throw new AccountError("That email address doesn't look right.", 'bad-email');
-  await auth('otp', { email: email.trim(), create_user: true });
+  await auth('otp', { email: email.trim(), create_user: signUp });
 }
 
-export async function verifyEmailCode(email: string, code: string): Promise<AccountSession> {
+/** Signs in with the emailed code; signing up, puts the name given on the account. */
+export async function verifyEmailCode(email: string, code: string, name?: string): Promise<AccountSession> {
   const token = code.replace(/\D/g, '');
   if (token.length < 6 || token.length > 10) throw new AccountError("That code didn't work. Check it, or send a new one.", 'bad-code');
-  return await keep(toSession(await auth('verify', { type: 'email', email: email.trim(), token })));
+  const session = toSession(await auth('verify', { type: 'email', email: email.trim(), token }));
+  return await keep(name?.trim() ? await named(session, name.trim().slice(0, 80)) : session);
+}
+
+/**
+ * The name given when signing up, put on the account once its code has
+ * proved the address (never with the code's request, where anyone could name
+ * an account for an address they don't hold). Not put: the account keeps its
+ * own (or none), and signing up still worked.
+ */
+async function named(session: AccountSession, name: string): Promise<AccountSession> {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method: 'PUT',
+      headers: { apikey: SUPABASE_KEY, authorization: `Bearer ${session.accessToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ data: { full_name: name } }),
+    });
+    if (res.ok) return { ...session, user: { ...session.user, name } };
+  } catch {
+    // Offline for a moment: no name, nothing else lost.
+  }
+  return session;
 }
 
 // ── The session ──────────────────────────────────────────────────────────

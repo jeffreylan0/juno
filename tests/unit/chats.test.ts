@@ -34,6 +34,7 @@ import {
   setCurrent,
   setTemporary,
   startChat,
+  startsTemporary,
   switchTo,
 } from '@/lib/current';
 import { settingsItem, DEFAULT_SETTINGS } from '@/lib/storage';
@@ -290,6 +291,20 @@ describe('a chat’s life', () => {
     await endChat(W);
     expect(await addSelection(W, { plan: plan('c'), into: fresh })).toBeNull();
     expect(await listChats()).toEqual([]);
+  });
+
+  it('with every chat temporary by default, a new chat starts temporary, and the ghost turns it off', async () => {
+    await settingsItem.setValue({ ...DEFAULT_SETTINGS, temporaryByDefault: true });
+    expect(await startsTemporary(W)).toBe(true); // the bar's ghost, before any chat
+    const { chat } = (await addSelection(W, { plan: plan('a') }))!;
+    expect(chat.temporary).toBe(true);
+    expect(await listChats()).toEqual([]);
+    await endChat(W);
+    expect((await panelOpened(W)).temporary).toBe(true);
+    const saved = await setTemporary(W, false);
+    expect(saved.temporary).toBe(false);
+    expect(await startsTemporary(W)).toBe(false);
+    await settingsItem.setValue(DEFAULT_SETTINGS);
   });
 
   it('the ghost before any chat (the bar up, the panel not yet open) makes the first selection temporary', async () => {

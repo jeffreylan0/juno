@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react';
 import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
 import type { AccountState } from '@/ui/useAccount';
-import { SignIn } from './Account';
+import { SignUpOrIn } from './Account';
 
 export function Intro({ account, onDone }: { account: AccountState; onDone: () => void }) {
   const [signing, setSigning] = useState(false);
@@ -45,17 +45,7 @@ export function Intro({ account, onDone }: { account: AccountState; onDone: () =
           <span className="intro-name">{BRAND.name}</span>
         </h1>
         <div className="intro-actions">
-          {ACCOUNTS &&
-            (signing ? (
-              <SignIn onCancel={() => setSigning(false)} />
-            ) : (
-              <>
-                <button type="button" className="primary" data-testid="intro-sign-in" onClick={() => setSigning(true)}>
-                  Sign up or sign in
-                </button>
-                <small className="help">Unlock hosted answers and cloud storage.</small>
-              </>
-            ))}
+          {ACCOUNTS && <SignUpOrIn why="Unlock hosted answers and cloud storage." onOpen={setSigning} />}
           {!signing && (
             <button type="button" className={ACCOUNTS ? 'link' : 'primary'} data-testid="intro-continue" onClick={onDone}>
               {ACCOUNTS ? 'Continue without an account' : 'Get started'}

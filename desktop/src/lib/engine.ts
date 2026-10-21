@@ -9,7 +9,7 @@
  */
 import type { AskRequest, Attachment, ChatTurn } from '@shared/payload';
 import { deleteAccount } from './account/cloud';
-import { currentSession, sessionItem } from './account/session';
+import { currentSession, sessionItem, signOut } from './account/session';
 import { ChatSync } from './account/sync';
 import {
   attachmentOf,
@@ -50,6 +50,7 @@ import {
   DEFAULT_SETTINGS,
   GATEWAY_URL,
   answerChoiceOf,
+  hostedModelOf,
   fallbackQuestion,
   getSettings,
   settingsItem,
@@ -85,6 +86,7 @@ const SHARED: ReadonlySet<string> = new Set([
   'keys:test',
   'sync:now',
   'account:delete',
+  'account:sign-out',
 ]);
 
 export interface EngineHost {
@@ -273,6 +275,26 @@ export class ChatEngine {
           .catch((err: Error) => ({ error: err.message }))
           .then(sendResponse);
         return true;
+      case 'account:sign-out':
+        void (async () => {
+          let ended = false;
+          const end = async () => {
+            ended = true;
+            await signOut();
+          };
+          // Whatever goes wrong with the chats, signing out still happens (and they stay).
+          const { removed, kept } = await (this.sync?.signOut(end) ?? end().then(() => ({ removed: [] as string[], kept: 0 }))).catch(async () => ({
+            removed: [] as string[],
+            kept: (await listChats()).length,
+          }));
+          if (!ended) await signOut();
+          removed.forEach((id) => this.stopStream(id));
+          await this.serial(() => replaceGone(removed));
+          return { ok: true, kept };
+        })()
+          .catch((err: Error) => ({ error: err.message }))
+          .then(sendResponse);
+        return true;
     }
   }
 
@@ -407,7 +429,7 @@ export class ChatEngine {
         for await (const chunk of callModel(request, route, ctx, {
           provider: current.provider,
           vendor: current.vendor,
-          model: current.modelOverride,
+          model: current.provider === 'gateway' ? { vendor: current.vendor, model: hostedModelOf(current) } : current.modelOverride,
         })) {
           if (chunk.type === 'delta') {
             text += chunk.text;
@@ -433,8 +455,8 @@ export class ChatEngine {
         clearInterval(timer);
       }
       await finish(done, { touch: true, index: true });
-      // Counted for this month's numbers in settings (lib/usage.ts): only answers that came, and only a key's cost.
-      if (!done.error && text.trim()) void this.serial(() => countAnswer(current.provider === 'byok' ? done.usage?.costUsd : 0)).catch(() => {});
+      // Counted for this month's answers in settings (lib/usage.ts): only answers that came.
+      if (!done.error && text.trim()) void this.serial(() => countAnswer()).catch(() => {});
     } catch (err) {
       console.warn('[selection-ai] ask failed', err);
       if (answerId) await finish({ streaming: false, error: (err as Error).message }, { touch: true, index: true });

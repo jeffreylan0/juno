@@ -7,6 +7,7 @@
  * Neither vendor trains on API traffic by default. What each keeps, and what
  * a temporary chat changes, is noted at each call below.
  */
+import { SERVER_FALLBACK } from '@shared/models';
 import type { AskRequest, ModelRef } from '@shared/payload';
 import { COMPANY, estimateCostUsd } from '../router';
 import { cutOff, declined, describeStreamError, ensureVendorOk, vendorFetch } from './errors';
@@ -28,13 +29,6 @@ export const ANTHROPIC_BETA = 'server-side-fallback-2026-07-01';
  */
 export const MAX_OUTPUT_TOKENS = 32_000;
 
-/**
- * Models whose safeguards may decline a question (a biology problem can look
- * like research they won't help with). With `fallbacks: "default"` Anthropic
- * answers a declined question with the model it recommends for that case, in
- * the same request. Haiku has no fallback to go to.
- */
-const FALLBACK_MODELS = new Set(['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1']);
 /** Models the key's account turned the fallback down for: asked again without it, and remembered. */
 const NO_FALLBACK = new Set<string>();
 
@@ -158,7 +152,7 @@ async function* streamAnthropic(
     return res;
   };
   let res: Response;
-  if (FALLBACK_MODELS.has(model.model) && !NO_FALLBACK.has(model.model)) {
+  if (SERVER_FALLBACK.has(model.model) && !NO_FALLBACK.has(model.model)) {
     try {
       res = await call({ ...body, fallbacks: 'default' });
     } catch (err) {

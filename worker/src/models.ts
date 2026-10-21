@@ -3,9 +3,10 @@
  * sent anywhere else) and streams the answer back in the OpenAI chat-chunk
  * shape the app already reads (openai-compat.ts), so it has one parser.
  *
- * What may be asked is checked before anything is spent: only the models the
- * apps choose themselves, only text and screenshots, and no more of either
- * than a long chat has. Optionally through Cloudflare's AI Gateway
+ * What may be asked is checked before anything is spent: only the models a
+ * plan offers (each answer taking what it costs from the allowance:
+ * ANSWER_COST), only text and screenshots, and no more of either than a
+ * long chat has. Optionally through Cloudflare's AI Gateway
  * (AI_GATEWAY_ID) for spend analytics. Its request logging and its response
  * cache are switched off on every call: hosted answers keep no copy of what
  * was asked, and never hand one student an answer made for another.
@@ -19,7 +20,7 @@
  * shared between chats or students, and the scope says nothing about who
  * asked (a hash the vendors cannot link from one chat to the next).
  */
-import { HOSTED_MODEL } from '@selection-ai/shared/models';
+import { ANSWER_COST, SERVER_FALLBACK, vendorOf } from '@selection-ai/shared/models';
 import type { Env } from './index';
 
 export interface AskBody {
@@ -36,10 +37,10 @@ interface ChatMessage {
   content: string | ContentPart[];
 }
 
-/** Models hosted answers may use: the apps' own fast model for each vendor, nothing else. */
+/** Models hosted answers may use, by vendor: the ones a plan offers, nothing else. */
 export const HOSTED_MODELS: Record<'anthropic' | 'openai', string[]> = {
-  anthropic: [HOSTED_MODEL.anthropic],
-  openai: [HOSTED_MODEL.openai],
+  anthropic: Object.keys(ANSWER_COST).filter((m) => vendorOf(m) === 'anthropic'),
+  openai: Object.keys(ANSWER_COST).filter((m) => vendorOf(m) === 'openai'),
 };
 
 /**
@@ -172,10 +173,19 @@ export async function callVendor(vendor: 'anthropic' | 'openai', model: string, 
       'content-type': 'application/json',
       'x-api-key': env.ANTHROPIC_API_KEY,
       'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'server-side-fallback-2026-07-01',
       ...gatewayHeaders(env),
     },
-    // Low effort: hosted answers are meant to be quick.
-    body: JSON.stringify({ model, system, messages, max_tokens: MAX_OUTPUT_TOKENS, output_config: { effort: 'low' }, stream: true }),
+    // Low effort: hosted answers are meant to be quick, and ANSWER_COST counts on it.
+    body: JSON.stringify({
+      model,
+      system,
+      messages,
+      max_tokens: MAX_OUTPUT_TOKENS,
+      output_config: { effort: 'low' },
+      ...(SERVER_FALLBACK.has(model) ? { fallbacks: 'default' } : {}),
+      stream: true,
+    }),
   });
   if (!res.ok || !res.body) return res;
   return new Response(res.body.pipeThrough(anthropicToOpenAI()), { status: 200, headers: { 'content-type': 'text/event-stream' } });

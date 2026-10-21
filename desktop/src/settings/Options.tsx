@@ -28,7 +28,6 @@ import { ACCOUNTS } from '@/lib/account/config';
 import { listChats } from '@/lib/chats';
 import { UNLOCK } from '@/lib/account/unlock';
 import { FREE_MACROS, withinPlan } from '@/lib/extras';
-import { MAJOR_MODELS, MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
 import type { KeyModel } from '@/lib/providers/byok';
 import type { KeyStatus, KeyVendor as Vendor } from '@/lib/providers/types';
 import {
@@ -46,6 +45,7 @@ import {
 import { Icon } from '@/ui/icons';
 import { DEFAULT_THEME, THEMES } from '@/lib/themes';
 import { hasHosted, useAccount, useExtrasOpen, type AccountState } from '@/ui/useAccount';
+import { ModelSelect } from '@/ui/ModelPicker';
 import { useKeyStatus } from '@/ui/useKeyStatus';
 import { MAC } from '../os';
 import { AppSection } from './AppSection';
@@ -60,7 +60,8 @@ import { Setup } from './Setup';
 import { ShortcutField } from './ShortcutField';
 import { ThemePicker } from './ThemePicker';
 import { useDebounced } from './useDebounced';
-import { AccountSection } from './Account';
+import { AccountSection, SyncLine } from './Account';
+import type { SyncStatus } from '@/lib/account/session';
 
 /** Who can answer, the plan first (in a build with accounts: lib/account/config.ts). */
 const CHOICES: { id: Choice; name: string; sub: string }[] = [
@@ -166,7 +167,7 @@ export function Options() {
       </header>
 
       <main className="options">
-        <Dashboard settings={settings} keys={keys} account={account} />
+        <Dashboard settings={settings} account={account} />
         <div className="layout">
           <SideMenu sections={sections} />
           <div className="sections">
@@ -212,7 +213,7 @@ export function Options() {
             </Section>
             <SelectingSection settings={settings} save={save} locked={extras ? null : unlockLabel(account)} />
             <PrivacySection settings={settings} save={save} account={account} />
-            <AccountSection account={account} settings={settings} save={save} />
+            <AccountSection account={account} />
             {MAC && (
               <Section id="permissions" title="Permissions" sub="What macOS lets Juno do, and the one thing it asks for.">
                 <Permissions />
@@ -274,14 +275,14 @@ function SideMenu({ sections }: { sections: { id: string; title: string }[] }) {
 /** What a locked extra's button says: a guest can unlock this computer (where the build sells it), a signed-in account gets Plus (lib/extras.ts). */
 const unlockLabel = (account: AccountState) => (account.user || !UNLOCK ? 'Get Plus' : 'Unlock');
 
-/** A locked extra's way to it: why, and a white button to the plan (at the top). */
+/** A locked extra's way to it: why, and a white button to the plan (at the top, under who you are). */
 function ToPlan({ label, what }: { label: string; what: string }) {
   return (
     <div className="to-plan" data-testid="to-plan">
       <span>
         {what}, with {label === 'Unlock' ? 'the unlock or Plus' : 'Plus'}.
       </span>
-      <button type="button" className="unlock-btn" onClick={() => document.getElementById('plan')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
+      <button type="button" className="unlock-btn" onClick={() => document.getElementById('account')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
         {label}
       </button>
     </div>
@@ -364,7 +365,6 @@ function AnswersSection({
 
   const choose = (next: Choice) => void save(patchFor(next, settings, keys));
   const hosted = hasHosted(account);
-  const ent = account.entitlement;
 
   return (
     <Section
@@ -381,22 +381,17 @@ function AnswersSection({
           </label>
         ))}
       </div>
-      {choice === 'hosted' &&
-        (hosted && ent ? (
-          <p className="help" data-testid="hosted-help">
-            {Math.max(0, ent.quota - ent.used)} of {ent.quota} left this month.
-          </p>
-        ) : (
-          <p className="help warn" data-testid="hosted-help">
-            {account.user ? "Your plan doesn't include hosted answers yet: Plus does (at the top)." : 'Sign up or sign in at the top first.'}
-          </p>
-        ))}
+      <ModelSelect settings={settings} keys={keys} account={account} listed={models} />
+      {choice === 'hosted' && !hosted && (
+        <p className="help warn" data-testid="hosted-help">
+          {account.user ? "Your plan doesn't include hosted answers yet: Plus does (at the top)." : 'Sign up or sign in at the top first.'}
+        </p>
+      )}
 
       {choice === 'key' && (
         <KeyAndModel
           settings={settings}
           keys={keys}
-          listed={models[settings.vendor]}
           save={save}
           onKeySaved={onKeySaved}
           rememberModels={rememberModels}
@@ -407,61 +402,29 @@ function AnswersSection({
   );
 }
 
+/** Your own key, Anthropic's or OpenAI's (the model is picked above, with the rest). */
 function KeyAndModel({
   settings,
   keys,
-  listed,
   save,
   onKeySaved,
   rememberModels,
 }: {
   settings: Settings;
   keys: KeyStatus;
-  listed: KeyModel[] | undefined;
   save: (patch: Partial<Settings>) => Promise<void>;
   onKeySaved: () => void;
   rememberModels: (vendor: Vendor, list: KeyModel[]) => Promise<void>;
 }) {
-  const vendor = settings.vendor;
-  const table = MODEL_TABLE[vendor];
-  const override = settings.modelOverride?.vendor === vendor ? settings.modelOverride.model : '';
-  // Selections are screenshots: only models that read images are offered (one picked before stays, marked).
-  const choices: KeyModel[] = (listed ?? MAJOR_MODELS[vendor].map((id) => ({ id, name: MODEL_NAMES[id] ?? id, vision: true }))).filter(
-    (m) => m.vision || m.id === override,
-  );
-
   return (
     <div className="sub" data-testid="keys">
       <KeyField
         keys={keys}
-        current={vendor}
+        current={settings.vendor}
         onUse={(v) => void save(keyPatch(v, settings))}
         onSaved={onKeySaved}
         onChecked={(v, models) => void rememberModels(v, models)}
       />
-
-      {keys[vendor] && (
-      <label className="field">
-        <span className="field-label">Model</span>
-        <select
-          value={override}
-          data-testid="model-select"
-          onChange={(e) => void save({ modelOverride: e.target.value ? { vendor, model: e.target.value } : null })}
-        >
-          <option value="">
-            Automatic — {MODEL_NAMES[table.large]}
-          </option>
-          {choices.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name}
-              {m.vision ? '' : " (can't read screenshots)"}
-            </option>
-          ))}
-          {override && !choices.some((m) => m.id === override) && <option value={override}>{override}</option>}
-        </select>
-        {!listed && <small className="help">Check your key to see every model.</small>}
-      </label>
-      )}
     </div>
   );
 }
@@ -604,14 +567,6 @@ function SelectingSection({ settings, save, locked }: { settings: Settings; save
         )}
         <PanelSizeNote />
       </div>
-
-      <div className="field" id="notices">
-        <label className="check">
-          <input type="checkbox" checked={settings.panelNotices} data-testid="panel-notices" onChange={(e) => void save({ panelNotices: e.target.checked })} />
-          Notices in the panel
-        </label>
-        <small className="help">No key, no connection, an old chat deleted. They go by themselves after 5 seconds.</small>
-      </div>
     </Section>
   );
 }
@@ -636,6 +591,7 @@ function PanelSizeNote() {
 
 // ── 4. Chats & privacy ───────────────────────────────────────────────────
 
+/** Chats (where, how many, temporary or not), then what is sent, then the panel's notices. */
 function PrivacySection({
   settings,
   save,
@@ -645,18 +601,19 @@ function PrivacySection({
   save: (patch: Partial<Settings>) => Promise<void>;
   account: AccountState;
 }) {
-  // Chats go to the cloud only for an account that has cloud storage and turned it on.
-  const cloud = !!account.user && !!account.entitlement?.cloud && settings.cloudSync;
+  // Chats go to the cloud only for an account that has cloud storage and keeps them there (the default).
+  const offered = !!account.user && !!account.entitlement?.cloud;
+  const cloud = offered && settings.cloudSync;
 
   return (
-    <Section id="privacy" title="Chats & privacy" sub="What Juno keeps on this computer, and what it sends.">
-      <ChatsField limit={settings.chatLimit} cloud={cloud} save={save} />
+    <Section id="privacy" title="Chats & privacy" sub="Where your chats are kept, what Juno sends, and its notices.">
+      <ChatsField settings={settings} offered={offered} sync={account.sync} save={save} />
 
       <div className="field" data-testid="what-is-sent">
         <span className="field-label">What's sent</span>
         <p className="help">
-          Only your selection and its window's title, to the AI you picked. Keys and chats stay on this computer
-          {cloud ? ' (chats also in your account)' : ''}, in files only your account can read.
+          Only your selection and its window's title, to the AI you picked. Keys and chats are kept on this computer in files only your user
+          account can read{cloud ? '; chats also in your Juno account' : ''}.
         </p>
         <ul className="help facts">
           <li>
@@ -675,20 +632,76 @@ function PrivacySection({
           </li>
           {ACCOUNTS && (
             <li>
-              <b>Account</b>: your email; chats sync only if you turn it on.
+              <b>Account</b>: your email, and your chats unless you keep them on this computer.
             </li>
           )}
         </ul>
+      </div>
+
+      <div className="field" id="notices">
+        <span className="field-label">Notices</span>
+        <label className="check">
+          <input type="checkbox" checked={settings.panelNotices} data-testid="panel-notices" onChange={(e) => void save({ panelNotices: e.target.checked })} />
+          Notices in the panel
+        </label>
+        <small className="help">No key, no connection, an old chat deleted. They go by themselves after 5 seconds.</small>
       </div>
     </Section>
   );
 }
 
 /**
- * How many chats are kept, and a way to clear them. Keeping fewer than there
- * are, or deleting them all, asks first, since neither can be undone.
+ * Where chats are kept: in the account (the default, for a plan with cloud
+ * storage; signing out takes them off this computer) or on this computer
+ * only, which says what that means.
  */
-function ChatsField({ limit, cloud, save }: { limit: number; cloud: boolean; save: (patch: Partial<Settings>) => Promise<void> }) {
+function StorageField({ settings, offered, sync, save }: { settings: Settings; offered: boolean; sync: SyncStatus; save: (patch: Partial<Settings>) => Promise<void> }) {
+  const cloud = offered && settings.cloudSync;
+  const options = [
+    { id: 'cloud', label: 'Your account', on: cloud, disabled: !offered, patch: { cloudSync: true } },
+    { id: 'local', label: 'This computer', on: !cloud, disabled: false, patch: { cloudSync: false } },
+  ];
+  return (
+    <div className="storage">
+      <div className="segments" role="radiogroup" aria-label="Where chats are kept" data-testid="storage">
+        {options.map((o) => (
+          <button
+            key={o.id}
+            type="button"
+            role="radio"
+            aria-checked={o.on}
+            disabled={o.disabled}
+            data-storage={o.id}
+            onClick={() => void save(o.patch)}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {cloud ? (
+        <>
+          <small className="help">On every computer you sign in on. Signing out takes them off this one.</small>
+          <SyncLine status={sync} />
+        </>
+      ) : offered ? (
+        <p className="help warn" data-testid="local-notice">
+          Only on this computer, where they stay after you sign out: anyone who uses it can open them in Juno.
+        </p>
+      ) : (
+        <small className="help">Your account keeps them with Plus.</small>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The chats: where they are kept, how many, whether new ones are temporary,
+ * and a way to clear them. Keeping fewer than there are, or deleting them
+ * all, asks first, since neither can be undone.
+ */
+function ChatsField({ settings, offered, sync, save }: { settings: Settings; offered: boolean; sync: SyncStatus; save: (patch: Partial<Settings>) => Promise<void> }) {
+  const limit = settings.chatLimit;
+  const cloud = offered && settings.cloudSync;
   const [count, setCount] = useState<number | null>(null);
   const [confirming, setConfirming] = useState<{ kind: 'all' } | { kind: 'limit'; to: number } | null>(null);
   useEffect(() => {
@@ -708,9 +721,7 @@ function ChatsField({ limit, cloud, save }: { limit: number; cloud: boolean; sav
   return (
     <div className="field" data-testid="chats">
       <span className="field-label">Chats</span>
-      <p className="help">
-        {cloud ? 'Past the limit, the oldest leaves this computer but stays in your account.' : 'Past the limit, the oldest is deleted.'}
-      </p>
+      {ACCOUNTS && <StorageField settings={settings} offered={offered} sync={sync} save={save} />}
       <label className="key-row limit-row">
         <span>Keep my</span>
         <select
@@ -728,6 +739,19 @@ function ChatsField({ limit, cloud, save }: { limit: number; cloud: boolean; sav
         </select>
         <span>{(confirming?.kind === 'limit' ? confirming.to : limit) === 1 ? 'most recent chat' : 'most recent chats'}</span>
       </label>
+      <small className="help">
+        {cloud ? 'Past the limit, the oldest leaves this computer but stays in your account.' : 'Past the limit, the oldest is deleted.'}
+      </small>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={settings.temporaryByDefault}
+          data-testid="temporary-default"
+          onChange={(e) => void save({ temporaryByDefault: e.target.checked })}
+        />
+        Start every chat as temporary
+      </label>
+      <small className="help">Never saved{ACCOUNTS ? ' or synced' : ''}. The ghost turns it off for a chat.</small>
       {confirming?.kind === 'limit' ? (
         <div className="confirm-row">
           <span>
@@ -767,7 +791,7 @@ function ChatsField({ limit, cloud, save }: { limit: number; cloud: boolean; sav
           </button>
         </div>
       ) : (
-        <button type="button" className="secondary" data-testid="delete-chats" disabled={!count} onClick={() => setConfirming({ kind: 'all' })}>
+        <button type="button" className="danger" data-testid="delete-chats" disabled={!count} onClick={() => setConfirming({ kind: 'all' })}>
           {count ? `Delete all chats (${count})` : 'No saved chats'}
         </button>
       )}

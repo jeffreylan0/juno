@@ -29,7 +29,7 @@ import { browser, note, transport } from '../platform/install';
 import { WINDOW_ID, type Port } from '../platform/browser';
 import { appFetch } from '../platform/net';
 import { nativeVault, watchKeys } from '../platform/vault';
-import { endChat, ensureCurrent, getCurrent, panelOpened, setTemporary, switchTo } from '@/lib/current';
+import { endChat, ensureCurrent, panelOpened, setTemporary, startsTemporary, switchTo } from '@/lib/current';
 import { ChatEngine, reply, type KeptCapture } from '@/lib/engine';
 import { extrasOpenNow, withinPlan } from '@/lib/extras';
 import { getSettings, panelSizeItem } from '@/lib/storage';
@@ -85,7 +85,7 @@ let shortcutUntold = false;
 async function summon(): Promise<void> {
   const blocked = (await transport.invoke<string>('screen_access')) === 'denied' && !screenLater;
   const mode = 'box';
-  const ghost = !!(await getCurrent(W))?.temporary;
+  const ghost = await startsTemporary(W);
   // Focused, so Escape (and Enter on a drawn box) reach it while selecting.
   await transport.invoke('overlay_show', { focus: true }).catch((err) => note(`overlay_show failed: ${String(err)}`));
   barUp = true;

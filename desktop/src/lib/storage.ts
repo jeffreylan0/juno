@@ -4,6 +4,7 @@
  * read them (vault.rs). Chats are not here: see lib/chats.ts (and
  * lib/images.ts for screenshots).
  */
+import { ANSWER_COST, HOSTED_MODEL, vendorOf } from '@shared/models';
 import { DEFAULT_MACROS, DEFAULT_PROMPT, DEFAULT_PROMPTS, type Macro } from '@shared/prompts';
 import type { ModelRef, Provider } from '@shared/payload';
 import type { Place } from '@/selection/bar';
@@ -27,7 +28,7 @@ export const CHAT_LIMITS = [1, 5, 10, 25, 50, 100] as const;
 const DEFAULT_CHAT_LIMIT = 10;
 
 /** Bumped when a default changes in a way stored settings must pick up. */
-export const SETTINGS_VERSION = 6;
+export const SETTINGS_VERSION = 7;
 
 /**
  * Where hosted plans are served from. A build setting, not a student one: it
@@ -46,6 +47,8 @@ export interface Settings {
   vendor: 'anthropic' | 'openai';
   /** Explicit model override; empty means "let the router choose". */
   modelOverride: ModelRef | null;
+  /** The model hosted answers use (a key of ANSWER_COST); null: the fast one. */
+  hostedModel: string | null;
   /** What sits in the question box when a selection lands. Short, so it fits. */
   defaultPrompt: string;
   /** The buttons above the question box. Each fills the box and sends. */
@@ -71,10 +74,13 @@ export interface Settings {
   /** Notices floating over the panel's chat (ui/Notices.tsx): no key, disconnected, an old chat deleted. */
   panelNotices: boolean;
   /**
-   * Copy saved chats to the signed-in account (account/sync.ts). Only does
-   * anything for accounts given cloud storage; off until the student turns it on.
+   * Keep saved chats in the signed-in account's cloud (account/sync.ts), and
+   * none on this computer once signed out. Only does anything for accounts
+   * with cloud storage; on unless the student keeps them on this computer.
    */
   cloudSync: boolean;
+  /** Every new chat starts temporary (the ghost on): not saved, not synced. */
+  temporaryByDefault: boolean;
   localBaseUrl: string;
   localModel: string;
   /** The first-launch intro (settings/Intro.tsx) has played: it plays once. */
@@ -88,6 +94,7 @@ export const DEFAULT_SETTINGS: Settings = {
   provider: 'mock',
   vendor: 'anthropic',
   modelOverride: null,
+  hostedModel: null,
   defaultPrompt: DEFAULT_PROMPT,
   macros: DEFAULT_MACROS.map((m) => ({ ...m })),
   sendBehavior: 'prefill',
@@ -99,7 +106,8 @@ export const DEFAULT_SETTINGS: Settings = {
   scheme: 'system',
   autoUpdate: true,
   panelNotices: true,
-  cloudSync: false,
+  cloudSync: true,
+  temporaryByDefault: false,
   localBaseUrl: 'http://localhost:11434/v1',
   localModel: 'qwen2.5vl:7b',
   introSeen: false,
@@ -167,6 +175,9 @@ export async function getSettings(): Promise<Settings> {
  * v5: an Answer macro joins the defaults, added to macros that lack one.
  * v6: placeholder answers are gone from the app; someone who had picked a
  * real AI has the first-run setup behind them.
+ * v7: a new install keeps chats in the cloud (for accounts with cloud
+ * storage) unless the student keeps them on this computer; an earlier
+ * choice, which was off until turned on, is kept as it was.
  */
 export function migrateSettings(stored: unknown): Settings {
   const s = (stored && typeof stored === 'object' ? stored : {}) as Partial<Settings> & {
@@ -193,6 +204,8 @@ export function migrateSettings(stored: unknown): Settings {
     if (!s.macros.some(has)) merged.macros = [...s.macros, { ...answer }];
   }
   if ((s.version ?? 1) < 6) merged.setupDone = s.provider !== undefined && s.provider !== 'mock';
+  if (merged.hostedModel !== null && !Object.hasOwn(ANSWER_COST, merged.hostedModel)) merged.hostedModel = null;
+  merged.temporaryByDefault = merged.temporaryByDefault === true;
   // Set up before there was an intro: it is behind them too.
   if (s.introSeen === undefined) merged.introSeen = merged.setupDone;
   if ((merged.sendBehavior as string) === 'auto-box') merged.sendBehavior = 'auto';
@@ -224,16 +237,19 @@ const V2_DEFAULT_PROMPT = 'Explain this step by step.';
  * optional model) because the providers need them apart, but the student
  * only ever makes one decision, in the panel's model picker or in settings.
  */
-export type AnswerChoice = 'none' | 'local' | 'hosted' | `${'anthropic' | 'openai'}:${string}`;
+export type AnswerChoice = 'none' | 'local' | `hosted:${string}` | `${'anthropic' | 'openai'}:${string}`;
 
-export function answerChoiceOf(s: Pick<Settings, 'provider' | 'vendor' | 'modelOverride'>): AnswerChoice {
+/** The model hosted answers use: the one picked, or the fast one. */
+export const hostedModelOf = (s: Pick<Settings, 'hostedModel'>): string => s.hostedModel ?? HOSTED_MODEL.anthropic;
+
+export function answerChoiceOf(s: Pick<Settings, 'provider' | 'vendor' | 'modelOverride' | 'hostedModel'>): AnswerChoice {
   switch (s.provider) {
     case 'mock':
       return 'none';
     case 'local':
       return 'local';
     case 'gateway':
-      return 'hosted';
+      return `hosted:${hostedModelOf(s)}`;
     case 'byok':
       return `${s.vendor}:${s.modelOverride?.vendor === s.vendor ? s.modelOverride.model : 'auto'}`;
   }
@@ -242,11 +258,20 @@ export function answerChoiceOf(s: Pick<Settings, 'provider' | 'vendor' | 'modelO
 export function withAnswerChoice(s: Settings, choice: AnswerChoice): Settings {
   if (choice === 'none') return { ...s, provider: 'mock' };
   if (choice === 'local') return { ...s, provider: 'local' };
-  // Hosted answers use Claude's fast model (shared/models.ts).
-  if (choice === 'hosted') return { ...s, provider: 'gateway', vendor: 'anthropic', modelOverride: null };
+  if (choice.startsWith('hosted:')) {
+    const model = choice.slice('hosted:'.length);
+    return { ...s, provider: 'gateway', vendor: vendorOf(model), hostedModel: model === HOSTED_MODEL.anthropic ? null : model };
+  }
   const [vendor, model] = choice.split(':') as ['anthropic' | 'openai', string];
   return { ...s, provider: 'byok', vendor, modelOverride: model === 'auto' || !model ? null : { vendor, model } };
 }
+
+/**
+ * Whether a local model has been set up: picked, or its address or model
+ * changed from the guess the app starts with (Ollama's usual one).
+ */
+export const localSetUp = (s: Pick<Settings, 'provider' | 'localBaseUrl' | 'localModel'>): boolean =>
+  s.provider === 'local' || s.localBaseUrl !== DEFAULT_SETTINGS.localBaseUrl || s.localModel !== DEFAULT_SETTINGS.localModel;
 
 /** The first thing to ask when nothing was typed: the default prompt, else the first macro. */
 export function fallbackQuestion(s: Pick<Settings, 'defaultPrompt' | 'macros'>): string {

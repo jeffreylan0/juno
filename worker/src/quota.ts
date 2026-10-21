@@ -1,7 +1,8 @@
 /**
- * Hosted answers a month, counted in Supabase (public.usage). The count and
- * the check are one statement (public.use_answer), so two answers at once
- * cannot both take the last one; a failed answer is given back
+ * Hosted answers a month, counted in Supabase (public.usage), in answers from
+ * the fast models: a bigger model's answer takes more (ANSWER_COST). The
+ * count and the check are one statement (public.use_answer), so two answers
+ * at once cannot both take the last of it; a failed answer is given back
  * (public.refund_answer).
  */
 import type { Env } from './index';
@@ -16,11 +17,11 @@ export interface Use {
   period: string;
 }
 
-/** Takes one answer from this month's allowance, if any is left. */
-export async function useAnswer(session: Session, env: Env): Promise<Use> {
-  return await rpc<Use>(env, 'use_answer', { p_user: session.userId });
+/** Takes `cost` from this month's allowance, if that much is left. */
+export async function useAnswer(session: Session, cost: number, env: Env): Promise<Use> {
+  return await rpc<Use>(env, 'use_answer', { p_user: session.userId, p_cost: cost });
 }
 
-export async function refundAnswer(session: Session, period: string, env: Env): Promise<void> {
-  await rpc(env, 'refund_answer', { p_user: session.userId, p_period: period }).catch(() => {});
+export async function refundAnswer(session: Session, period: string, cost: number, env: Env): Promise<void> {
+  await rpc(env, 'refund_answer', { p_user: session.userId, p_period: period, p_cost: cost }).catch(() => {});
 }
