@@ -21,6 +21,7 @@
  * asked (a hash the vendors cannot link from one chat to the next).
  */
 import { ANSWER_COST, SERVER_FALLBACK, vendorOf } from '@selection-ai/shared/models';
+import { systemPrompt } from '@selection-ai/shared/prompts';
 import type { Env } from './index';
 
 export interface AskBody {
@@ -56,7 +57,7 @@ export const LIMITS = { messages: 100, images: 20, imageChars: 7_000_000, textCh
  * fast models' price, where 4,096 could cut a hard answer short.
  */
 const MAX_OUTPUT_TOKENS = 16_000;
-const ROLES = ['system', 'user', 'assistant'] as const;
+const ROLES = ['user', 'assistant'] as const;
 /** A screenshot, inline: never a URL the vendor would fetch. */
 const IMAGE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
 
@@ -73,6 +74,13 @@ export class BadRequest extends Error {
 const malformed = () => new BadRequest('A message is malformed.');
 
 /**
+ * Hosted answers are Juno's answers: the service's own system prompt, the
+ * app's (shared/prompts.ts), whatever a request says. A client's own is
+ * dropped, so the service's keys never answer to someone else's instructions.
+ */
+const SYSTEM = systemPrompt('ask');
+
+/**
  * The request, rebuilt from the parts it may have: anything else (other
  * content types, remote image URLs, extra fields) is refused, never passed on.
  */
@@ -87,9 +95,11 @@ export function parseAsk(raw: unknown): { vendor: 'anthropic' | 'openai'; model:
   }
   let images = 0;
   let text = 0;
-  const messages = (body.messages as unknown[]).map((m): ChatMessage => {
+  const turns = (body.messages as unknown[]).filter((m) => (m as { role?: unknown } | null)?.role !== 'system');
+  if (!turns.length) throw new BadRequest('A model and messages are needed.');
+  const messages = turns.map((m): ChatMessage => {
     const { role, content } = (m ?? {}) as { role?: unknown; content?: unknown };
-    if (!ROLES.includes(role as ChatMessage['role'])) throw malformed();
+    if (!ROLES.includes(role as (typeof ROLES)[number])) throw malformed();
     if (typeof content === 'string') {
       text += content.length;
       return { role: role as ChatMessage['role'], content };
@@ -116,7 +126,11 @@ export function parseAsk(raw: unknown): { vendor: 'anthropic' | 'openai'; model:
   if (messages.length > LIMITS.messages || images > LIMITS.images || text > LIMITS.textChars) {
     throw new BadRequest('This chat is too long for hosted answers. Start a new chat.', 413, 'too-large');
   }
-  return { vendor, model, body: { model: body.model, messages, ...(body.ephemeral === true ? { ephemeral: true } : {}) } };
+  return {
+    vendor,
+    model,
+    body: { model: body.model, messages: [{ role: 'system', content: SYSTEM }, ...messages], ...(body.ephemeral === true ? { ephemeral: true } : {}) },
+  };
 }
 
 function base(env: Env, vendor: 'anthropic' | 'openai'): string {
@@ -143,6 +157,9 @@ export async function cacheScope(userId: string, messages: ChatMessage[]): Promi
   return Array.from(digest.slice(0, 12), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** OpenAI models that refused `prompt_cache_retention: "in_memory"`. */
+const NO_MEMORY_ONLY_CACHE = new Set<string>();
+
 /** The messages, the cache scope first: a cached prefix then starts with it. */
 export function scoped(messages: ChatMessage[], scope: string): ChatMessage[] {
   return [{ role: 'system', content: `Chat ${scope}.` }, ...messages];
@@ -151,19 +168,31 @@ export function scoped(messages: ChatMessage[], scope: string): ChatMessage[] {
 /** The vendor's response: an error as is, or a 200 whose body is OpenAI-shaped SSE. */
 export async function callVendor(vendor: 'anthropic' | 'openai', model: string, body: AskBody, env: Env, scope: string): Promise<Response> {
   if (vendor === 'openai') {
-    return await fetch(`${base(env, 'openai')}/chat/completions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${env.OPENAI_API_KEY}`, ...gatewayHeaders(env) },
-      body: JSON.stringify({
-        model,
-        messages: scoped(body.messages, scope),
-        max_completion_tokens: MAX_OUTPUT_TOKENS,
-        store: false,
-        stream: true,
-        stream_options: { include_usage: true },
-        prompt_cache_key: scope,
-      }),
-    });
+    const send = (memoryOnly: boolean) =>
+      fetch(`${base(env, 'openai')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${env.OPENAI_API_KEY}`, ...gatewayHeaders(env) },
+        body: JSON.stringify({
+          model,
+          messages: scoped(body.messages, scope),
+          max_completion_tokens: MAX_OUTPUT_TOKENS,
+          store: false,
+          stream: true,
+          stream_options: { include_usage: true },
+          prompt_cache_key: scope,
+          ...(memoryOnly ? { prompt_cache_retention: 'in_memory' } : {}),
+        }),
+      });
+    // A temporary chat asks for the prompt cache to stay in memory, as with
+    // the student's own key (byok.ts). A model that refuses (some keep only
+    // the 24-hour cache) is asked again without, before anything was
+    // streamed; once that works, it isn't asked again while this Worker runs.
+    const memoryOnly = !!body.ephemeral && !NO_MEMORY_ONLY_CACHE.has(model);
+    const res = await send(memoryOnly);
+    if (!memoryOnly || res.status !== 400) return res;
+    const retried = await send(false);
+    if (retried.ok) NO_MEMORY_ONLY_CACHE.add(model);
+    return retried;
   }
 
   const { system, messages } = toAnthropic(scoped(body.messages, scope));

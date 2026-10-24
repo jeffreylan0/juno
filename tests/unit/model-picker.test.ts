@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ANSWER_COST, answersLeft } from '@shared/models';
 import type { Entitlement } from '@/lib/account/session';
 import { DEFAULT_SETTINGS, withAnswerChoice, type Settings } from '@/lib/storage';
+import { using } from '@/settings/Dashboard';
 import { answerGroups, unitsLeft } from '@/ui/ModelPicker';
 import type { AccountState } from '@/ui/useAccount';
 
@@ -70,5 +71,16 @@ describe('the answer picker', () => {
     const picked = withAnswerChoice(DEFAULT_SETTINGS, 'anthropic:claude-opus-5-5');
     const [, keyGroup] = answerGroups(picked, noKeys, guest);
     expect(keyGroup!.options.find((o) => o.value === 'anthropic:claude-opus-5-5')?.disabled).toBe(true);
+  });
+});
+
+describe('who answers, in a sentence (settings, under the horseshoe)', () => {
+  it('names the model on a plan or a key, and a local model only as yours: its name is just what was typed', () => {
+    expect(using(withAnswerChoice(DEFAULT_SETTINGS, 'hosted:claude-sonnet-5-5'))).toBe("You're using Claude Sonnet 5.5 with your plan.");
+    expect(using(withAnswerChoice(DEFAULT_SETTINGS, 'anthropic:claude-opus-5-5'))).toBe("You're using Claude Opus 5.5 with your API key.");
+    // Auto answers a chat, which always has a screenshot, with the larger model.
+    expect(using(withAnswerChoice(DEFAULT_SETTINGS, 'anthropic:auto'))).toMatch(/^You're using Claude \w+ [\d.]+ with your API key\.$/);
+    expect(using(withAnswerChoice({ ...DEFAULT_SETTINGS, localModel: 'qwen3-vl' }, 'local'))).toBe("You're using your local model.");
+    expect(using(DEFAULT_SETTINGS)).toBe('Pick who answers below.');
   });
 });

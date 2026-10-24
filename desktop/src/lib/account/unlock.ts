@@ -105,9 +105,10 @@ export async function buyUnlock(signal?: AbortSignal): Promise<void> {
     try {
       return await keep((await post<{ license: string }>('/unlock/claim', { session, device: id })).license, id);
     } catch (err) {
-      // 409: not paid yet. A connection that drops for a moment is not the end either.
+      // 409: not paid yet. Neither a connection that drops for a moment nor a
+      // rate limit (a whole campus can share one address) is the end.
       const e = err as AccountError;
-      if (e.status !== 409 && e.code !== 'network') throw err;
+      if (e.status !== 409 && e.status !== 429 && e.code !== 'network') throw err;
     }
   }
   throw new AccountError("Checkout didn't finish here. If you paid, press Restore in a minute.", 'server');

@@ -107,7 +107,8 @@ export function SignUpOrIn({ why, onOpen }: { why?: string; onOpen?: (open: bool
 
 /**
  * Signing up or in: the email address and its code, or Google. Signing up
- * asks for a name too (Google gives its own). `onCancel`: a way back.
+ * offers a box for a name, which may stay empty (Google gives its own).
+ * `onCancel`: a way back.
  */
 export function SignIn({ mode: start, onCancel }: { mode: SignMode; onCancel?: () => void }) {
   const [mode, setMode] = useState(start);
@@ -162,7 +163,7 @@ export function SignIn({ mode: start, onCancel }: { mode: SignMode; onCancel?: (
           {up && (
             <input
               autoComplete="name"
-              placeholder="Your name"
+              placeholder="Name (optional)"
               aria-label="Name"
               maxLength={80}
               value={name}
@@ -183,7 +184,7 @@ export function SignIn({ mode: start, onCancel }: { mode: SignMode; onCancel?: (
             <button
               type="submit"
               className="secondary"
-              disabled={!email.trim() || (up && !name.trim()) || !!busy || wait > 0}
+              disabled={!email.trim() || !!busy || wait > 0}
               data-testid="send-code"
             >
               {sendLabel('Send code')}
@@ -199,7 +200,7 @@ export function SignIn({ mode: start, onCancel }: { mode: SignMode; onCancel?: (
       ) : (
         <>
           <p className="help" data-testid="code-sent">
-            We sent a code to <b>{sentTo}</b>. It can take a minute.
+            We sent a code to <b>{sentTo}</b>; it can take a minute.
           </p>
           <form onSubmit={onVerify}>
             <input
@@ -400,8 +401,8 @@ export function PlanActions({ ent }: { ent: Entitlement }) {
       {plan && (
         <div className="upgrade" data-testid="upgrade">
           <p className="help">
-            <b>{plan.name}</b>: up to {plan.monthly_questions.toLocaleString()} hosted answers a month (fewer with the larger models), no key needed
-            {plan.cloud ? ', and your chats in the cloud' : ''}.{upgrades.every((o) => !o.interval) ? ' Paid once; nothing renews.' : ' Renews until you cancel, any time.'}
+            <b>{plan.name}</b>: up to {plan.monthly_questions.toLocaleString()} hosted answers a month (fewer on larger models)
+            {plan.cloud ? ' and your chats in the cloud' : ''}, {upgrades.every((o) => !o.interval) ? 'paid once' : 'renewing until you cancel'}.
           </p>
           <div className="key-row">
             {upgrades.map((o) => (
@@ -421,7 +422,7 @@ export function PlanActions({ ent }: { ent: Entitlement }) {
         </div>
       )}
       {ent.customer && (
-        <button type="button" className="secondary" disabled={!!busy} data-testid="manage-billing" onClick={() => void go('portal', openPortal)}>
+        <button type="button" className="link" disabled={!!busy} data-testid="manage-billing" onClick={() => void go('portal', openPortal)}>
           {busy === 'portal' ? 'Opening…' : 'Manage billing'}
         </button>
       )}

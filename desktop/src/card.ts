@@ -15,7 +15,6 @@
  * it `card:enter` so it plays its entrance.
  */
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { browser } from './platform/install';
 import { MAC } from './os';
 
@@ -38,7 +37,9 @@ export function cardWindow(opts: CardOptions): void {
   // An attribute, not a class: the pages have classes of their own (settings' `.card`).
   root.dataset.card = 'in';
 
-  // The top bar, wherever it is not a control, moves the window. No text
+  // The top bar, wherever it is not a control, moves the window: the native
+  // core starts the system's own drag from where the pointer is when the
+  // request arrives (wm.rs drag), never from an event of the page's. No text
   // selection starts with it: the system takes the drag, so the page never
   // hears the button come up, and a selection begun here would keep
   // scrolling the page while the window moves.
@@ -46,7 +47,7 @@ export function cardWindow(opts: CardOptions): void {
     const target = e.target as Element | null;
     if (e.button !== 0 || !target?.closest(opts.drag) || target.closest(CONTROLS)) return;
     e.preventDefault();
-    void getCurrentWindow().startDragging().catch(() => {});
+    void invoke('window_drag').catch(() => {});
   });
 
   // The page's ✕.

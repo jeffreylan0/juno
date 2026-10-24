@@ -98,8 +98,7 @@ export function toAnthropicBody(messages: ChatMessage[], model: string, maxToken
         ? { type: 'text', text: c.text }
         : { type: 'image', source: { type: 'base64', ...dataUrlToSource(c.image_url.url) } },
     );
-    // Anthropic prefers images before the text that refers to them.
-    blocks.sort((a, b) => (a.type === 'image' ? 0 : 1) - (b.type === 'image' ? 0 : 1));
+    // In the order toChatMessages puts them: images before the question about them, as Anthropic prefers.
     out.push({ role: m.role, content: blocks });
   }
 

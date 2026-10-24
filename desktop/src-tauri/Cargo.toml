@@ -31,8 +31,8 @@ tauri-plugin-updater = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSError"] }
-objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSResponder", "NSButton", "NSControl", "NSView"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSError", "NSDate", "NSProcessInfo"] }
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSResponder", "NSButton", "NSControl", "NSView", "NSEvent", "NSGraphicsContext"] }
 objc2-screen-capture-kit = { version = "0.3", features = ["SCShareableContent", "SCScreenshotManager", "SCStream", "SCError", "block2"] }
 objc2-core-graphics = "0.3"
 objc2-core-foundation = "0.3"

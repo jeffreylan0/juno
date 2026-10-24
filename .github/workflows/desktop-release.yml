@@ -17,11 +17,16 @@ name: Test build
 #
 # Updates (desktop/README.md, Updates): the update key's public half (the
 # TAURI_UPDATER_PUBKEY variable, or tauri.conf.json) goes into every build,
-# which turns updating on. With its private half too (the
-# TAURI_SIGNING_PRIVATE_KEY secret), a `desktop-vX.Y.Z` tag's build (that
-# X.Y.Z becomes the app's version) also makes signed update files and
-# publishes latest.json to the `updates` release, where installed apps look
-# for a new version. No other run is given the private half.
+# which turns updating on. The private half never reaches a build, where
+# every package's build code runs: the builds leave the update files unsigned
+# (the Mac app as a .tar.gz, the Windows installer as it is), and `sign`
+# signs them with the Tauri CLI alone. For a `desktop-vX.Y.Z` tag (that X.Y.Z
+# becomes the app's version) it uses TAURI_SIGNING_PRIVATE_KEY from the
+# `release` environment, which only those tags may use and which can wait
+# for an owner's approval; the release then gets the update files and
+# latest.json goes to the `updates` release, where installed apps look for a
+# new version. Any other run signs with a throwaway key, to show the signing
+# works. Every signature is checked against the public half first.
 on:
   workflow_dispatch:
   push:
@@ -45,9 +50,8 @@ jobs:
             args: --target universal-apple-darwin --bundles app,dmg
             bundle: desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
             asset: mac.dmg
-            # The app as the updater installs it.
-            update: desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
-            update_asset: mac.app.tar.gz
+            # The app, which the updater installs from a .tar.gz of it.
+            app: desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
             # Signed ad hoc: without a Developer ID macOS still warns once,
             # but an unsigned bundle would be called "damaged" instead.
             signing: '-'
@@ -56,10 +60,9 @@ jobs:
             targets: ''
             args: --bundles nsis
             bundle: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+            # Also the update file: the updater runs the installer itself.
             asset: windows-setup.exe
-            # The updater runs the installer itself.
-            update: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
-            update_asset: windows-setup.exe
+            app: ''
             signing: ''
     runs-on: ${{ matrix.os }}
     steps:
@@ -75,10 +78,9 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.targets }}
       - run: pnpm install --frozen-lockfile
-      - name: Version and update files
+      - name: Version
         shell: bash
         env:
-          PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && startsWith(github.ref, 'refs/tags/desktop-v') }}
           PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
         run: |
           # A desktop-vX.Y.Z tag is the version; anything else keeps tauri.conf.json's.
@@ -86,19 +88,10 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" =~ ^desktop-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             version="${BASH_REMATCH[1]}"
           fi
-          pubkey=${PUBKEY:-$(node -p "require('./desktop/src-tauri/tauri.conf.json').plugins.updater.pubkey")}
-          # Update files need both halves of the key: signed with one, checked against the other.
-          SIGNED=false
-          if [ "$PRIVATE_KEY" = true ] && [ -n "$pubkey" ]; then SIGNED=true; fi
-          if [ "$PRIVATE_KEY" = true ] && [ -z "$pubkey" ]; then
-            echo "::warning::No update files: the update key's public half is missing (the TAURI_UPDATER_PUBKEY variable; desktop/README.md, Updates)."
-          fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          echo "SIGNED=$SIGNED" >> "$GITHUB_ENV"
-          VERSION=$version PUBKEY=$pubkey SIGNED=$SIGNED node -e '
+          VERSION=$version PUBKEY=$PUBKEY node -e '
             const c = { version: process.env.VERSION };
             if (process.env.PUBKEY) c.plugins = { updater: { pubkey: process.env.PUBKEY } };
-            if (process.env.SIGNED === "true") c.bundle = { createUpdaterArtifacts: true };
             require("fs").writeFileSync("desktop/src-tauri/release.conf.json", JSON.stringify(c));'
           cat desktop/src-tauri/release.conf.json
       - name: Accounts
@@ -124,31 +117,107 @@ jobs:
           WXT_GOOGLE_CLIENT_ID: ${{ vars.WXT_GOOGLE_CLIENT_ID }}
           WXT_UNLOCK_KEY: ${{ vars.WXT_UNLOCK_KEY }}
           APPLE_SIGNING_IDENTITY: ${{ matrix.signing }}
-          # Only a version tag's build signs updates (and only with the public half there to check them).
-          TAURI_SIGNING_PRIVATE_KEY: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: pnpm --filter desktop exec tauri build ${{ matrix.args }} --config src-tauri/release.conf.json
-      - name: Name the installer
+      - name: Name the installer, and the Mac's update file
         shell: bash
         run: |
-          mkdir -p out
+          mkdir -p out update
           cp ${{ matrix.bundle }} "out/Juno-$VERSION-${{ matrix.asset }}"
-          if [ "$SIGNED" = true ]; then
-            for f in ${{ matrix.update }}; do
-              cp "$f" "out/Juno-$VERSION-${{ matrix.update_asset }}"
-              cp "$f.sig" "out/Juno-$VERSION-${{ matrix.update_asset }}.sig"
+          # The .app in a .tar.gz, as Tauri's own update bundle has it: the
+          # app at the top, links kept as links.
+          if [ -n "${{ matrix.app }}" ]; then
+            for app in ${{ matrix.app }}; do
+              python3 -c 'import os, sys, tarfile; t = tarfile.open(sys.argv[2], "w:gz"); t.add(sys.argv[1], arcname=os.path.basename(sys.argv[1])); t.close()' \
+                "$app" "update/Juno-$VERSION-mac.app.tar.gz"
             done
           fi
-          ls -l out
+          ls -l out update
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ${{ matrix.asset }}
+          name: installer-${{ matrix.asset }}
           path: out/*
+          if-no-files-found: error
+      - if: matrix.app != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: update-mac.app.tar.gz
+          path: update/*
+          if-no-files-found: error
+
+  sign:
+    name: Sign the update files
+    needs: [app]
+    runs-on: ubuntu-latest
+    # The real key only for a version tag, from the `release` environment
+    # (desktop/README.md, Updates); no environment, and a throwaway key, otherwise.
+    environment: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && 'release' || '' }}
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            pnpm-lock.yaml
+            desktop/scripts/latest-json.mjs
+            desktop/src-tauri/tauri.conf.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      # Each build's files apart, so neither can slip in a file of the other's to be signed.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: update-mac.app.tar.gz
+          path: mac
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: installer-windows-setup.exe
+          path: windows
+      - name: The Tauri CLI, alone, at the lockfile's version
+        run: |
+          v=$(node -e 'const m = /\x27@tauri-apps\/cli\x27:\s*\n\s*specifier:[^\n]*\n\s*version:\s*([0-9.]+)/.exec(require("fs").readFileSync("pnpm-lock.yaml", "utf8")); if (!m) process.exit(1); console.log(m[1])')
+          npm install --prefix "$RUNNER_TEMP/cli" --no-save --ignore-scripts --no-audit --no-fund "@tauri-apps/cli@$v"
+          echo "TAURI=$RUNNER_TEMP/cli/node_modules/.bin/tauri" >> "$GITHUB_ENV"
+      - name: Sign, and check every signature against the public half
+        id: sign
+        env:
+          RELEASE: ${{ startsWith(github.ref, 'refs/tags/desktop-v') }}
+          KEY: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+        run: |
+          if [ "$RELEASE" = true ]; then
+            pubkey=${PUBKEY:-$(node -p "require('./desktop/src-tauri/tauri.conf.json').plugins.updater.pubkey")}
+            if [ -z "$KEY" ] || [ -z "$pubkey" ]; then
+              echo "::warning::No update for this version: the update key's private half (the release environment's TAURI_SIGNING_PRIVATE_KEY secret) or its public half (the TAURI_UPDATER_PUBKEY variable) is missing (desktop/README.md, Updates)."
+              echo "signed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            export TAURI_SIGNING_PRIVATE_KEY="$KEY" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$KEY_PASSWORD"
+          else
+            "$TAURI" signer generate --ci -p "" -w "$RUNNER_TEMP/throwaway.key" > /dev/null
+            pubkey=$(cat "$RUNNER_TEMP/throwaway.key.pub")
+            export TAURI_SIGNING_PRIVATE_KEY_PATH="$RUNNER_TEMP/throwaway.key" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+          fi
+          # Exactly the one file each build should have made, and nothing else.
+          [ "$(ls mac)" = "$(cd mac && ls Juno-*-mac.app.tar.gz)" ] && [ "$(ls windows)" = "$(cd windows && ls Juno-*-windows-setup.exe)" ] || {
+            echo "::error::Unexpected update files: $(ls mac windows | tr '\n' ' ')"; exit 1; }
+          mkdir out && mv mac/* windows/* out/
+          for f in out/*; do "$TAURI" signer sign "$f" > /dev/null; done
+          node desktop/scripts/latest-json.mjs out "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" "$pubkey"
+          mkdir signed && cp out/*.sig out/latest.json signed/
+          echo "signed=$RELEASE" >> "$GITHUB_OUTPUT"
+      - if: steps.sign.outputs.signed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signatures
+          path: signed/*
           if-no-files-found: error
 
   publish:
     name: Publish the prerelease
-    needs: [app]
+    needs: [app, sign]
     # A desktop-v* tag, or Run workflow on main: never a release from another branch.
     if: startsWith(github.ref, 'refs/tags/desktop-v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
@@ -162,10 +231,17 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             TESTERS.md
-            desktop/scripts/latest-json.mjs
           sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
+          pattern: installer-*
+          path: out
+          merge-multiple: true
+      # A signed version: its update files, their signatures and latest.json too.
+      - if: needs.sign.outputs.signed == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: '{update-*,signatures}'
           path: out
           merge-multiple: true
       - name: Checksums
@@ -179,7 +255,6 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('desktop-test-{0}', github.run_number) }}
         run: |
-          if ls out/*.sig > /dev/null 2>&1; then node desktop/scripts/latest-json.mjs out "$TAG" "$GH_REPO"; fi
           ls -l out
           gh release create "$TAG" out/* --prerelease --target "$GITHUB_SHA" \
             --title "Juno test build ($TAG)" --notes-file TESTERS.md

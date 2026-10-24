@@ -124,10 +124,8 @@ export interface Plan {
   estimatedTokens: number;
 }
 
-/** One selection as sent to the model: what was selected, and from which page. */
+/** What of a selection goes to the model: its parts, and nothing about the page or window it came from. */
 export interface Attachment {
-  kind: SelectionKind;
-  page: PageMeta;
   parts: Part[];
 }
 
@@ -141,10 +139,8 @@ export interface ChatTurn {
 export interface AskRequest {
   plan: Plan;
   /**
-   * Selections attached to the question being asked now. When this is set
-   * (even to []), every turn carries its own selections and plan.parts is not
-   * used; the app always sets it. When it is absent, plan.parts is the
-   * one selection of a single-selection conversation (the eval, older callers).
+   * Selections attached to the question being asked now (even []); the app
+   * always sets it. Absent, plan.parts is the one selection (the eval).
    */
   attachments?: Attachment[];
   /** Prior turns in this conversation. */
@@ -171,7 +167,7 @@ export type AskChunk =
  */
 export function canonicalizeRequest(req: AskRequest): unknown {
   const { plan, history = [], model } = req;
-  const attachment = (a: Attachment) => ({ kind: a.kind, page: a.page.title, parts: a.parts.map(canonicalizePart) });
+  const attachment = (a: Attachment) => a.parts.map(canonicalizePart);
   return {
     mode: plan.mode,
     question: plan.question ?? '',

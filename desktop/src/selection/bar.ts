@@ -107,11 +107,11 @@ export const BAR_STYLE = `
 .ask {
   display: none; align-items: center; justify-content: center; flex: none;
   width: 32px; height: 32px; padding: 0; border: 0; border-radius: 9px; cursor: pointer;
-  background: var(--sai-accent, #e5702a); color: #fff;
+  background: var(--sai-accent, #e5702a); color: var(--sai-on-accent, #141413);
 }
 .ask.on { display: flex; }
 .ask:hover:not(:disabled) { background: var(--sai-accent-hover, #c6613f); }
-.ask:disabled { opacity: 0.4; cursor: default; }
+.ask:disabled { background: rgba(255, 255, 255, 0.08); color: var(--sai-bar-muted, #b2a79c); cursor: default; }
 .ask svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .bar :focus-visible { outline: 2px solid var(--sai-accent, #e5702a); outline-offset: 1px; }
 /* Taken out of the screenshot when the selection runs under it; back right after. */

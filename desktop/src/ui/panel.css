@@ -226,7 +226,8 @@ a.selection-page:hover { color: var(--fg); text-decoration: underline; }
 .wir-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .what-i-read.open .wir-text { white-space: normal; }
 
-.markdown { line-height: 1.6; overflow-wrap: anywhere; }
+/* contain: an answer paints only inside its own box, whatever a style in it says (lib/render.ts). */
+.markdown { line-height: 1.6; overflow-wrap: anywhere; contain: paint; }
 .markdown p { margin: 0 0 8px; }
 .markdown pre { background: var(--user-bg); padding: 8px 10px; border-radius: 8px; overflow-x: auto; }
 .markdown code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; }
@@ -286,7 +287,7 @@ a.selection-page:hover { color: var(--fg); text-decoration: underline; }
 }
 .send svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, #000); }
-.send:disabled { opacity: .4; cursor: default; }
+.send:disabled { background: var(--hover); color: var(--muted); cursor: default; }
 .send.stop { background: var(--fg); color: var(--bg); }
 .send.stop svg { fill: currentColor; stroke: none; width: 12px; height: 12px; }
 

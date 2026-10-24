@@ -53,6 +53,7 @@ describe('model output hardening', () => {
     ['an SVG image', '<svg><image href="https://evil.example/f" /></svg>'],
     ['an SVG use', '<svg><use href="https://evil.example/g#x" /></svg>'],
     ['an SVG filter image', '<svg><filter><feImage href="https://evil.example/h" /></filter></svg>'],
+    ['an SVG paint server', '<svg><rect fill="url(https://evil.example/l.svg#p)" filter="url(https://evil.example/m)" mask="u\\72 l(https://evil.example/n)" /></svg>'],
     ['a MathML glyph', '<math><mglyph src="https://evil.example/i" /></math>'],
     ['an embedded object', '<object data="https://evil.example/j"></object><embed src="https://evil.example/k">'],
   ])('fetches nothing through %s', (_what, answer) => {
@@ -64,6 +65,23 @@ describe('model output hardening', () => {
     expect(html).not.toMatch(/position\s*:\s*fixed/);
     expect(html).not.toContain('ping=');
     expect(html).toContain('href="https://example.com"');
+  });
+
+  // Each of these computes to position: fixed in WebKit; the browser's own parser reads them, and only KaTeX's styles are kept.
+  it.each([
+    ['a comment', 'position:/**/fixed;inset:0;opacity:0'],
+    ['an escaped value', 'position:\\66 ixed;inset:0'],
+    ['an escaped name', 'p\\osition:fixed;inset:0'],
+  ])('lays no invisible link over the panel through %s', (_what, style) => {
+    const html = renderMarkdown(`<a href="https://evil.example/" style="${style}">x</a>`);
+    expect(html).not.toMatch(/position|fixed|inset|opacity/);
+  });
+
+  it('keeps only what KaTeX writes in a style', () => {
+    const html = renderMarkdown('<span style="color:red;position:relative;top:1px;z-index:9;transform:scale(9)">x</span>');
+    expect(html).toContain('color:');
+    expect(html).toContain('position:relative');
+    expect(html).not.toMatch(/z-index|transform/);
   });
 
   it('keeps KaTeX’s own styles', () => {

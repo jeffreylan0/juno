@@ -103,7 +103,8 @@ describe('what a question carries', () => {
     };
     const h = historyOf(chat);
     expect(h.map((t) => t.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
-    expect(h[0]!.attachments?.map((a) => a.page.title)).toEqual(['Page a']);
+    // The selection's parts only: nothing about the page it came from goes to the model.
+    expect(h[0]!.attachments).toEqual([{ parts: plan('a').parts }]);
     expect(h[2]!.attachments).toBeUndefined();
   });
 

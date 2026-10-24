@@ -146,10 +146,7 @@ export function KeyField({
         </button>
       )}
       <KeyStatusLine check={check} hasKey={!!hint} />
-      <p className="help">
-        Claude or ChatGPT: the key says which. It stays on this computer and goes only to the company that issued it. Make a key just for Juno, with a
-        monthly spend limit, and never share it.
-      </p>
+      <p className="help">Your key stays on this computer and goes only to the company that issued it; give it a monthly spend limit.</p>
     </div>
   );
 }
