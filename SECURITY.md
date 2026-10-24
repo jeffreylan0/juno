@@ -12,12 +12,12 @@ Please report it privately through GitHub: the repository's **Security** tab →
 | A student's sign-in session | Their own computer only. It is sent only to Supabase and the Worker. |
 | Chats and screenshots | Their own computer. With a plan that includes cloud storage, also Supabase (unless the student keeps them on this computer only), in the student's own rows and folder; then signing out takes them off the computer. |
 | What an account has paid for | Stripe, which is the source of truth. The Worker mirrors it into Supabase. |
-| The service's secrets: AI keys, the Supabase secret key, Stripe keys, the update signing key, signing certificates | Worker secrets, GitHub Actions secrets, and the providers' dashboards. Never in the app or the repository. |
+| The service's secrets: AI keys, the Supabase secret key, Stripe keys, the update signing key, signing certificates | Worker secrets, GitHub Actions secrets (the update key in the `release` environment), and the providers' dashboards. Never in the app or the repository. |
 | humanbn's money: AI spend, storage, payments | Bounded by the limits below and by spending caps the owner sets. |
 
 The design assumes these attackers:
 
-- **Whatever is on screen.** A web page, a document or a window title may plant instructions for the model in what is selected or in the title sent with it (prompt injection).
+- **Whatever is on screen.** A web page or a document may plant instructions for the model in what is selected (prompt injection).
 - **Other software or users on the computer.** This includes other users' accounts, and web pages that try to reach the app through the browser.
 - **Someone on the network.**
 - **Another account, or an abusive one.** For example, an account that signs up free and scripts requests.
@@ -30,7 +30,8 @@ The design doesn't defend against malware running as the student's own user acco
 **The app** (Tauri 2 security guidance; OWASP Top 10 for LLM Applications)
 
 - **Permissions:** Screen Recording is the only OS permission, and only on macOS.
-- **Model answers fetch nothing:** answers are sanitized with DOMPurify and inserted as nodes. No images, CSS `url()`, `background` attributes, SVG or MathML images, or fixed layers get through. Links open in the student's browser, only on a click.
+- **Model answers fetch nothing, and stay in their box:** answers are sanitized with DOMPurify and inserted as nodes. No images, `background` attributes, or SVG or MathML images get through. A `style` is read by the browser's own CSS parser and keeps only what KaTeX writes (sizes, offsets, spacing, borders, colours, and `position: relative`), so neither a CSS `url()` nor a fixed layer gets through however it is escaped, and an SVG or MathML attribute with a `(` or a backslash in it (`fill="url(…)"`, `filter`, `mask`) is dropped; and each answer paints only inside its own box (`contain: paint`), so nothing in one can be drawn over the rest of the panel. Links open in the student's browser, only on a click.
+- **What the model is told:** the student's typed question is taken in good faith; what is inside a selection is material to work on, never instructions, and the model is told never to ask for a password, a key or a sign-in (`shared/prompts.ts`). Window titles and addresses aren't sent at all.
 - **API keys, by construction (src-tauri/src/vault.rs):** what keeps a key safe is how it is handled, not a promise.
   - Settings hands a key to the native core (`key_set`, Settings only) and keeps nothing; pages learn only whose it is and its last four characters (`key_status`). Whose it is comes from the key itself (`sk-ant-` Anthropic, any other `sk-` OpenAI), so a page can't file an Anthropic key under OpenAI and have it sent there; admin keys (`sk-ant-admin…`, `sk-admin-…`), which manage an organization rather than answer, are refused. The storage commands refuse to read, write or remove `keys` for every window, and never announce it.
   - Only the core can send with a key (`vendor_fetch`), and only to four endpoints: `POST /v1/messages` and `GET /v1/models` at `https://api.anthropic.com`, `POST /v1/chat/completions` and `GET /v1/models` at `https://api.openai.com`. The URL is parsed, and anything else (another host, port, path, method, query beyond `limit`, a login or fragment in the URL, plain HTTP) is refused. The client is HTTPS-only and follows no redirect, so no response can carry the key elsewhere. The key header is marked sensitive and never logged; errors name only how the request failed.
@@ -38,9 +39,9 @@ The design doesn't defend against malware running as the student's own user acco
   - On disk: `secrets.json`, mode 0600 from the moment it is written; on Windows also encrypted for the user with DPAPI, so a copy of the file is useless on another computer or account.
   - No stray copies: once Juno has its own store, the secrets file an earlier build (Selection AI) left behind is deleted at start (`store.rs`, `adopt_earlier_store`); the earliest Windows builds kept it unencrypted in the roaming profile.
   - Tested: Rust tests pin the allowlist and the file; an end-to-end test saves a key, then tries from every window to read it (by name, with everything, straight from the native core), write it, remove it, and send it from the wrong window or to another address, and checks that each attempt fails.
-- **Commands check their caller:** only the hidden core window can take a screenshot (only while the bar is up), bring up the bar, open the panel or send with a key; only the overlay steers its own pointer handling, and only the panel resizes itself. Only Settings can put a key in or remove one, start Google's sign-in listener, or change "Open at login". The overlay can't read the account session: `storage_get` refuses it, and changes to it are announced without their values (any page can listen to any event), so each window reads it back through that check.
+- **Commands check their caller:** only the hidden core window can take a screenshot (only while the bar is up), bring up the bar, open the panel or send with a key; only the overlay steers its own pointer handling, and only the panel resizes itself. Only Settings can put a key in or remove one, start Google's sign-in listener, or change "Open at login". A card moves only itself, through the app's own drag (`window_drag`, the panel and settings only); Tauri's window commands, which take any window's name, are granted to no page. Quitting, restarting and opening settings answer only the windows that offer them. The overlay can't read the account session: `storage_get` refuses it, and changes to it are announced without their values (any page can listen to any event), so each window reads it back through that check.
 - **Only the app's own pages, in every window:** each window refuses to navigate anywhere but the app's own pages (`wm.rs` `own_page`), so no link, whatever got it into an answer, can turn the panel into another site asking for a key. SVG and MathML links lose their `href` when an answer is sanitized, and a click on any other link opens the student's browser.
-- **Network:** only the core and settings may fetch at all (`capabilities/net.json`); the bar and the panel, which show what others wrote, have no network. The HTTP allowlist covers `https://*`, plus plain HTTP to `localhost`, `127.0.0.1` and `*.local`. Nothing else is reachable, not even the cloud metadata address. API keys never go this way: only the vault sends them.
+- **Network:** only the core and settings may fetch at all (`capabilities/net.json`); the bar and the panel, which show what others wrote, have no network. Only the panel and settings may open a link in the browser (`capabilities/links.json`). The HTTP allowlist covers `https://*`, plus plain HTTP to `localhost`, `127.0.0.1` and `*.local`. Nothing else is reachable, not even the cloud metadata address. API keys never go this way: only the vault sends them.
 - **CSP:** `script-src 'self'`, no objects or frames, and no remote images, media or fonts.
 - **Code:** no remote code, no `eval`; React's and DOMPurify's HTML-string paths are removed at build time (`desktop/harden-libs.ts`).
 - **Storage:** secrets live in a file only the user's account can read (and, on Windows, encrypted for it), in local (never roaming) app data.
@@ -54,7 +55,7 @@ The design doesn't defend against malware running as the student's own user acco
 - **Cloud copies:** chats already on a computer are never copied into another account that signs in there.
 - **Test hook:** the test-only HTTP hook isn't compiled into releases, and it refuses any request that comes from a browser.
 - **Screen capture on Windows:** the app's windows are left out of captures (display affinity) only while the app takes its own screenshot, so recordings, screen sharing and remote desktops show the app like any other window.
-- **Updates (src-tauri/src/updates.rs):** a new version is installed only if its download carries a valid signature from the update key (minisign, Tauri's updater), fetched over HTTPS from the repository's `updates` release; downgrades are refused. The key's public half goes into each build (the `TAURI_UPDATER_PUBKEY` Actions variable, or `tauri.conf.json`); the private half is a GitHub Actions secret, given only to the build of a `desktop-v*` tag. A build without the public key never updates. The page code can't drive the updater: no window is granted its commands, and the app's own update commands answer only the settings window.
+- **Updates (src-tauri/src/updates.rs):** a new version is installed only if its download carries a valid signature from the update key (minisign, Tauri's updater), fetched over HTTPS from the repository's `updates` release; downgrades are refused. The key's public half goes into each build (the `TAURI_UPDATER_PUBKEY` Actions variable, or `tauri.conf.json`). The private half never reaches a build, where every dependency's build code runs: the builds leave the update files unsigned, and a separate job signs them with the Tauri CLI alone (pinned to the lockfile's version), from the `release` environment that only `desktop-v*` tags may use, after the owner approves; every signature is checked against the public half before anything is published (`desktop/scripts/latest-json.mjs`). A build without the public key never updates. The page code can't drive the updater: no window is granted its commands, and the app's own update commands answer only the settings window.
 - **Log:** `juno.log` keeps only the app's own steps and errors (each line stripped of control characters and capped), never what was asked, the screen or a key.
 
 **Worker** (OWASP API Security Top 10; RFC 8725 for JWT)
@@ -69,6 +70,9 @@ The design doesn't defend against malware running as the student's own user acco
   - Requests are rebuilt from text and inline screenshots only.
   - Each request is capped at 100 messages, 20 images and 200,000 characters of text, and the body is capped in bytes however it is sent.
   - Each account gets at most 10 answers a minute.
+  - The system prompt is the Worker's own (`shared/prompts.ts`): any a request carries is dropped. The conversation itself is still the app's to write, so what bounds any other use of humanbn's keys is each account's allowance and rate limit.
+  - A temporary chat asks OpenAI to keep its prompt cache in memory only, as the student's own key does (a model that offers only the 24-hour cache is asked again without).
+- **Billing** (`/billing/checkout`, `/billing/portal`, `/billing/close`): at most 10 calls a minute per account, apart from its answers.
   - An answer is refunded, at its model's cost, when the AI fails or can't be reached.
   - Prompt caches are scoped to one chat (see *Prompt caching* below), and the AI Gateway's response cache is skipped on every request.
 - **Stripe webhook:**
@@ -76,8 +80,9 @@ The design doesn't defend against malware running as the student's own user acco
   - Only checkouts the Worker made give a plan.
   - Subscriptions and passes are read back fresh from Stripe, so refunds and chargebacks end a pass.
   - Events for deleted accounts are acknowledged instead of retried.
+- **Routes without a session** (prices, `/auth/google`, `/unlock/*`): at most 30 calls a minute from one address (`OPEN_LIMIT`; an IPv6 address counted by its /64, which one computer can fill), so a flood can't use up Stripe's or Google's limits for every student. Stripe's own webhook is signed, and not counted. The app keeps waiting through a 429 while a paid unlock comes through, since a campus can share one address.
 - **Google sign-in (`/auth/google`):** the Worker holds the Google client secret (a desktop app can't keep one), takes only a code meant for `http://127.0.0.1:<port>` with a well-formed PKCE verifier, and returns only the ID token: no access or refresh token for the student's Google account leaves Google. A stolen code is useless without the verifier.
-- **The unlock (`/unlock/*`, no session, `worker/src/unlock.ts`):** it holds on one computer, with nothing to pass around. The app sends its computer's id (a salted SHA-256 of the system's machine id, `device.rs`: the machine id itself never leaves); the Worker puts it on the payment and, once Stripe says it is paid, signs a license for that id alone with an ECDSA P-256 key (`UNLOCK_SIGNING_KEY`, a Worker secret). The app accepts a license only if the public key built into it (`WXT_UNLOCK_KEY`) verifies it and its id is this computer's, so a license copied to another computer, or edited, opens nothing. Checkout pages are rate-limited per address; the id is checked against its exact form before it goes into a Stripe search, so it can't widen the query; a claim for another computer's checkout gets nothing; a refunded or disputed payment restores nothing. The webhook ignores unlock checkouts, so none gives an account a plan.
+- **The unlock (`/unlock/*`, no session, `worker/src/unlock.ts`):** it holds on one computer, with nothing to pass around. The app sends its computer's id (a salted SHA-256 of the system's machine id, `device.rs`: the machine id itself never leaves); the Worker puts it on the payment and, once Stripe says it is paid, signs a license for that id alone with an ECDSA P-256 key (`UNLOCK_SIGNING_KEY`, a Worker secret). The app accepts a license only if the public key built into it (`WXT_UNLOCK_KEY`) verifies it and its id is this computer's, so a license copied to another computer, or edited, opens nothing. The id is checked against its exact form before it goes into a Stripe search, so it can't widen the query; a claim for another computer's checkout gets nothing; a refunded or disputed payment restores nothing. The webhook ignores unlock checkouts, so none gives an account a plan.
 - **Responses:** JSON is sent `nosniff`, and the HTML pages have a strict CSP. Logs carry no prompt text.
 
 **Prompt caching**
@@ -176,12 +181,40 @@ Asked whether someone could read the chats of a student who signed out: they cou
 | App | *Sign in* with an email made an account for any address typed | Low | Only *Sign up* makes one; *Sign in* says when no account uses the address. The name given when signing up goes on only after the code |
 | Worker | Larger hosted models would have been counted like the fast one | Medium (cost) | Each model takes its cost from the month (`ANSWER_COST`), checked and taken in one statement and refunded at the same cost |
 
+## Review, 2026-10-24
+
+Reviewed before this round's changes (chats like the Claude and ChatGPT apps, a new system prompt, a native card drag, the intro in the theme's colours, update instructions), and every finding checked in the code before it was fixed.
+
+| Part | Finding | Severity | Fixed by |
+| --- | --- | --- | --- |
+| Build | The update key's private half was in the environment of the whole tag build, where every package's build code runs, and a repository secret any pushed workflow could read | High | Builds never see it; a separate job signs with the Tauri CLI alone, from the `release` environment (tags only, owner's approval), and checks every signature before publishing |
+| App | An answer's `style` was filtered by a pattern that CSS comments and escapes got past (`position:/**/fixed`), so an answer could lay an invisible link over the whole panel | Medium | Styles read by the browser's CSS parser, only KaTeX's kept; every answer clipped to its own box |
+| Worker | Hosted answers took the system prompt a request carried, making humanbn's keys a general-purpose AI for any account | Medium | The Worker sets its own and drops the request's |
+| Worker | The routes that need no session called Stripe with no limit | Low | 30 a minute per address |
+| Worker | A hosted temporary chat didn't ask OpenAI for in-memory caching, as the comment said | Low | It does |
+| App | Every page could drag any window and open any link; quitting, restarting and opening settings checked no caller | Info | The app's own drag for the panel and settings only; links for the panel and settings only; the others check their caller |
+| App | Window titles went to the model unmarked, and the prompt didn't say a selection is material, not instructions | Info | Titles aren't sent; the system prompt says so |
+
+Then the round's changes were reviewed again, by a reviewer who hadn't made them: no Critical, High or Medium findings.
+
+| Part | Finding | Severity | Fixed by |
+| --- | --- | --- | --- |
+| Worker | The new per-address limit counted each IPv6 address apart (one computer has billions), and a campus behind one address could see a paid unlock fail on a 429 | Low | IPv6 counted by its /64; the app keeps waiting through a 429 |
+| Worker | Billing calls had no per-account limit | Low | 10 a minute per account |
+| App | SVG attributes such as `fill="url(…)"` got through (the CSP stopped the fetch) | Low | Any SVG or MathML attribute with `(` or a backslash dropped |
+| Worker | A model that refuses in-memory caching made a hosted temporary chat fail if its refusal didn't name the parameter | Low | Asked again without on any refusal; remembered per model |
+| Build | The two builds' update files were signed from one folder, so one build could slip in a file named as the other's | Info | Each build's files apart, exactly one each |
+| Build | The signature check took an unknown algorithm as the legacy one and a trusted comment without its prefix | Info | Both refused, as minisign does |
+| App | The Mac drag held a window pointer across a hop to the main thread | Info | The window is looked up on the main thread |
+| App | The prompt's "never remark on what a message includes" could keep the model from mentioning instructions planted in a screenshot, and its good faith wasn't scoped | Info | "never remark on whether a message comes with a selection"; good faith "with their studies" |
+
 ## Known limits (not fixed yet, and why)
 
 - **Unsigned app builds:** the Mac build isn't notarized and the Windows build isn't signed, so testers see warnings and can't tell a genuine build from a lookalike except by its checksum or attestation. This needs an Apple Developer ID and a Windows signing certificate (see the checklist below).
 - **Updates aren't pinned to a version in their signature:** the updater checks every download against the update key, but `latest.json` itself isn't signed, so someone able to serve a different `latest.json` (GitHub, or the network if TLS failed) could point apps at an older genuine release. The updater's `requireSignedVersion` closes that once the Tauri CLI that signs the releases records the version in the signature; check that, then turn it on in `tauri.conf.json`.
 - **App secrets aren't encrypted at rest on macOS and Linux:** there the secrets file is protected by its permissions only (on Windows, DPAPI encrypts it too, though any program running as the same user can still ask Windows to decrypt it). Once the Mac app is signed with a Developer ID, the key can move to the Keychain, where another app reading it makes macOS ask the student first; with ad hoc signing, every build would ask for the keychain password, which is why it isn't there now.
-- **Window titles go to the AI:** in the app, the title of the window under the selection goes to the AI with the selection (for example an email subject). A setting to leave it out is a product decision.
+- **A chat's screenshots go to whoever answers it.** Every question carries the whole chat, as the Claude and ChatGPT apps do, so switching a chat from a local model to a hosted one or a key sends that chat's earlier screenshots to that company too. Settings → Chats & privacy says so.
+- **Instructions planted in an earlier screenshot stay in the chat.** The system prompt tells the model a selection is material, not instructions, which lowers the chance they are followed, but no prompt guarantees it; nothing the model says can reach a key, a file or the network beyond the rendered answer.
 - **Email codes are the weakest sign-in:** NIST no longer treats email as a strong second channel. Google sign-in is offered. Passkeys would be the next step.
 - **CAPTCHA isn't wired into sign-in yet.** Turn it on before the free plan includes hosted answers.
 - **Hosted answers are counted by model, not by token.** Each model takes a fixed number of fast-model answers, set from its price with some room (README, *Plans*); the size caps bound one answer's cost. A vendor's price change needs `ANSWER_COST` changed with it.
@@ -225,7 +258,7 @@ Beyond strong passwords and business accounts:
   - Untick *Allow GitHub Actions to create and approve pull requests*.
   - Require approval for workflows from outside contributors.
   - Allow only actions from GitHub and verified creators, and *require actions to be pinned to a full-length commit SHA* if the option is offered.
-- **Environments:** the browser stores' `stores` environment and its nine secrets (Chrome Web Store, Firefox, Edge) belonged to the retired extension's release workflow. Delete them. Before updates are turned on (the update key's public half in the `TAURI_UPDATER_PUBKEY` variable), protect the private half: only a `desktop-v*` tag's build is given it today, but anyone who can push a tag (or a workflow) can make one. Add a tag protection rule for `desktop-v*`, then move `TAURI_SIGNING_PRIVATE_KEY` and its password into an environment (`release`) with you as required reviewer, limited to `desktop-v*` tags, and add `environment: release` to the *Test build* job. Signing certificates go there too when they arrive.
+- **Environments:** the browser stores' `stores` environment and its nine secrets (Chrome Web Store, Firefox, Edge) belonged to the retired extension's release workflow. Delete them. Make the `release` environment the *Test build* workflow's signing job uses (desktop/README.md, *Updates*): only `desktop-v*` tags may deploy to it, you are its required reviewer, and `TAURI_SIGNING_PRIVATE_KEY` and its password are its secrets. Delete any repository-level copies of those two: any workflow on any pushed branch can read a repository secret. Signing certificates go there too when they arrive.
 - **Rules → Rulesets:**
   - On `main`: require a pull request and the CI and Desktop checks, and block force pushes and deletion.
   - A tag ruleset so only you can create `desktop-v*` tags. Those tags publish releases.
@@ -242,7 +275,7 @@ Beyond strong passwords and business accounts:
   - The Worker's secrets: only `wrangler secret put`.
   - Never in `.env` files, chat messages, screenshots or tickets.
   - `.env.local` (at the repository root) holds only the publishable Supabase key and the service addresses.
-- **The update key** (desktop/README.md, *Updates*): the private key and its password live only in your password manager and the `TAURI_SIGNING_PRIVATE_KEY*` Actions secrets. Never rotate it casually: installed copies trust only the public key they shipped with, so a new key needs one release signed with the old key that carries the new public key. If it leaks, publish nothing more with it and tell users to reinstall.
+- **The update key** (desktop/README.md, *Updates*): the private key and its password live only in your password manager and the `release` environment's `TAURI_SIGNING_PRIVATE_KEY*` secrets. Never rotate it casually: installed copies trust only the public key they shipped with, so a new key needs one release signed with the old key that carries the new public key. If it leaks, publish nothing more with it and tell users to reinstall.
 - **Rotate:** at least yearly, immediately when someone leaves, and whenever a secret might have been seen: the AI keys, the Stripe restricted key and webhook secret, the Google client secret, and the Supabase secret key. `supabase/README.md` § Before launch describes the order.
 - **Cap the money:**
   - Monthly spending limits and alerts on the Anthropic and OpenAI workspaces the Worker uses.
@@ -265,7 +298,8 @@ Beyond strong passwords and business accounts:
   - No Payment Links for Juno.
 - **Cloudflare:**
   - The Worker on your own domain.
-  - The rate limit in `wrangler.toml` (its `namespace_id` must be unique in the account).
+  - The rate limits in `wrangler.toml`, `ASK_LIMIT` and `OPEN_LIMIT` (each `namespace_id` must be unique in the account).
+  - A WAF rate-limiting rule on the Worker's routes as a second line, if the plan allows one.
   - Logs on, so failed webhooks show.
 - **CAPTCHA:** before free hosted answers, turn on Cloudflare Turnstile in Supabase, and have the apps send its token (not built yet).
 

@@ -349,8 +349,7 @@ export function hasUsableSelection(chat: Chat | null): boolean {
 }
 
 export function attachmentOf(item: SelectionItem): Attachment {
-  const { plan } = item;
-  return { kind: plan.selection.kind, page: plan.page, parts: plan.parts };
+  return { parts: item.plan.parts };
 }
 
 /**

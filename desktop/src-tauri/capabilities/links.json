@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "links",
+  "description": "Opening http(s) links in the browser, for the two pages that have any: the panel (links in answers) and settings (help links, Google sign-in, Stripe's checkout and billing pages). platform/links.ts sends every link there.",
+  "windows": ["panel", "settings"],
+  "permissions": ["opener:allow-open-url", "opener:allow-default-urls"]
+}

@@ -56,8 +56,29 @@ export interface Env {
   /** Google sign-in's desktop client (wrangler.toml) and its secret; empty: no Google sign-in. */
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
-  /** Hosted answers a minute per account (wrangler.toml [[ratelimits]]); absent in tests. */
+  /** Hosted answers a minute per account, and billing calls apart (wrangler.toml [[ratelimits]]); absent in tests. */
   ASK_LIMIT?: RateLimit;
+  /** Calls to the routes that need no sign-in, a minute per address (OPEN); absent in tests or an older deploy. */
+  OPEN_LIMIT?: RateLimit;
+}
+
+/**
+ * The routes anyone may call without signing in that reach Stripe or Google:
+ * a flood of them would use up those services' limits for every student.
+ * Stripe's own webhook (signed) and the static page back are not counted.
+ */
+const OPEN = new Set(['/billing/prices', '/auth/google', '/unlock', '/unlock/done', '/unlock/checkout', '/unlock/claim', '/unlock/restore']);
+
+/** Who is counted for OPEN: an IPv4 address, or an IPv6 address's /64, which one computer can fill with addresses of its own. */
+export function network(ip: string | null): string {
+  if (!ip) return 'unknown';
+  // IPv4, or IPv4 written as IPv6 (::ffff:1.2.3.4): the address itself.
+  if (!ip.includes(':') || ip.includes('.')) return ip;
+  const [head = '', tail = ''] = ip.split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const groups = ip.includes('::') ? [...left, ...Array<string>(8 - left.length - right.length).fill('0'), ...right] : left;
+  return `${groups.slice(0, 4).map((g) => parseInt(g || '0', 16).toString(16)).join(':')}::/64`;
 }
 
 /** A request body bigger than this is refused (a long chat's screenshots fit easily). */
@@ -77,6 +98,9 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
     try {
+      if (OPEN.has(url.pathname) && env.OPEN_LIMIT && !(await env.OPEN_LIMIT.limit({ key: network(request.headers.get('cf-connecting-ip')) })).success) {
+        return error(429, 'Too many tries. Wait a minute, then try again.', 'rate-limited');
+      }
       // No session needed: Stripe signs its events; prices and the page back are public.
       if (url.pathname === '/stripe/webhook' && request.method === 'POST') return await webhook(request, env);
       if (url.pathname === '/billing/prices' && request.method === 'GET') return json(await prices(env));
@@ -95,6 +119,10 @@ export default {
       if (request.method === 'GET' && url.pathname === '/me') return json(await accountOf(env, session.userId));
       if (request.method === 'POST') {
         if (url.pathname === '/ask') return await ask(request, session, env);
+        // Each reaches Stripe: a few a minute per account, as a person clicks.
+        if (url.pathname.startsWith('/billing/') && env.ASK_LIMIT && !(await env.ASK_LIMIT.limit({ key: `billing:${session.userId}` })).success) {
+          return error(429, 'Too many tries. Wait a minute, then try again.', 'rate-limited');
+        }
         if (url.pathname.startsWith('/billing/') && !(await stillSignedIn(request, session, env))) return error(401, 'Sign in again.', 'signed-out');
         if (url.pathname === '/billing/checkout') return json(await checkout(request, session, env));
         if (url.pathname === '/billing/portal') return json(await portal(request, session, env));

@@ -24,12 +24,12 @@ export function Permissions() {
       <span className="field-label">Screen Recording</span>
       {access === 'granted' ? (
         <p className="help ok" data-testid="screen-granted">
-          On. Used only when you select something.
+          On, and used only when you select something.
         </p>
       ) : (
         <>
           <p className="help warn" data-testid="screen-denied">
-            Off. Turn on {BRAND.name} under Screen &amp; System Audio Recording, then restart.
+            Off: turn on {BRAND.name} under Screen &amp; System Audio Recording, then restart.
           </p>
           <span className="key-row">
             <button type="button" className="secondary" onClick={() => void invoke('open_privacy_settings')}>
@@ -42,7 +42,7 @@ export function Permissions() {
         </>
       )}
       <small className="help" data-testid="permission-facts">
-        The only permission {BRAND.name} asks for. It never records audio.
+        The only permission {BRAND.name} asks for, and it never records audio.
       </small>
     </div>
   );

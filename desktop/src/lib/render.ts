@@ -29,15 +29,39 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     // An SVG or MathML link is followed in place, past the link handler: none.
     node.removeAttribute('href');
     node.removeAttribute('xlink:href');
+    // fill, filter, mask, clip-path… can name another document (`url(…)`,
+    // escaped or not). KaTeX's own SVG and MathML never use ( or \.
+    for (const { name, value } of [...node.attributes]) if (/[(\\]/.test(value)) node.removeAttribute(name);
   } else if (node.tagName === 'A') {
     node.setAttribute('target', '_blank');
     node.setAttribute('rel', 'noopener noreferrer');
   }
 });
-/** A style that fetches something or leaves the answer's box. KaTeX's own styles never do either. */
-const UNSAFE_STYLE = /url\s*\(|image-set|image\s*\(|expression\s*\(|@import|behavior\s*:|binding\s*:|position\s*:\s*(fixed|absolute|sticky)/i;
+/** What KaTeX writes in a `style`: sizes, offsets, spacing, borders and colours. */
+const KATEX_STYLE =
+  /^(?:(?:min-|max-)?(?:width|height)|vertical-align|top|right|bottom|left|color|background-color|text-shadow|(?:margin|padding)(?:-(?:top|right|bottom|left))?|border(?:-(?:top|right|bottom|left))?-(?:width|style|color))$/;
+/**
+ * A `style` as the browser's own CSS parser reads it (escapes and comments
+ * come out as the browser means them, which a pattern over the text never
+ * matched), keeping only what KaTeX writes: nothing that fetches, and no
+ * position but KaTeX's `relative`. The answer's box clips the rest
+ * (panel.css .markdown).
+ */
+function katexStyle(value: string): string {
+  const parsed = document.createElement('span').style;
+  parsed.cssText = value;
+  const kept: string[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const name = parsed.item(i);
+    const v = parsed.getPropertyValue(name);
+    if ((KATEX_STYLE.test(name) || (name === 'position' && v === 'relative')) && !/url\s*\(|image/i.test(v)) kept.push(`${name}:${v}`);
+  }
+  return kept.join(';');
+}
 DOMPurify.addHook('uponSanitizeAttribute', (_node, data) => {
-  if (data.attrName === 'style' && UNSAFE_STYLE.test(data.attrValue)) data.keepAttr = false;
+  if (data.attrName !== 'style') return;
+  data.attrValue = katexStyle(data.attrValue);
+  if (!data.attrValue) data.keepAttr = false;
 });
 const FORBID_TAGS = ['img', 'picture', 'source', 'video', 'audio', 'track', 'image', 'feimage', 'mglyph', 'link', 'style', 'form', 'input', 'button'];
 /** Attributes that fetch (background, ping) on tags otherwise allowed. */

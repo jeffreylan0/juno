@@ -535,10 +535,65 @@ pub fn start_passthrough(app: AppHandle, state: SharedOverlay) {
         .expect("starting the passthrough thread");
 }
 
+/// A card follows the pointer from its top bar, while the button is held
+/// (`window_drag`, from card.ts).
+pub fn drag(window: &WebviewWindow) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        mac::drag(window);
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    window.start_dragging()
+}
+
 #[cfg(target_os = "macos")]
 pub mod mac {
-    use objc2_app_kit::{NSFloatingWindowLevel, NSPopUpMenuWindowLevel, NSWindow, NSWindowButton, NSWindowCollectionBehavior};
+    use objc2_app_kit::{
+        NSEvent, NSEventModifierFlags, NSEventType, NSFloatingWindowLevel, NSPopUpMenuWindowLevel, NSWindow, NSWindowButton,
+        NSWindowCollectionBehavior,
+    };
+    use objc2_foundation::NSProcessInfo;
     use tauri::WebviewWindow;
+
+    /// A window drag from a mouse-down made here: the pointer where it is now,
+    /// in this window's own coordinates. tao's `drag_window` hands macOS
+    /// whatever event the app is handling when the page's request arrives,
+    /// which can be another window's, or one it builds with a screen point
+    /// where a window point belongs; either way the drag starts from the
+    /// wrong spot and the window jumps under the pointer. Apple asks for the
+    /// original mouse-down, which a page's request never has. A request that
+    /// comes after the button is up starts nothing: the drag would follow a
+    /// pointer no one is holding.
+    pub fn drag(window: &WebviewWindow) {
+        // The window itself goes along, and its NSWindow is looked up only once
+        // on the main thread: a card closed meanwhile is simply not there.
+        let window = window.clone();
+        let _ = window.clone().run_on_main_thread(move || {
+            if (NSEvent::pressedMouseButtons() & 1) == 0 {
+                return;
+            }
+            let Ok(ptr) = window.ns_window() else { return };
+            // SAFETY: the NSWindow of a window still held, used on the main thread.
+            let ns_window: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+            let at = ns_window.convertPointFromScreen(NSEvent::mouseLocation());
+            let now = NSProcessInfo::processInfo().systemUptime();
+            let down = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+                NSEventType::LeftMouseDown,
+                at,
+                NSEventModifierFlags::empty(),
+                now,
+                ns_window.windowNumber(),
+                None,
+                0,
+                1,
+                1.0,
+            );
+            if let Some(down) = down {
+                ns_window.performWindowDragWithEvent(&down);
+            }
+        });
+    }
 
     /// Above full-screen apps and on every Space. The overlay goes above the
     /// menu bar and the Dock too; the panel floats like a utility window.

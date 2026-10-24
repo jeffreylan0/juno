@@ -28,7 +28,7 @@ export function ShortcutField() {
       </span>
       {status?.error && (
         <small className="help bad" data-testid="shortcut-taken">
-          Another app is using {keys}. Click {BRAND.iconName} instead, or quit that app and restart {BRAND.name}.
+          Another app is using {keys}: click {BRAND.iconName} instead, or quit that app and restart {BRAND.name}.
         </small>
       )}
     </div>

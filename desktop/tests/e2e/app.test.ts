@@ -442,6 +442,11 @@ it('asking sends the screenshot to the AI, and the answer streams into the panel
     const images = JSON.stringify(body.messages).match(/data:image\/png;base64,[A-Za-z0-9+/=]+/g) ?? [];
     expect(images).toHaveLength(1);
     expect(await pixels(images[0]!, [[50, 50]])).toEqual([RED]);
+    // As the Claude and ChatGPT apps send it: the screenshot, then the question; nothing about the window it came from.
+    const asked = body.messages.at(-1)!.content as { type: string; text?: string }[];
+    expect(asked.map((c) => c.type)).toEqual(['image_url', 'text']);
+    expect(asked[1]!.text).toBe('Explain this step by step.');
+    if (chat.title.length > 3) expect(JSON.stringify(body.messages)).not.toContain(chat.title);
     // The answer is rendered, maths included.
     await waitFor('KaTeX in the answer', () => app.read('panel', `!!document.querySelector('.turn.assistant .katex')`));
   } finally {
@@ -851,8 +856,9 @@ it('the gear on the bar opens settings: the app’s own shortcut, no blocked sit
   expect(text).not.toContain('Works in every app');
   expect(text).not.toContain('Blocked sites');
   expect(text).not.toContain("browser's PDF viewer");
-  expect(text).toContain("its window's title, to the AI you picked");
-  expect(text).toContain('only your user account can read');
+  // What is sent: the chat, to whoever answers it; never the window's title (models refused students over a "Quiz" in one).
+  expect(text).toContain('Each question goes to whoever answers it with the rest of its chat, screenshots included');
+  expect(text).not.toContain("window's title");
   // A development build carries no update key: nothing about updates, and nothing about the build.
   expect(text).not.toContain('this build');
   expect(await app.read('settings', `!!document.querySelector('[data-testid=auto-update]')`)).toBe(false);
@@ -978,6 +984,21 @@ it('the app’s windows load only its own pages: a link can’t take the panel t
   expect(await app.read<string>('panel', 'location.href')).toBe(before);
 });
 
+it('each window may ask only for what it uses: a card drags only itself, and only the panel and settings open links', async () => {
+  const tried = (label: string, command: string, args = '{}') =>
+    app.read<string>(label, `window.__TAURI_INTERNALS__.invoke('${command}', ${args}).then(() => 'ok', (e) => 'refused: ' + String(e))`);
+  // A card's top bar: the native core starts the drag itself (wm.rs drag), for the panel and settings only.
+  expect(await tried('settings', 'window_drag')).toBe('ok');
+  for (const label of ['overlay', 'core']) expect(await tried(label, 'window_drag')).toMatch(/^refused/);
+  // Tauri's own drag, which could move any window by its name, is not on offer at all.
+  expect(await tried('settings', 'plugin:window|start_dragging', `{ label: 'overlay' }`)).toMatch(/^refused/);
+  for (const label of ['overlay', 'core']) expect(await tried(label, 'plugin:opener|open_url', `{ url: 'https://example.com/' }`)).toMatch(/^refused/);
+  // Quitting, restarting and opening settings: only from where the app offers them.
+  expect(await tried('overlay', 'quit')).toMatch(/^refused/);
+  expect(await tried('panel', 'relaunch')).toMatch(/^refused/);
+  expect(await tried('overlay', 'settings_open', '{ hash: null }')).toMatch(/^refused/);
+});
+
 it('settings open on a dashboard: who you are, this month’s answers and who answers; the settings’ menu comes in once they are reached', async () => {
   await app.eval('core', `browser.runtime.openOptionsPage()`);
   await waitFor('the dashboard', () => app.read('settings', `!!document.querySelector('[data-testid=dashboard]')`), 20_000);
@@ -992,13 +1013,13 @@ it('settings open on a dashboard: who you are, this month’s answers and who an
   expect(await app.read('settings', `[...document.querySelectorAll('#privacy > .field')].map((f) => f.dataset.testid || f.id)`)).toEqual(['chats', 'what-is-sent', 'notices']);
   expect(await app.read('settings', `document.querySelector('[data-testid=delete-chats]').className`)).toBe('danger');
   expect(await app.read('settings', `!!document.querySelector('[data-testid=temporary-default]')`)).toBe(true);
-  // The settings follow the dashboard, the most used first.
+  // The settings follow the dashboard, the most used first: how a selection starts, before what happens once it is made.
   expect(await app.read('settings', `[...document.querySelectorAll('.sections > section')].map((s) => s.id).slice(0, 6)`)).toEqual([
     'answers',
+    'selecting',
     'asking',
     'macros',
     'appearance',
-    'selecting',
     'privacy',
   ]);
   // Each says what it is for, in a sentence under its title.

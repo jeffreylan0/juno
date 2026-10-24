@@ -84,14 +84,27 @@ Because the builds aren't signed with a Developer ID, macOS asks testers to *Ope
 
 ### Updates
 
-Installed copies update themselves from the repository's Releases (Tauri's updater): each looks at `latest.json` in the release called `updates`, and installs a newer version only if it carries a valid signature from the update key. To turn it on, once:
+Installed copies update themselves from the repository's Releases (Tauri's updater): each looks at `latest.json` in the release called `updates` a minute after it starts and every 6 hours, and installs a newer version only if it carries a valid signature from the update key, once Juno isn't in use. The key's private half never reaches a build, where every package's build code runs: the builds leave the update files unsigned, and the *Test build* workflow's `sign` job signs them with the Tauri CLI alone, under the `release` environment, then checks every signature against the public half before anything is published.
+
+Once:
 
 1. Make the key, on your own computer: `pnpm --filter desktop tauri signer generate -w ~/.tauri/juno-updates.key`, with a password. Keep the key file and the password in your password manager: lose them, and installed copies can never update again.
-2. In GitHub → Settings → Secrets and variables → Actions, add `TAURI_SIGNING_PRIVATE_KEY` (the contents of `juno-updates.key`) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
-3. Add the public key (the contents of `juno-updates.key.pub`) as an Actions **variable**, `TAURI_UPDATER_PUBKEY` (or put it in `src-tauri/tauri.conf.json` → `plugins.updater.pubkey` and commit it). It is public on purpose, and it is what turns updating on in a build. Without it, the builds make no update files and the run says so.
-4. Ship an update by pushing a higher version tag, `desktop-vX.Y.Z`. The *Test build* workflow builds, signs, publishes the release, and points `latest.json` at it.
+2. GitHub → Settings → Environments → *New environment*, named `release`:
+   - *Deployment branches and tags* → *Selected branches and tags* → add a tag rule, `desktop-v*`.
+   - *Required reviewers* → yourself: every release then waits for your approval before the key is used.
+   - *Environment secrets*: `TAURI_SIGNING_PRIVATE_KEY` (the contents of `juno-updates.key`) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+   - If these two were added earlier as repository secrets (Settings → Secrets and variables → Actions → *Secrets*), delete them there: any workflow on any pushed branch can read a repository secret.
+3. Settings → Secrets and variables → Actions → *Variables*: `TAURI_UPDATER_PUBKEY`, the contents of `juno-updates.key.pub` (or put it in `src-tauri/tauri.conf.json` → `plugins.updater.pubkey` and commit it). It is public on purpose, and it is what turns updating on in a build.
+4. Settings → Rules → Rulesets → *New tag ruleset*: target `desktop-v*`, restrict creations, updates and deletions, with only yourself allowed to bypass. Only you can then start a release.
 
-The releases must stay public: installed copies download without signing in. Builds made before step 3 have no key, so testers reinstall once; every later build updates itself. Until the Mac app is signed with a Developer ID, each update is a new app to macOS, which asks for Screen Recording again after it (the bar says so); a Developer ID ends that.
+Each update:
+
+1. Merge what ships into `main`.
+2. Tag it with a higher version than the last, and push the tag: `git fetch origin main && git tag desktop-v0.2.0 origin/main && git push origin desktop-v0.2.0`. (Not a release made on GitHub's Releases page: the workflow makes the release itself.)
+3. Actions → *Test build* → the run for that tag: the Mac and Windows builds take about 15 minutes, then *Sign the update files* waits. Open it → *Review deployments* → tick `release` → *Approve and deploy*.
+4. It signs, checks the signatures, publishes the prerelease `desktop-v0.2.0` (installers, update files, `SHA256SUMS`) and points `latest.json` in `updates` at it. Installed copies take it within 6 hours; Settings → Juno → *Check now* looks at once.
+
+A tag whose key or public half is missing still builds and publishes the installers, with no update, and the run says so. The releases must stay public: installed copies download without signing in. A version lower than the installed one is never installed. Builds made before step 3 have no key, so testers reinstall once; every later build updates itself. Until the Mac app is signed with a Developer ID, each update is a new app to macOS, which asks for Screen Recording again after it (the bar says so); a Developer ID ends that.
 
 ## Spike checklist (the plan's first gate)
 
@@ -148,7 +161,7 @@ desktop/
 │   │                     the current chat, screenshots, settings, the planner, providers/, account/, rendering
 │   ├── ui/               the panel's components (Panel, Answer, Selection, ChatMenu, ModelPicker, Notices)
 │   ├── platform/         a WebExtension-shaped `browser` over the native core, files for screenshots, network, links, the key vault (vault.ts)
-│   ├── card.ts           the panel and settings as cards: drag by the top bar, the entrance (`card:enter` for the kept panel), settings shown only once drawn
+│   ├── card.ts           the panel and settings as cards: drag by the top bar (the native core starts it: wm.rs `drag`), the entrance (`card:enter` for the kept panel), settings shown only once drawn
 │   ├── theme.ts          each page following the colour theme (lib/themes.ts)
 │   └── brand.ts          what the app calls itself
 ├── web/                  the four pages (and a fixture page for the tests)

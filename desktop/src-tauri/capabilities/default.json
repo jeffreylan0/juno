@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What every page of the app may ask of the native core: events, dragging a card, and opening http(s) links in the browser. No network: the bar and the panel show what others wrote (answers, pages' text) and reach nothing themselves. The app's own commands check which window calls them (lib.rs).",
+  "description": "What every page of the app may ask of the native core: its events. No network: the bar and the panel show what others wrote (answers, pages' text) and reach nothing themselves. The app's own commands check which window calls them (lib.rs), dragging a card included.",
   "windows": ["core", "overlay", "panel", "settings", "fixture"],
-  "permissions": ["core:event:default", "core:window:allow-start-dragging", "opener:allow-open-url", "opener:allow-default-urls"]
+  "permissions": ["core:event:default"]
 }

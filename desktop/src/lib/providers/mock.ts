@@ -29,7 +29,7 @@ function placeholder(req: AskRequest, hash: string): string {
     ].join('\n');
   }
   const summary = fresh
-    .map((p, i) => (p.kind === 'image' ? `image ${p.width}×${p.height}` : partToText(p, i).split('\n').slice(1).join(' ').slice(0, 60)))
+    .map((p) => (p.kind === 'image' ? `image ${p.width}×${p.height}` : partToText(p).replace(/\s+/g, ' ').slice(0, 60)))
     .join('; ');
   const lines = [
     `Read: ${fresh.length} part(s) — ${summary || 'nothing'}${earlier ? ` (plus ${earlier} earlier selection(s) in this chat)` : ''}`,

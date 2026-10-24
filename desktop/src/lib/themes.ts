@@ -100,6 +100,9 @@ export const contrast = (a: string, b: string): number => {
 
 // ── Applying one ─────────────────────────────────────────────────────────
 
+/** Words and icons on the accent: white or near-black, whichever reads better on it. */
+const onAccent = (accent: string) => (contrast('#ffffff', accent) >= contrast('#141413', accent) ? '#ffffff' : '#141413');
+
 /** The page's colour variables for `p`, the stylesheets' names. */
 export function tokens(p: Palette, dark: boolean): Record<string, string> {
   return {
@@ -110,7 +113,7 @@ export function tokens(p: Palette, dark: boolean): Record<string, string> {
     '--line': p.line,
     '--accent': p.accent,
     '--accent-bg': mix(p.accent, p.bg, dark ? 0.2 : 0.12),
-    '--on-accent': contrast('#ffffff', p.accent) >= contrast('#141413', p.accent) ? '#ffffff' : '#141413',
+    '--on-accent': onAccent(p.accent),
     '--user-bg': p.user,
     '--hover': mix(p.fg, dark ? p.surface : p.bg, dark ? 0.08 : 0.06),
     '--drawer-bg': mix('#000000', p.bg, dark ? 0.2 : 0.03),
@@ -126,6 +129,7 @@ export function barTokens(p: Palette): Record<string, string> {
     '--sai-bar-line': mix(p.fg, p.surface, 0.14),
     '--sai-accent': p.accent,
     '--sai-accent-hover': mix('#000000', p.accent, 0.12),
+    '--sai-on-accent': onAccent(p.accent),
   };
 }
 

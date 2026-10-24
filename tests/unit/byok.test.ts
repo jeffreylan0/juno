@@ -100,9 +100,10 @@ describe('Anthropic requests', () => {
     const followUp = toAnthropicBody(
       toChatMessages({
         plan: plan({ question: 'Why?' }),
+        attachments: [],
         history: [
-          { role: 'user', text: 'Explain this step by step.' },
-          { role: 'assistant', text: 'Read: …' },
+          { role: 'user', text: 'Explain this step by step.', attachments: [{ parts: plan().parts }] },
+          { role: 'assistant', text: 'Read: …\n\nIt is…' },
         ],
       }),
       'claude-sonnet-5-5',

@@ -2,8 +2,8 @@
  * OpenAI-compatible chat message shape, used verbatim by OpenAI, Ollama and the
  * Worker, and converted by byok.ts for Anthropic.
  */
-import type { AskRequest, Attachment, Mode, Plan } from '@shared/payload';
-import { attachmentsPrompt, defaultQuestion, selectionPrompt, systemPrompt } from '@shared/prompts';
+import type { AskRequest, Attachment, Mode } from '@shared/payload';
+import { DEFAULT_PROMPTS, partToText, splitWhatIRead, systemPrompt } from '@shared/prompts';
 import { cutOff, declined, ensureVendorOk, vendorFetch, type VendorName } from './errors';
 import { ProviderError } from './types';
 
@@ -17,62 +17,51 @@ export interface ChatMessage {
 }
 
 /**
- * Builds a conversation. Each selection is attached exactly once, to the user
- * turn it was asked with, the way a chat app attaches a file to a message:
+ * Builds a conversation the way the Claude and ChatGPT apps send one: each
+ * selection attached to the message it was asked with, its images first and
+ * the question after, and the whole conversation each time, earlier
+ * screenshots included (prompt caching makes the repeated part cheap):
  *
- *   system · user(selection A + Q1) · assistant(A1) · user(Q2) · assistant(A2)
- *          · user(selections B, C + Q3) · …
+ *   system · user(selection A, Q1) · assistant(A1) · user(Q2) · assistant(A2)
+ *          · user(selections B, C, Q3) · …
  *
- * A chat can collect selections from several pages. Turns without one are
- * plain text; nothing is re-attached, so the model never wonders whether a
- * "new" selection arrived. (The whole conversation is resent each time, as
- * every chat API requires; prompt caching makes the repeated part cheap.)
+ * Nothing is said about a selection beyond the selection itself: no page
+ * title (a window called "Quiz 2.1" made models refuse students), no sizes.
+ * Earlier answers go back without their "Read:" line, so a follow-up isn't
+ * coaxed into describing a selection it doesn't have.
  */
 export function toChatMessages(req: AskRequest): ChatMessage[] {
   const { plan, history = [] } = req;
+  // The app always says which selections go with the question; the eval's single selection is the plan's own.
+  const attachments = req.attachments ?? [{ parts: plan.parts }];
   const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt(plan.mode) }];
-
-  if (req.attachments !== undefined || history.some((t) => t.attachments?.length)) {
-    for (const turn of history) {
-      messages.push(turn.role === 'user' ? { role: 'user', content: userTurn(turn.attachments ?? [], turn.text, plan.mode, true) } : { role: 'assistant', content: turn.text });
-    }
-    messages.push({ role: 'user', content: userTurn(req.attachments ?? [], plan.question, plan.mode, history.length > 0) });
-    return messages;
-  }
-
-  // Single-selection form (the eval, older callers): plan.parts is the one
-  // selection, attached to the opening question. History must open with that
-  // question; anything else means there is no usable opening turn.
-  const opensWithUser = history[0]?.role === 'user';
-  if (!opensWithUser || history.length === 0) {
-    messages.push({ role: 'user', content: openingTurn(plan, plan.question) });
-    return messages;
-  }
-
-  const [first, ...rest] = history;
-  messages.push({ role: 'user', content: openingTurn(plan, first!.text) });
-  for (const turn of rest) messages.push({ role: turn.role, content: turn.text });
-  messages.push({ role: 'user', content: plan.question?.trim() || 'Go on.' });
+  history.forEach((turn, i) => {
+    messages.push(
+      turn.role === 'user'
+        ? { role: 'user', content: userTurn(turn.attachments ?? [], turn.text, plan.mode, i > 0) }
+        : { role: 'assistant', content: splitWhatIRead(turn.text).body || turn.text },
+    );
+  });
+  messages.push({ role: 'user', content: userTurn(attachments, plan.question, plan.mode, history.length > 0) });
   return messages;
 }
 
-/** A user turn: plain text, or its selections' text and images followed by the question. */
+/** A user turn: the question alone, or after its selections (labelled when there are several). */
 function userTurn(attachments: Attachment[], question: string | undefined, mode: Mode, followUp: boolean): string | ContentPart[] {
-  if (!attachments.length) return question?.trim() || (followUp ? 'Go on.' : defaultQuestion(mode));
-  const content: ContentPart[] = [{ type: 'text', text: attachmentsPrompt(attachments, question, mode) }];
-  for (const a of attachments) {
+  const q = question?.trim() || (followUp ? 'Go on.' : DEFAULT_PROMPTS[mode]);
+  const selections = attachments.filter((a) => a.parts.length);
+  if (!selections.length) return q;
+  const content: ContentPart[] = [];
+  selections.forEach((a, i) => {
+    if (selections.length > 1) content.push({ type: 'text', text: `Selection ${i + 1}:` });
+    const text: string[] = [];
     for (const part of a.parts) {
       if (part.kind === 'image') content.push({ type: 'image_url', image_url: { url: part.dataUrl, detail: 'high' } });
+      else text.push(partToText(part));
     }
-  }
-  return content;
-}
-
-function openingTurn(plan: Plan, question: string | undefined): ContentPart[] {
-  const content: ContentPart[] = [{ type: 'text', text: selectionPrompt(plan, question) }];
-  for (const part of plan.parts) {
-    if (part.kind === 'image') content.push({ type: 'image_url', image_url: { url: part.dataUrl, detail: 'high' } });
-  }
+    if (text.length) content.push({ type: 'text', text: `Selected text:\n\n${text.join('\n\n')}` });
+  });
+  content.push({ type: 'text', text: q });
   return content;
 }
 

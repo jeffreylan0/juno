@@ -85,10 +85,10 @@ const SEND: { id: SendBehavior; label: string; help?: string }[] = [
 /** The settings, the most used first; the side menu lists them. */
 const SECTIONS = (signedIn: boolean) => [
   { id: 'answers', title: 'Answers' },
+  { id: 'selecting', title: 'Selecting' },
   { id: 'asking', title: 'Asking' },
   { id: 'macros', title: 'Macros' },
   { id: 'appearance', title: 'Appearance' },
-  { id: 'selecting', title: 'Selecting' },
   { id: 'privacy', title: 'Chats & privacy' },
   ...(ACCOUNTS && signedIn ? [{ id: 'account-settings', title: 'Account' }] : []),
   ...(MAC ? [{ id: 'permissions', title: 'Permissions' }] : []),
@@ -180,9 +180,10 @@ export function Options() {
               onKeySaved={() => setSaved(Date.now())}
               rememberModels={rememberModels}
             />
+            <SelectingSection settings={settings} save={save} locked={extras ? null : unlockLabel(account)} />
             <AskingSection settings={settings} save={save} />
             <MacrosSection settings={settings} save={save} locked={extras ? null : unlockLabel(account)} />
-            <Section id="appearance" title="Appearance" sub="Light or dark, and the colours of the bar, the panel and settings.">
+            <Section id="appearance" title="Appearance" sub="Light or dark, and Juno's colours.">
               <div className="field">
                 <span className="field-label">Light or dark</span>
                 <div className="segments" role="radiogroup" aria-label="Light or dark" data-testid="scheme">
@@ -211,15 +212,14 @@ export function Options() {
                 </div>
               )}
             </Section>
-            <SelectingSection settings={settings} save={save} locked={extras ? null : unlockLabel(account)} />
             <PrivacySection settings={settings} save={save} account={account} />
             <AccountSection account={account} />
             {MAC && (
-              <Section id="permissions" title="Permissions" sub="What macOS lets Juno do, and the one thing it asks for.">
+              <Section id="permissions" title="Permissions" sub="What macOS lets Juno do.">
                 <Permissions />
               </Section>
             )}
-            <Section id="app" title={BRAND.name} sub="The version, updates, opening at login, and quitting.">
+            <Section id="app" title={BRAND.name} sub="Version, updates, opening at login, and quitting.">
               <AppSection settings={settings} save={save} />
             </Section>
           </div>
@@ -370,7 +370,7 @@ function AnswersSection({
     <Section
       id="answers"
       title="Answers"
-      sub={`Who answers your questions: ${ACCOUNTS ? 'your plan, ' : ''}your own API key, or a model on this computer.`}
+      sub={`Who answers: ${ACCOUNTS ? 'your plan, ' : ''}your own API key, or a model on this computer.`}
     >
       <div className="cards" role="radiogroup" aria-label="Who answers">
         {CHOICES.map((c) => (
@@ -429,7 +429,7 @@ function KeyAndModel({
   );
 }
 
-// ── 2. Asking ────────────────────────────────────────────────────────────
+// ── 3. Asking ────────────────────────────────────────────────────────────
 
 function AskingSection({ settings, save }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void> }) {
   const [prompt, setPrompt] = useState(settings.defaultPrompt);
@@ -497,7 +497,7 @@ function MacrosSection({ settings, save, locked }: { settings: Settings; save: (
   const what = `More than ${FREE_MACROS} macros`;
 
   return (
-    <Section id="macros" title="Macros" sub="Buttons above the question box, each asking its own saved question in one click.">
+    <Section id="macros" title="Macros" sub="Saved questions, one click each, above the question box.">
       <div className="field" data-testid="asking">
         {changed && (
           <button type="button" className="link" onClick={() => update(DEFAULT_MACROS.map((m) => ({ ...m })))}>
@@ -525,7 +525,7 @@ function MacrosSection({ settings, save, locked }: { settings: Settings; save: (
   );
 }
 
-// ── 3. Selecting ─────────────────────────────────────────────────────────
+// ── 2. Selecting ─────────────────────────────────────────────────────────
 
 /** The bar's place and the panel's (lib/extras.ts says which, while the extras are locked). */
 function Places({ place, save }: { place: Pick<Settings, 'barPlace' | 'panelPlace'>; save: (patch: Partial<Settings>) => Promise<void> }) {
@@ -540,7 +540,7 @@ function Places({ place, save }: { place: Pick<Settings, 'barPlace' | 'panelPlac
 function SelectingSection({ settings, save, locked }: { settings: Settings; save: (patch: Partial<Settings>) => Promise<void>; locked: string | null }) {
   const place = withinPlan(settings, !locked);
   return (
-    <Section id="selecting" title="Selecting" sub="How a selection starts and ends, and where the bar and the panel appear.">
+    <Section id="selecting" title="Selecting" sub="How a selection starts, and where the bar and the panel appear.">
       <ShortcutField />
 
       <div className="field">
@@ -612,8 +612,8 @@ function PrivacySection({
       <div className="field" data-testid="what-is-sent">
         <span className="field-label">What's sent</span>
         <p className="help">
-          Only your selection and its window's title, to the AI you picked. Keys and chats are kept on this computer in files only your user
-          account can read{cloud ? '; chats also in your Juno account' : ''}.
+          Each question goes to whoever answers it with the rest of its chat, screenshots included; keys and chats are kept on this computer
+          {cloud ? ', chats in your account too' : ''}.
         </p>
         <ul className="help facts">
           <li>
@@ -644,7 +644,7 @@ function PrivacySection({
           <input type="checkbox" checked={settings.panelNotices} data-testid="panel-notices" onChange={(e) => void save({ panelNotices: e.target.checked })} />
           Notices in the panel
         </label>
-        <small className="help">No key, no connection, an old chat deleted. They go by themselves after 5 seconds.</small>
+        <small className="help">Problems like a missing key, gone after 5 seconds.</small>
       </div>
     </Section>
   );
@@ -680,7 +680,7 @@ function StorageField({ settings, offered, sync, save }: { settings: Settings; o
       </div>
       {cloud ? (
         <>
-          <small className="help">On every computer you sign in on. Signing out takes them off this one.</small>
+          <small className="help">On every computer you sign in on, and off this one when you sign out.</small>
           <SyncLine status={sync} />
         </>
       ) : offered ? (
@@ -751,7 +751,7 @@ function ChatsField({ settings, offered, sync, save }: { settings: Settings; off
         />
         Start every chat as temporary
       </label>
-      <small className="help">Never saved{ACCOUNTS ? ' or synced' : ''}. The ghost turns it off for a chat.</small>
+      <small className="help">Never saved{ACCOUNTS ? ' or synced' : ''}; the ghost turns it off for one chat.</small>
       {confirming?.kind === 'limit' ? (
         <div className="confirm-row">
           <span>

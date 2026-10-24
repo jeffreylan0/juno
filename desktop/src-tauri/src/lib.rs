@@ -326,9 +326,18 @@ fn panel_close(app: AppHandle, window: WebviewWindow, aside: Option<bool>) -> Re
     wm::close_panel(&app, !aside.unwrap_or(false)).map_err(err)
 }
 
+/// From the panel and settings themselves, and from the core for the bar's gear.
 #[tauri::command(async)]
-fn settings_open(app: AppHandle, hash: Option<String>) -> Res<()> {
+fn settings_open(app: AppHandle, window: WebviewWindow, hash: Option<String>) -> Res<()> {
+    only(&window, &[wm::CORE, wm::PANEL, wm::SETTINGS])?;
     wm::open_settings(&app, hash.as_deref()).map_err(err)
+}
+
+/// A card's top bar, pressed: the card follows the pointer (wm::drag).
+#[tauri::command]
+fn window_drag(window: WebviewWindow) -> Res<()> {
+    only(&window, &[wm::PANEL, wm::SETTINGS])?;
+    wm::drag(&window).map_err(err)
 }
 
 /// `window.close()` from settings, or Escape anywhere (the core closes all of
@@ -479,9 +488,11 @@ fn open_privacy_settings(app: AppHandle) -> Res<()> {
     Ok(())
 }
 
-/// macOS applies a new Screen Recording permission only to a fresh process.
+/// macOS applies a new Screen Recording permission only to a fresh process:
+/// the bar's notice and settings offer the restart.
 #[tauri::command]
-fn relaunch(app: AppHandle) {
+fn relaunch(app: AppHandle, window: WebviewWindow) -> Res<()> {
+    only(&window, &[wm::OVERLAY, wm::SETTINGS])?;
     app.restart();
 }
 
@@ -514,9 +525,12 @@ fn diag_note(window: WebviewWindow, text: String) {
     diag::note(&format!("{}: {text}", window.label()));
 }
 
+/// Settings' Quit, or ⌘Q in a card.
 #[tauri::command]
-fn quit(app: AppHandle) {
+fn quit(app: AppHandle, window: WebviewWindow) -> Res<()> {
+    only(&window, &[wm::PANEL, wm::SETTINGS])?;
     app.exit(0);
+    Ok(())
 }
 
 /// Settings → Account → Continue with Google: a one-time listener for
@@ -735,6 +749,7 @@ pub fn run() {
             panel_fit,
             window_show,
             settings_open,
+            window_drag,
             window_close,
             capture_selection,
             screen_access,

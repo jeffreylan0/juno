@@ -15,6 +15,7 @@
   --hover: #eeeae7;
   --ok: #3d7a3a;
   --bad: #b42318;
+  --on-bad: #ffffff;
   --warn: #8a5a00;
   --radius: 9px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
@@ -32,6 +33,7 @@
   --hover: #3c3632;
   --ok: #8fc88a;
   --bad: #f2998b;
+  --on-bad: #1c1714;
   --warn: #e7c46a;
 }
 
@@ -70,7 +72,8 @@ h1 { font-size: 15px; font-weight: 600; margin: 0; }
 .profile-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .profile-name { font-size: 24px; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
 .profile .field { align-self: stretch; }
-.plan-line { font-size: 14px; margin-top: 2px; }
+.profile-plan { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.plan-line { font-size: 14px; }
 .usage { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .plan-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .usage-who { align-self: center; text-align: center; }
@@ -83,7 +86,6 @@ h1 { font-size: 15px; font-weight: 600; margin: 0; }
 .gauge-center { position: absolute; left: 0; right: 0; top: 58%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
 .gauge-count { font-size: 34px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .gauge-label { font-size: 13px; }
-.gauge-note { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
 @media (prefers-reduced-motion: reduce) { .gauge-fill { transition: none; } }
 /* The unlock, and every locked extra's way to it (Options.tsx): a white button. */
 .unlock { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
@@ -200,18 +202,18 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4p
 button.secondary, button.danger { font: inherit; padding: 7px 14px; border-radius: var(--radius); cursor: pointer; align-self: flex-start; }
 button.secondary { border: 1px solid var(--line); background: var(--bg); color: var(--fg); transition: background-color 120ms ease, border-color 120ms ease; }
 button.secondary:hover:not(:disabled) { background: var(--hover); }
-button.danger { border: 0; background: var(--bad); color: #fff; }
+button.danger { border: 0; background: var(--bad); color: var(--on-bad); }
 button.primary { font: inherit; font-weight: 600; padding: 9px 18px; border: 0; border-radius: var(--radius); background: var(--accent); color: var(--on-accent); cursor: pointer; }
 
-/* The first-launch intro (Intro.tsx), on near-black whatever the theme. Each
-   part's resting style is how it ends; its animation plays from how it
-   starts (fill: both), so with reduced motion only the end shows. About 3 s. */
-.intro { position: fixed; inset: 0; display: grid; place-items: center; overflow: hidden; background: #0f0d0c; color: #f7f1ea; --rise: 64px; }
+/* The first-launch intro (Intro.tsx), in the theme's own colours, light or
+   dark. Each part's resting style is how it ends; its animation plays from
+   how it starts (fill: both), so with reduced motion only the end shows. About 3 s. */
+.intro { position: fixed; inset: 0; display: grid; place-items: center; overflow: hidden; background: var(--bg); color: var(--fg); --rise: 64px; }
 .intro .top.intro-top { position: absolute; inset: 0 0 auto; height: 40px; background: none; border: 0; backdrop-filter: none; }
 .intro-frame { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; opacity: 0; animation: intro-frame 1250ms cubic-bezier(.2, .8, .2, 1) both; }
-.intro-frame svg { width: 240px; overflow: visible; fill: none; stroke: #f7f1ea; stroke-width: 1.5; stroke-linecap: square; }
+.intro-frame svg { width: 240px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: square; }
 .intro-box { stroke-dasharray: 100; stroke-dashoffset: 0; stroke-width: 1; animation: intro-draw 420ms 340ms ease-out both; }
-.intro-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; animation: intro-flash 260ms 820ms ease-out both; }
+.intro-flash { position: absolute; inset: 0; background: var(--accent); opacity: 0; pointer-events: none; animation: intro-flash 260ms 820ms ease-out both; }
 .intro-main { position: relative; display: flex; flex-direction: column; align-items: center; gap: 28px; }
 .intro-brand { display: flex; align-items: center; gap: 16px; margin: 0; animation: intro-rise 600ms 2400ms cubic-bezier(.3, 0, .2, 1) both; }
 .intro-mark { width: 56px; height: 56px; animation: intro-mark 1100ms 1100ms cubic-bezier(.3, 0, .2, 1) both; }
@@ -220,13 +222,12 @@ button.primary { font: inherit; font-weight: 600; padding: 9px 18px; border: 0; 
 .intro-name { font-size: 46px; font-weight: 600; letter-spacing: .02em; animation: intro-name 520ms 1750ms ease-out both; }
 .intro-actions { display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 260px; animation: intro-actions 500ms 2650ms ease-out both; }
 .intro-actions > .primary { min-width: 260px; }
-.intro-actions .help { color: #b2a79c; }
-.intro-actions .link { color: #f7f1ea; opacity: .8; font-size: 13px; }
+.intro-actions .help { color: var(--muted); }
+.intro-actions .link { color: var(--muted); font-size: 13px; }
 .intro-actions .sign-in { width: 340px; }
-.intro .sign-in .help { color: #b2a79c; }
 @keyframes intro-frame { 0% { opacity: 0; transform: scale(1.45); } 30% { opacity: 1; transform: scale(1); } 80% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: translateY(var(--rise)) scale(.25); } }
 @keyframes intro-draw { from { stroke-dashoffset: 100; } }
-@keyframes intro-flash { 0% { opacity: 0; } 30% { opacity: .5; } 100% { opacity: 0; } }
+@keyframes intro-flash { 0% { opacity: 0; } 30% { opacity: .3; } 100% { opacity: 0; } }
 @keyframes intro-mark { 0% { opacity: 0; transform: translateX(61px) scale(.2); } 30% { opacity: 1; transform: translateX(61px) scale(1); } 60% { transform: translateX(61px) scale(1); } 100% { transform: none; } }
 @keyframes intro-name { from { opacity: .3; clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 @keyframes intro-rise { from { transform: translateY(var(--rise)); } }
@@ -238,6 +239,8 @@ button.primary { font: inherit; font-weight: 600; padding: 9px 18px; border: 0; 
 /* A saved key, by its last four characters only. */
 .key-saved { font-size: 13px; color: var(--muted); }
 button:disabled { opacity: .5; cursor: default; }
+/* A coloured button that can't be pressed yet goes grey, its words still readable on it, light or dark. */
+button.primary:disabled { opacity: 1; background: var(--hover); color: var(--muted); }
 .confirm-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
 .macro-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

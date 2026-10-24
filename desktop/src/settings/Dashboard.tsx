@@ -1,19 +1,20 @@
 /**
  * The top of settings, in the manner of a profile page. On the left, who you
- * are: your picture, name and email, your plan in bold and what is next for
- * it, then buying or managing it and signing out (or, as a guest, signing up
- * or in a click away but never pressed on you, and the unlock for this
- * computer: lib/account/unlock.ts). On the right, usage: a horseshoe of the
- * month's hosted answers left, with how many the model you picked has left
- * in its middle; without hosted answers, this month's answers. Then who
- * answers. The settings follow, the most used first (Options.tsx).
+ * are: your picture beside your name and email, under them your plan in
+ * bold and what is next for it, then buying or managing it and signing out
+ * (or, as a guest, signing up or in a click away but never pressed on you,
+ * and the unlock for this computer: lib/account/unlock.ts). On the right,
+ * usage: a horseshoe of the month's hosted answers left, with how many the
+ * model you picked has left in its middle; without hosted answers, this
+ * month's answers. Then who answers, by the model's name. The settings
+ * follow, the most used first (Options.tsx).
  */
 import { useEffect, useRef, useState } from 'react';
 import { HOSTED_MODEL, answersLeft } from '@shared/models';
 import { ACCOUNTS } from '@/lib/account/config';
 import type { AccountUser } from '@/lib/account/session';
 import { buyUnlock, restoreUnlock, unlockOffer } from '@/lib/account/unlock';
-import { MODEL_NAMES } from '@/lib/router';
+import { MODEL_NAMES, MODEL_TABLE } from '@/lib/router';
 import { hostedModelOf, type Settings } from '@/lib/storage';
 import { thisMonth, usageItem, type MonthUsage } from '@/lib/usage';
 import { unitsLeft } from '@/ui/ModelPicker';
@@ -51,6 +52,10 @@ function Profile({ account }: { account: AccountState }) {
               {user.email}
             </span>
           )}
+        </div>
+      </div>
+      {(user || ACCOUNTS) && (
+        <div className="profile-plan">
           {ent ? (
             <PlanLine ent={ent} />
           ) : user ? (
@@ -61,7 +66,7 @@ function Profile({ account }: { account: AccountState }) {
             <GuestPlanLine />
           )}
         </div>
-      </div>
+      )}
       {user ? (
         <>
           {ent && <PlanActions ent={ent} />}
@@ -150,10 +155,9 @@ function Avatar({ picture }: { picture?: string }) {
   );
 }
 
-/** A guest's plan: free, or Plus by the unlock bought on this computer. A build without accounts sells nothing: no plan to name. */
+/** A guest's plan: free, or Plus by the unlock bought on this computer. */
 function GuestPlanLine() {
   const open = useExtrasOpen();
-  if (!ACCOUNTS) return null;
   return (
     <span className="plan-line" data-testid="plan-name">
       <b>{open ? 'Plus' : 'Free'}</b>
@@ -220,23 +224,36 @@ function Usage({ settings, account }: { settings: Settings; account: AccountStat
     <div id="usage" className="usage" data-testid="usage">
       <span className="plan-label">Usage</span>
       {units !== null && ent ? (
-        <Gauge part={units / ent.quota} count={answersLeft(units, model)} label="answers left" note={MODEL_NAMES[model]} />
+        <Gauge part={units / ent.quota} count={answersLeft(units, model)} label="answers left" />
       ) : (
         <Gauge part={0} count={usage.answers} label={usage.answers === 1 ? 'answer this month' : 'answers this month'} />
       )}
       <p className="help usage-who" data-testid="who-answers">
-        {USING[settings.provider]}
+        {using(settings)}
       </p>
     </div>
   );
 }
 
-const USING: Record<Settings['provider'], string> = {
-  gateway: "You're using your plan.",
-  byok: "You're using your API key.",
-  local: "You're using your local model.",
-  mock: 'Pick who answers below.',
-};
+/**
+ * Who answers, by the model's name. A local model's name is only what was
+ * typed in settings, not what the server says it runs, so it goes unnamed.
+ * Auto on a key answers every chat (each has a screenshot) with the larger model.
+ */
+export function using(settings: Settings): string {
+  switch (settings.provider) {
+    case 'gateway':
+      return `You're using ${MODEL_NAMES[hostedModelOf(settings)]} with your plan.`;
+    case 'byok': {
+      const model = settings.modelOverride?.vendor === settings.vendor ? settings.modelOverride.model : MODEL_TABLE[settings.vendor].large;
+      return `You're using ${MODEL_NAMES[model] ?? model} with your API key.`;
+    }
+    case 'local':
+      return "You're using your local model.";
+    case 'mock':
+      return 'Pick who answers below.';
+  }
+}
 
 /** The horseshoe: a 270° arc open at the bottom, from bottom left round to bottom right (pathLength 100). */
 const ARC = 'M 43.43 156.57 A 80 80 0 1 1 156.57 156.57';
@@ -245,7 +262,7 @@ const ARC = 'M 43.43 156.57 A 80 80 0 1 1 156.57 156.57';
  * How much of the month is left (`part`, 0 to 1), filling in when it shows
  * and following any change; `count` and `label` in its middle.
  */
-function Gauge({ part, count, label, note }: { part: number; count: number; label: string; note?: string }) {
+function Gauge({ part, count, label }: { part: number; count: number; label: string }) {
   const [shown, setShown] = useState(0);
   useEffect(() => {
     const frame = requestAnimationFrame(() => setShown(Math.min(1, Math.max(0, part))));
@@ -262,7 +279,6 @@ function Gauge({ part, count, label, note }: { part: number; count: number; labe
           {count.toLocaleString()}
         </span>
         <span className="gauge-label">{label}</span>
-        {note && <span className="gauge-note">{note}</span>}
       </span>
     </div>
   );

@@ -4,6 +4,7 @@ import { callModel, type ProviderContext } from '@/lib/providers';
 import { keyVault, toAnthropicBody } from '@/lib/providers/byok';
 import { sseData, toChatMessages } from '@/lib/providers/openai-compat';
 import type { AskChunk, AskRequest, Plan } from '@shared/payload';
+import { DEFAULT_PROMPTS } from '@shared/prompts';
 
 function plan(): Plan {
   return {
@@ -50,29 +51,45 @@ function sseResponse(events: string[]): Response {
 }
 
 describe('message shape', () => {
-  it('attaches the selection once, to the opening user turn', () => {
-    const msgs = toChatMessages({ plan: plan() });
+  const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA', detail: 'high' } };
+  const shot = { parts: [plan().parts[1]!] };
+  const quizPage = { url: 'u', title: 'Task 10 of 13 - Quiz 2.1' };
+
+  it('sends a selection the way a chat app attaches a file: its image first, then the question, and nothing about the page', () => {
+    const msgs = toChatMessages({ plan: { ...plan(), page: quizPage } });
     expect(msgs.map((m) => m.role)).toEqual(['system', 'user']);
-    const content = msgs[1]!.content as { type: string; text?: string }[];
-    expect(content.map((c) => c.type)).toEqual(['text', 'image_url']);
-    expect(content[0]!.text).toContain('Selected content:');
-    expect(content[0]!.text).toContain('Question: Why?');
+    expect(msgs[1]!.content).toEqual([image, { type: 'text', text: 'Selected text:\n\nHello' }, { type: 'text', text: 'Why?' }]);
+    // A window titled "Quiz" made models turn students down; it, and the URL, stay on this computer.
+    expect(JSON.stringify(msgs)).not.toContain('Quiz 2.1');
+    expect(JSON.stringify(msgs[1])).not.toContain('"u"');
   });
 
-  it('sends a follow-up as text after the history, with the selection still in the first turn', () => {
+  it('asks the default question when the box was empty, and "Go on." for an empty follow-up', () => {
+    const opening = toChatMessages({ plan: { ...plan(), mode: 'check', question: '' }, attachments: [shot] });
+    expect((opening[1]!.content as { text?: string }[]).at(-1)!.text).toBe(DEFAULT_PROMPTS.check);
+    const followUp = toChatMessages({
+      plan: { ...plan(), question: ' ' },
+      attachments: [],
+      history: [
+        { role: 'user', text: 'Explain', attachments: [shot] },
+        { role: 'assistant', text: 'It is…' },
+      ],
+    });
+    expect(followUp.at(-1)!.content).toBe('Go on.');
+  });
+
+  it('a follow-up is the question alone, after the whole conversation, screenshots included; answers go back without their Read: line', () => {
     const msgs = toChatMessages({
       plan: { ...plan(), question: 'And the units?' },
+      attachments: [],
       history: [
-        { role: 'user', text: 'Explain this' },
-        { role: 'assistant', text: 'Read: a force diagram. It shows…' },
+        { role: 'user', text: 'Explain this', attachments: [shot] },
+        { role: 'assistant', text: 'Read: a force diagram.\n\nIt shows…' },
       ],
     });
     expect(msgs.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
-    const opening = msgs[1]!.content as { type: string; text?: string }[];
-    expect(opening.map((c) => c.type)).toEqual(['text', 'image_url']);
-    // The opening turn carries the student's original question, not the follow-up.
-    expect(opening[0]!.text).toContain('Question: Explain this');
-    expect(msgs[2]!.content).toBe('Read: a force diagram. It shows…');
+    expect(msgs[1]!.content).toEqual([image, { type: 'text', text: 'Explain this' }]);
+    expect(msgs[2]!.content).toBe('It shows…');
     expect(msgs[3]!.content).toBe('And the units?');
     // Only one copy of the image is ever sent.
     const images = msgs.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((c) => c.type === 'image_url');
@@ -83,8 +100,9 @@ describe('message shape', () => {
     const body = toAnthropicBody(
       toChatMessages({
         plan: { ...plan(), question: 'Next?' },
+        attachments: [],
         history: [
-          { role: 'user', text: 'Q1' },
+          { role: 'user', text: 'Q1', attachments: [shot] },
           { role: 'assistant', text: 'A1' },
           { role: 'user', text: 'Q2' },
           { role: 'assistant', text: 'A2' },
@@ -92,9 +110,8 @@ describe('message shape', () => {
       }),
       'claude-sonnet-5',
     );
-    const roles = body.messages.map((m) => m.role);
-    expect(roles).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
-    expect(body.system).toContain('no new selection');
+    expect(body.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
+    expect(body.system).toContain('never remark on whether a message comes with a selection');
   });
 
   it('converts to the Anthropic body with system split out and images first', () => {
@@ -102,25 +119,26 @@ describe('message shape', () => {
     expect(body.system).toContain('Read:');
     expect(body.messages).toHaveLength(1);
     const blocks = body.messages[0]!.content as { type: string }[];
-    expect(blocks.map((b) => b.type)).toEqual(['image', 'text']);
+    expect(blocks.map((b) => b.type)).toEqual(['image', 'text', 'text']);
   });
 });
 
 describe('chats with selections from several pages', () => {
   const shot = (n: number) => ({ kind: 'image' as const, dataUrl: `data:image/png;base64,${'A'.repeat(n)}`, width: 2, height: 2, reason: 'user' as const });
-  const textbook = { kind: 'box' as const, page: { url: 'https://a.test/', title: 'Textbook' }, parts: [shot(4)] };
-  const paper = { kind: 'text' as const, page: { url: 'https://b.test/', title: 'Paper' }, parts: [{ kind: 'text' as const, text: 'F = ma' }] };
+  const textbook = { parts: [shot(4)] };
+  // As stored by an earlier version, which also read text off the page.
+  const paper = { parts: [{ kind: 'text' as const, text: 'F = ma' }] };
 
-  it('sends every new selection with the question, each named by its page', () => {
+  it('sends every new selection with the question, each labelled, images before the question', () => {
     const msgs = toChatMessages({ plan: { ...plan(), question: 'Compare these.' }, attachments: [textbook, paper], history: [] });
     expect(msgs.map((m) => m.role)).toEqual(['system', 'user']);
-    const content = msgs[1]!.content as { type: string; text?: string }[];
-    expect(content.map((c) => c.type)).toEqual(['text', 'image_url']);
-    expect(content[0]!.text).toContain('The student selected 2 things');
-    expect(content[0]!.text).toContain('from "Textbook"');
-    expect(content[0]!.text).toContain('from "Paper"');
-    expect(content[0]!.text).toContain('F = ma');
-    expect(content[0]!.text).toContain('Question: Compare these.');
+    expect(msgs[1]!.content).toEqual([
+      { type: 'text', text: 'Selection 1:' },
+      { type: 'image_url', image_url: { url: shot(4).dataUrl, detail: 'high' } },
+      { type: 'text', text: 'Selection 2:' },
+      { type: 'text', text: 'Selected text:\n\nF = ma' },
+      { type: 'text', text: 'Compare these.' },
+    ]);
   });
 
   it('keeps each earlier selection with the question that carried it, and a follow-up with none is plain text', () => {
@@ -135,7 +153,7 @@ describe('chats with selections from several pages', () => {
       ],
     });
     expect(msgs.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user', 'assistant', 'user']);
-    expect((msgs[1]!.content as { type: string }[]).map((c) => c.type)).toEqual(['text', 'image_url']);
+    expect((msgs[1]!.content as { type: string }[]).map((c) => c.type)).toEqual(['image_url', 'text']);
     expect((msgs[3]!.content as { type: string; text?: string }[])[0]!.text).toContain('F = ma');
     expect(msgs[5]!.content).toBe('And now?');
     const images = msgs.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((c) => c.type === 'image_url');

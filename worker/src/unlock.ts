@@ -96,11 +96,6 @@ function deviceOf(raw: unknown): string {
 
 /** A Checkout page for the unlock, for this computer. */
 export async function unlockCheckout(request: Request, env: Env): Promise<{ url: string; session: string }> {
-  // No account to count against: the caller's address is (Checkout pages cost nothing, but are not for a script).
-  const who = request.headers.get('cf-connecting-ip') ?? 'unknown';
-  if (env.ASK_LIMIT && !(await env.ASK_LIMIT.limit({ key: `unlock:${who}` })).success) {
-    throw new BillingError('Too many tries. Wait a minute, then try again.', 429, 'rate-limited');
-  }
   const device = deviceOf((await body(request)).device);
   const p = await price(env);
   if (!p) throw notOnOffer();

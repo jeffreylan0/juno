@@ -34,3 +34,12 @@ GOOGLE_CLIENT_ID = ""
 name = "ASK_LIMIT"
 namespace_id = "1001"
 simple = { limit = 10, period = 60 }
+
+# The routes anyone may call without signing in (prices, Google sign-in, the
+# unlock), a minute per address: they reach Stripe and Google, whose limits a
+# flood would use up for everyone. The app asks after a paid unlock every
+# 3 s (desktop/src/lib/account/unlock.ts), well within it.
+[[ratelimits]]
+name = "OPEN_LIMIT"
+namespace_id = "1002"
+simple = { limit = 30, period = 60 }
