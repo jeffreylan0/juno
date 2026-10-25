@@ -36,6 +36,24 @@ export const ANSWER_COST: Record<string, number> = {
   'gpt-6-astra': 190,
 };
 
+/**
+ * What each web search adds to a hosted answer, in the same fast-model
+ * answers: the search itself ($10 per 1,000 at either company) and the pages
+ * it reads into the question (about 20,000 tokens at the model's input
+ * price), with some room (README.md, Plans). An answer that may search takes
+ * one search up front; the Worker gives it back if none was made and takes
+ * each further one (up to vendors.ts MAX_SEARCHES) once the answer is done.
+ */
+export const SEARCH_COST: Record<string, number> = {
+  'claude-haiku-5-5': 25,
+  'claude-sonnet-5-5': 95,
+  'claude-opus-5-5': 170,
+  'claude-fable-5-1': 390,
+  'gpt-6-luna': 25,
+  'gpt-6-sol': 95,
+  'gpt-6-astra': 390,
+};
+
 /** Whose model an id is. */
 export const vendorOf = (model: string): Exclude<Vendor, 'local' | 'mock'> => (model.startsWith('gpt-') ? 'openai' : 'anthropic');
 

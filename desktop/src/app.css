@@ -22,6 +22,14 @@ html[data-card] .page { overflow-y: auto; scroll-behavior: smooth; scroll-paddin
 html[data-card] .top { cursor: default; }
 html[data-card] .topbar { cursor: default; user-select: none; -webkit-user-select: none; }
 
+/* "Esc to close", for a moment after Juno opens another app's window that the card may sit over (card.ts). */
+.esc-tip {
+  position: fixed; top: 54px; left: 12px; z-index: 20; padding: 4px 9px; border-radius: 7px;
+  font-size: 12px; background: var(--fg); color: var(--bg); opacity: 0; pointer-events: none; transition: opacity 160ms ease;
+}
+.esc-tip.on { opacity: 0.9; }
+@media (prefers-reduced-motion: reduce) { .esc-tip { transition: none; } }
+
 /* Settings → Juno: the Quit button's key. */
 .quit-key { margin-left: 8px; color: var(--muted); }
 

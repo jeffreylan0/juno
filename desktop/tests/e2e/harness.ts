@@ -254,7 +254,8 @@ export async function fakeModelServer(answer = 'The red square is $x^2$.'): Prom
       return;
     }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
-    for (const piece of answer.match(/.{1,8}/g) ?? []) {
+    // In pieces of eight characters, line breaks included.
+    for (const piece of answer.match(/[\s\S]{1,8}/g) ?? []) {
       res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: piece } }] })}\n\n`);
       await sleep(10);
     }

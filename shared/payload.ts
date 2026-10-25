@@ -146,6 +146,8 @@ export interface AskRequest {
   /** Prior turns in this conversation. */
   history?: ChatTurn[];
   model?: ModelRef;
+  /** The model may search the web for this answer (the panel's globe). */
+  search?: boolean;
 }
 
 export interface Usage {
@@ -162,8 +164,9 @@ export type AskChunk =
 
 /**
  * Returns the cache-relevant subset of a request in a stable key order.
- * Attachments only appear when a request has them, so single-selection
- * requests (the eval's recordings) hash exactly as they always did.
+ * Attachments and search only appear when a request has them, so
+ * single-selection requests (the eval's recordings) hash exactly as they
+ * always did.
  */
 export function canonicalizeRequest(req: AskRequest): unknown {
   const { plan, history = [], model } = req;
@@ -178,6 +181,7 @@ export function canonicalizeRequest(req: AskRequest): unknown {
     model: model ? `${model.vendor}/${model.model}` : null,
     route: plan.route,
     ...(req.attachments ? { attachments: req.attachments.map(attachment) } : {}),
+    ...(req.search ? { search: true } : {}),
   };
 }
 

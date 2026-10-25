@@ -210,30 +210,44 @@ describe('Anthropic requests', () => {
   });
 });
 
+/** OpenAI's Responses stream: the text, then how it ended. */
+const openAIAnswer = (text: string, completed: object = { type: 'response.completed', response: { usage: { input_tokens: 1, output_tokens: 1 } } }) =>
+  sse([...(text ? [{ data: { type: 'response.output_text.delta', delta: text } }] : []), { data: completed }]);
+
 describe('OpenAI requests', () => {
-  it('sends no custom headers, which would trigger a CORS preflight OpenAI may refuse', async () => {
+  it('asks the Responses API, with no custom headers, which would trigger a CORS preflight OpenAI may refuse', async () => {
     const calls: Call[] = [];
-    const c = ctx(() => sse([{ data: { choices: [{ delta: { content: 'hi' } }] } }, { data: '[DONE]' }]), calls);
-    await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'openai' }));
+    const c = ctx(() => openAIAnswer('hi'), calls);
+    const { text } = await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'openai' }));
+    expect(text).toBe('hi');
     expect(calls[0]!.url).toBe(OPENAI_URL);
     expect(Object.keys(calls[0]!.init.headers as Record<string, string>).sort()).toEqual(['authorization', 'content-type']);
-    const body = JSON.parse(String(calls[0]!.init.body)) as { model: string; max_completion_tokens: number };
+    const body = JSON.parse(String(calls[0]!.init.body)) as { model: string; max_output_tokens: number; input: { role: string; content: unknown }[]; tools?: unknown };
     expect(body.model).toBe('gpt-6-sol');
-    expect(body.max_completion_tokens).toBe(32_000);
+    expect(body.max_output_tokens).toBe(32_000);
+    expect(body.input.map((m) => m.role)).toEqual(['system', 'user']);
+    expect((body.input[1]!.content as { type: string }[]).map((p) => p.type)).toEqual(['input_image', 'input_text']);
+    expect(body.tools).toBeUndefined();
   });
 
   it('says when a filter stopped the answer, or the length limit cut it short', async () => {
-    const ending = (finish: string, text?: string) =>
-      sse([...(text ? [{ data: { choices: [{ delta: { content: text } }] } }] : []), { data: { choices: [{ delta: {}, finish_reason: finish }] } }, { data: '[DONE]' }]);
+    const ending = (reason: string, text = '') => openAIAnswer(text, { type: 'response.incomplete', response: { incomplete_details: { reason } } });
     const filtered = await collect(callModel({ plan: plan() }, 'large', ctx(() => ending('content_filter', 'Part')), { provider: 'byok', vendor: 'openai' }));
     expect(filtered.error).toMatchObject({ code: 'declined', message: 'ChatGPT declined to answer this. Try rewording it, or pick another model.' });
-    const cut = await collect(callModel({ plan: plan() }, 'large', ctx(() => ending('length')), { provider: 'byok', vendor: 'openai' }));
+    const cut = await collect(callModel({ plan: plan() }, 'large', ctx(() => ending('max_output_tokens')), { provider: 'byok', vendor: 'openai' }));
     expect(cut.error?.code).toBe('cut-off');
+    const failed = await collect(
+      callModel({ plan: plan() }, 'large', ctx(() => openAIAnswer('', { type: 'response.failed', response: { error: { code: 'server_error', message: 'boom' } } })), {
+        provider: 'byok',
+        vendor: 'openai',
+      }),
+    );
+    expect(failed.error?.message).toBe('OpenAI stopped partway: boom. Try again.');
   });
 
   it('never asks OpenAI to store the answer; a temporary chat also asks for an in-memory prompt cache', async () => {
     const calls: Call[] = [];
-    const ok = () => sse([{ data: { choices: [{ delta: { content: 'hi' } }] } }, { data: '[DONE]' }]);
+    const ok = () => openAIAnswer('hi');
     await collect(callModel({ plan: plan() }, 'large', ctx(ok, calls), { provider: 'byok', vendor: 'openai' }));
     const saved = JSON.parse(String(calls[0]!.init.body)) as Record<string, unknown>;
     expect(saved.store).toBe(false);
@@ -252,7 +266,7 @@ describe('OpenAI requests', () => {
         if (body.prompt_cache_retention) {
           return json(400, { error: { message: "Invalid value for 'prompt_cache_retention': this model supports only '24h'.", type: 'invalid_request_error', param: 'prompt_cache_retention' } });
         }
-        return sse([{ data: { choices: [{ delta: { content: 'fine' } }] } }, { data: '[DONE]' }]);
+        return openAIAnswer('fine');
       }, calls),
       ephemeral: true,
     };
@@ -274,6 +288,66 @@ describe('OpenAI requests', () => {
   });
 });
 
+describe('web search', () => {
+  const ev = (data: Record<string, unknown>) => ({ event: String(data.type), data });
+
+  it('gives Claude its search tool only when asked, and turns its citations into numbered links and a list of sources', async () => {
+    const calls: Call[] = [];
+    const searches: number[] = [];
+    const c = {
+      ...ctx(
+        () =>
+          sse([
+            ev({ type: 'message_start', message: { usage: { input_tokens: 20, output_tokens: 1 } } }),
+            ev({ type: 'content_block_start', index: 0, content_block: { type: 'server_tool_use', name: 'web_search' } }),
+            ev({ type: 'content_block_start', index: 1, content_block: { type: 'web_search_tool_result', content: [] } }),
+            ev({ type: 'content_block_start', index: 2, content_block: { type: 'text', text: '' } }),
+            ev({ type: 'content_block_delta', index: 2, delta: { type: 'text_delta', text: 'It opened in 1889' } }),
+            ev({ type: 'content_block_delta', index: 2, delta: { type: 'citations_delta', citation: { type: 'web_search_result_location', url: 'https://example.com/tower', title: 'The [Tower] $5' } } }),
+            ev({ type: 'content_block_delta', index: 2, delta: { type: 'citations_delta', citation: { type: 'web_search_result_location', url: 'javascript:alert(1)', title: 'x' } } }),
+            ev({ type: 'content_block_stop', index: 2 }),
+            ev({ type: 'content_block_delta', index: 3, delta: { type: 'text_delta', text: '.' } }),
+            ev({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { input_tokens: 9000, output_tokens: 30, server_tool_use: { web_search_requests: 1 } } }),
+          ]),
+        calls,
+      ),
+      onSearch: () => searches.push(1),
+    };
+    const { text, done } = await collect(callModel({ plan: plan(), search: true }, 'large', c, { provider: 'byok', vendor: 'anthropic' }));
+    expect(JSON.parse(String(calls[0]!.init.body)).tools).toEqual([{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }]);
+    expect(searches).toHaveLength(1);
+    expect(text).toBe('It opened in 1889 [&#91;1&#93;](<https://example.com/tower>).\n\n**Sources**\n\n1. [The &#91;Tower&#93; &#36;5](<https://example.com/tower>)\n');
+    // The search's own fee is counted with the tokens it read.
+    expect(done?.usage?.inputTokens).toBe(9000);
+    expect(done?.usage?.costUsd).toBeGreaterThan(0.01);
+
+    await collect(callModel({ plan: plan() }, 'large', c, { provider: 'byok', vendor: 'anthropic' }));
+    expect(JSON.parse(String(calls[1]!.init.body)).tools).toBeUndefined();
+  });
+
+  it('gives OpenAI its search tool, capped, and lists the pages it cited', async () => {
+    const calls: Call[] = [];
+    const c = ctx(
+      () =>
+        sse([
+          { data: { type: 'response.output_item.added', item: { type: 'web_search_call' } } },
+          { data: { type: 'response.output_item.done', item: { type: 'web_search_call', action: { type: 'search' } } } },
+          { data: { type: 'response.output_text.delta', delta: 'Paris ([example.com](https://example.com/a)).' } },
+          { data: { type: 'response.output_text.annotation.added', annotation: { type: 'url_citation', url: 'https://example.com/a', title: 'A' } } },
+          { data: { type: 'response.output_text.annotation.added', annotation: { type: 'url_citation', url: 'https://example.com/a', title: 'A' } } },
+          { data: { type: 'response.completed', response: { usage: { input_tokens: 10, output_tokens: 5 } } } },
+        ]),
+      calls,
+    );
+    const { text } = await collect(callModel({ plan: plan(), search: true }, 'large', c, { provider: 'byok', vendor: 'openai' }));
+    const body = JSON.parse(String(calls[0]!.init.body)) as { tools: unknown; max_tool_calls: number };
+    // From OpenAI's index only: no page the model names is opened live.
+    expect(body.tools).toEqual([{ type: 'web_search', external_web_access: false }]);
+    expect(body.max_tool_calls).toBe(3);
+    expect(text).toBe('Paris ([example.com](https://example.com/a)).\n\n**Sources**\n\n1. [A](<https://example.com/a>)\n');
+  });
+});
+
 describe('describeHttpError', () => {
   const cases: [number, unknown, string, RegExp][] = [
     [401, { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }, 'bad-key', /rejected the API key/],
@@ -284,6 +358,7 @@ describe('describeHttpError', () => {
     [529, { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }, 'overloaded', /overloaded/],
     [500, { type: 'error', error: { type: 'api_error', message: 'boom' } }, 'http', /server error \(500\)/],
     [400, { type: 'error', error: { type: 'invalid_request_error', message: 'messages: roles must alternate' } }, 'http', /roles must alternate/],
+    [400, { type: 'error', error: { type: 'invalid_request_error', message: 'Web search is not enabled for this organization.' } }, 'unsupported', /Turn off the globe/],
   ];
   it.each(cases)('HTTP %i → a sentence and a code the panel can act on', (status, body, code, message) => {
     const e = describeHttpError('Anthropic', status, JSON.stringify(body), { model: 'claude-x', retryAfter: '12' });

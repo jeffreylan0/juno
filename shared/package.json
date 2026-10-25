@@ -6,7 +6,8 @@
   "exports": {
     "./models": "./models.ts",
     "./payload": "./payload.ts",
-    "./prompts": "./prompts.ts"
+    "./prompts": "./prompts.ts",
+    "./vendors": "./vendors.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

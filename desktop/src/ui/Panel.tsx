@@ -13,8 +13,10 @@
  *    and on the latest, edit and ask again), answers paced as they stream
  *    (copy);
  *  - notices (no key, disconnected, …) floating over the end of the chat
- *    and going by themselves, then the answer macros, and the question box,
- *    with who answers beside Send, as in Claude.
+ *    and going by themselves, then the answer macros and the globe (web
+ *    search, on or off for this chat, kept with it; Settings → Asking says
+ *    which a chat starts as), and the question box, with who answers beside
+ *    Send, as in Claude.
  *
  * Every question carries the selections made since the last one. The box
  * starts empty (or with the student's own default prompt); Enter or Send asks
@@ -29,10 +31,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { SelectionKind } from '@shared/payload';
 import { BRAND } from '@/brand';
 import { ACCOUNTS } from '@/lib/account/config';
+import { ASK_EVENT } from '@/lib/blocks';
 import { autoTitle, hasUsableSelection, isRemovable, pendingSelections, type AssistantItem, type Chat } from '@/lib/chats';
 import { isTransient, needsSettings } from '@/lib/providers/errors';
 import { watchExtras, withinPlan } from '@/lib/extras';
-import { getSettings, settingsItem, type Macro, type Settings } from '@/lib/storage';
+import { canSearch, getSettings, settingsItem, type Macro, type Settings } from '@/lib/storage';
 import { splitWhatIRead } from '@shared/prompts';
 import { Answer } from './Answer';
 import { ChatMenu, TitleInput } from './ChatMenu';
@@ -90,6 +93,9 @@ export function Panel() {
   const asked = items.some((i) => i.kind === 'user');
   const draft = chatId ? (drafts[chatId] ?? '') : '';
   const newest = pending.at(-1)?.id;
+  // The globe: this chat's own choice, else Settings → Asking's; none for a local model.
+  const searchable = !!settings && canSearch(settings);
+  const search = searchable && (chat?.search ?? settings?.searchByDefault ?? false);
 
   useEffect(() => {
     void getSettings().then(setSettings);
@@ -232,15 +238,28 @@ export function Panel() {
   }, [chatId]);
   useEffect(followBottom, [followBottom, chatId, items.length, last?.kind === 'assistant' ? last.text : '', !!incoming]);
 
+  /** Asks `question` in this chat; false if it can't be asked now (nothing to ask about, or an answer still coming). */
   const ask = useCallback(
-    (question: string) => {
-      if (!askable || !chatId || busy) return;
+    (question: string): boolean => {
+      if (!askable || !chatId || busy) return false;
       following.current = true;
       void send({ type: 'chat:send', chatId, question });
       setDraft('');
+      return true;
     },
     [askable, chatId, busy, setDraft],
   );
+
+  // A form in an answer, sent (lib/blocks): its choices are the next question.
+  // Not sent (an answer still coming), the form is told so and stays as it was.
+  useEffect(() => {
+    const thread = threadRef.current;
+    const onAsk = (e: Event) => {
+      if (!ask((e as CustomEvent<string>).detail)) e.preventDefault();
+    };
+    thread?.addEventListener(ASK_EVENT, onAsk);
+    return () => thread?.removeEventListener(ASK_EVENT, onAsk);
+  }, [ask]);
 
   const runMacro = useCallback(
     (macro: Macro) => {
@@ -339,12 +358,18 @@ export function Panel() {
                 return <Question key={item.id} text={item.text} redo={item.id === redoable ? retry : undefined} />;
               case 'assistant':
                 return (
-                  <div key={item.id} className="turn assistant" data-streaming={item.streaming ? 'true' : 'false'}>
+                  <div key={item.id} className={`turn assistant${item.streaming && item.searching ? ' searching' : ''}`} data-streaming={item.streaming ? 'true' : 'false'}>
                     {item.error ? (
                       <ErrorTurn item={item} last={item === last} onRetry={() => retry()} />
                     ) : (
                       <>
                         <Answer text={item.text} streaming={!!item.streaming} onPaced={followBottom} />
+                        {item.streaming && item.searching && (
+                          <div className="searching-note" role="status">
+                            <Icon name="globe" />
+                            Searching the web…
+                          </div>
+                        )}
                         {!item.streaming && item.text.trim() && (
                           <div className="turn-actions">
                             <CopyButton text={splitWhatIRead(item.text).body} what="answer" />
@@ -380,6 +405,19 @@ export function Panel() {
               </button>
             ))}
           </div>
+          {searchable && (
+            <button
+              type="button"
+              className={`icon globe${search ? ' on' : ''}`}
+              aria-pressed={search}
+              aria-label="Web search"
+              title={search ? 'Web search on: answers may look things up' : 'Web search off'}
+              data-testid="web-search"
+              onClick={() => chatId && void send({ type: 'chat:search', chatId, on: !search })}
+            >
+              <Icon name="globe" />
+            </button>
+          )}
         </div>
         <form
           className={`composer${askable ? '' : ' off'}`}

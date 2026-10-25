@@ -1,8 +1,9 @@
 // @vitest-environment node
 /**
  * The Worker's own logic: who is asking (a Supabase token checked against
- * the project's published keys), which models it may use, Anthropic's stream
- * re-emitted in the OpenAI shape the app reads, and billing (Stripe's
+ * the project's published keys), which models it may use, the vendors'
+ * streams re-emitted in the OpenAI shape the app reads, web searches
+ * counted, and billing (Stripe's
  * events mirrored into the database, checkout, what is on offer, the
  * unlock bought without an account).
  */
@@ -12,10 +13,11 @@ import { readBody } from '../../worker/src/body';
 import { checkout, form, prices, webhook } from '../../worker/src/billing';
 import { googleToken } from '../../worker/src/google';
 import { unlockCheckout, unlockClaim, unlockDone, unlockPrice, unlockRestore } from '../../worker/src/unlock';
-import { LIMITS, anthropicToOpenAI, cacheScope, callVendor, parseAsk, scoped, toAnthropic } from '../../worker/src/models';
+import { LIMITS, cacheScope, callVendor, parseAsk, readerFor, relay, scoped } from '../../worker/src/models';
 import worker, { network, type Env } from '../../worker/src/index';
-import { ANSWER_COST } from '@shared/models';
+import { ANSWER_COST, SEARCH_COST } from '@shared/models';
 import { systemPrompt } from '@shared/prompts';
+import { toAnthropic, type Ending } from '@shared/vendors';
 
 const SUPABASE_URL = 'https://proj.supabase.co';
 const env = { SUPABASE_URL, SUPABASE_SECRET_KEY: 'sb_secret_x' } as Env;
@@ -267,9 +269,95 @@ describe('hosted answers, counted by model', () => {
     left = 0;
     expect(await ask('anthropic/claude-haiku-5-5')).toEqual({ status: 402, message: "You've used all your hosted answers this month." });
   });
+
+  it('prices a search for every model a plan offers, so none searches for free', () => {
+    expect(Object.keys(SEARCH_COST).sort()).toEqual(Object.keys(ANSWER_COST).sort());
+  });
+
+  it('takes an answer’s web searches up front, as many as fit, and gives back those not made', async () => {
+    const { jwk, sign } = await signer();
+    const url = 'https://search.supabase.co';
+    const askEnv = { SUPABASE_URL: url, SUPABASE_SECRET_KEY: 'sb_secret_x', AI_GATEWAY_ID: '', ANTHROPIC_API_KEY: 'k' } as Env;
+    const rpcs: Array<[string, number]> = [];
+    let left = 1000;
+    let searches = 0;
+    let sent: { tools?: unknown } = {};
+    vi.stubGlobal('fetch', async (input: string, init: RequestInit) => {
+      if (input.endsWith('/jwks.json')) return new Response(JSON.stringify({ keys: [jwk] }));
+      if (input.includes('/rest/v1/rpc/')) {
+        const name = input.split('/rpc/')[1]!;
+        const { p_cost } = JSON.parse(String(init.body)) as { p_cost: number };
+        rpcs.push([name, p_cost]);
+        if (name === 'refund_answer') {
+          left += p_cost;
+          return Response.json(null);
+        }
+        const ok = left >= p_cost;
+        if (ok) left -= p_cost;
+        return Response.json({ ok, used: 1500 - left, quota: 1500, period: '2026-10-01' });
+      }
+      sent = JSON.parse(String(init.body));
+      const events = [
+        { type: 'message_start', message: { usage: { input_tokens: 5 } } },
+        ...Array.from({ length: searches }, (_, i) => ({ type: 'content_block_start', index: i, content_block: { type: 'server_tool_use', name: 'web_search' } })),
+        { type: 'content_block_delta', index: 9, delta: { type: 'text_delta', text: 'Hi' } },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2, server_tool_use: { web_search_requests: searches } } },
+      ];
+      return new Response(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(''));
+    });
+    const ask = async (search: boolean) => {
+      const waits: Promise<unknown>[] = [];
+      const token = await sign(good({ iss: `${url}/auth/v1` }));
+      const body = JSON.stringify({ model: 'anthropic/claude-haiku-5-5', messages: [{ role: 'user', content: 'hi' }], search });
+      const res = await worker.fetch(new Request('https://w/ask', { method: 'POST', headers: { authorization: `Bearer ${token}` }, body }), askEnv, {
+        waitUntil: (p: Promise<unknown>) => void waits.push(p),
+      } as unknown as ExecutionContext);
+      const text = await res.text();
+      await Promise.all(waits);
+      return { status: res.status, text };
+    };
+    const search = SEARCH_COST['claude-haiku-5-5']!;
+
+    // The answer (1) and every search up front; none made, so all three come back.
+    expect((await ask(true)).text).toContain('Hi');
+    expect(sent.tools).toEqual([{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }]);
+    expect(rpcs).toEqual([
+      ['use_answer', 1 + 3 * search],
+      ['refund_answer', 3 * search],
+    ]);
+    // Two made: one comes back. Nothing is ever taken after the check.
+    rpcs.length = 0;
+    searches = 2;
+    await ask(true);
+    expect(rpcs).toEqual([
+      ['use_answer', 1 + 3 * search],
+      ['refund_answer', search],
+    ]);
+    // Search off: no tool, and only the answer.
+    rpcs.length = 0;
+    await ask(false);
+    expect(sent.tools).toBeUndefined();
+    expect(rpcs).toEqual([['use_answer', 1]]);
+    // Room for one search only: one, and the model is told so.
+    left = 1 + search + 3;
+    rpcs.length = 0;
+    searches = 1;
+    await ask(true);
+    expect(rpcs).toEqual([
+      ['use_answer', 1 + 3 * search],
+      ['use_answer', 1 + search],
+    ]);
+    expect(sent.tools).toEqual([{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }]);
+    // Too little left to search: it says what to do; without search it still goes.
+    left = 10;
+    expect(JSON.parse((await ask(true)).text).error.message).toBe(
+      "Not enough of this month's answers left to search the web with this model. Turn off web search or pick a faster model.",
+    );
+    expect((await ask(false)).status).toBe(200);
+  });
 });
 
-describe('Anthropic, in the OpenAI shape', () => {
+describe('the vendors, in the OpenAI shape', () => {
   it('asks for a quick answer: low effort', async () => {
     let sent: { model?: string; output_config?: { effort?: string } } = {};
     vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
@@ -280,6 +368,21 @@ describe('Anthropic, in the OpenAI shape', () => {
     await callVendor('anthropic', 'claude-haiku-5-5', { model: 'anthropic/claude-haiku-5-5', messages: [{ role: 'user', content: 'hi' }] }, env, 'scope');
     expect(sent.model).toBe('claude-haiku-5-5');
     expect(sent.output_config).toEqual({ effort: 'low' });
+  });
+
+  it('goes through the AI Gateway when one is named: no log, no cached answer, and its token when it is authenticated', async () => {
+    const calls: { url: string; headers: Headers }[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      calls.push({ url, headers: new Headers(init.headers) });
+      return new Response('{}', { status: 529 });
+    });
+    const body = { model: 'anthropic/claude-haiku-5-5', messages: [{ role: 'user' as const, content: 'hi' }] };
+    await callVendor('anthropic', 'claude-haiku-5-5', body, { AI_GATEWAY_ID: 'acct', AI_GATEWAY_TOKEN: 'gw-token', ANTHROPIC_API_KEY: 'k' } as Env, 'scope');
+    await callVendor('anthropic', 'claude-haiku-5-5', body, { AI_GATEWAY_ID: '', ANTHROPIC_API_KEY: 'k' } as Env, 'scope');
+    expect(calls[0]!.url).toBe('https://gateway.ai.cloudflare.com/v1/acct/juno/anthropic/messages');
+    expect([...['cf-aig-collect-log', 'cf-aig-skip-cache', 'cf-aig-authorization'].map((h) => calls[0]!.headers.get(h))]).toEqual(['false', 'true', 'Bearer gw-token']);
+    expect(calls[1]!.url).toBe('https://api.anthropic.com/v1/messages');
+    expect(calls[1]!.headers.get('cf-aig-authorization')).toBeNull();
   });
 
   it('keeps a temporary chat’s OpenAI prompt cache in memory, asking again without where a model can’t', async () => {
@@ -336,12 +439,15 @@ describe('Anthropic, in the OpenAI shape', () => {
         c.close();
       },
     });
-    const out = await new Response(body.pipeThrough(anthropicToOpenAI())).text();
+    const ended: Ending[] = [];
+    const out = await new Response(relay(body, readerFor('anthropic'), (e) => ended.push(e))).text();
     const datas = out.split('\n\n').filter(Boolean).map((l) => l.slice(6));
     expect(datas.at(-1)).toBe('[DONE]');
     const chunks = datas.slice(0, -1).map((d) => JSON.parse(d));
     expect(chunks.flatMap((c) => c.choices.map((x: { delta: { content: string } }) => x.delta.content)).join('')).toBe('Hello');
     expect(chunks.at(-1).usage).toEqual({ prompt_tokens: 100, completion_tokens: 7, prompt_tokens_details: { cached_tokens: 90 } });
+    expect(ended).toHaveLength(1);
+    expect(ended[0]!.searches).toBe(0);
   });
 
   it('says why an answer stopped early, as OpenAI would: the length limit, or a safeguard', async () => {
@@ -351,7 +457,7 @@ describe('Anthropic, in the OpenAI shape', () => {
         { type: 'message_delta', delta: { stop_reason }, usage: { output_tokens: 3 } },
       ];
       const sse = events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
-      const out = await new Response(new Response(sse).body!.pipeThrough(anthropicToOpenAI())).text();
+      const out = await new Response(relay(new Response(sse).body!, readerFor('anthropic'), () => {})).text();
       return out
         .split('\n\n')
         .filter((l) => l && !l.includes('[DONE]'))
@@ -360,6 +466,54 @@ describe('Anthropic, in the OpenAI shape', () => {
     expect(await finish('max_tokens')).toEqual(['length']);
     expect(await finish('refusal')).toEqual(['content_filter']);
     expect(await finish('end_turn')).toEqual([]);
+  });
+
+  it('reads OpenAI’s Responses stream the same way: a search beginning, the text, its sources, then usage', async () => {
+    const events = [
+      { type: 'response.output_item.added', item: { type: 'web_search_call' } },
+      { type: 'response.output_item.done', item: { type: 'web_search_call', action: { type: 'search' } } },
+      { type: 'response.output_item.done', item: { type: 'web_search_call', action: { type: 'open_page' } } },
+      { type: 'response.output_text.delta', delta: 'Paris.' },
+      { type: 'response.output_text.annotation.added', annotation: { type: 'url_citation', url: 'https://example.com/p', title: 'P' } },
+      { type: 'response.completed', response: { usage: { input_tokens: 40, output_tokens: 4, input_tokens_details: { cached_tokens: 30 } } } },
+    ];
+    const sse = events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join('');
+    const ended: Ending[] = [];
+    const out = await new Response(relay(new Response(sse).body!, readerFor('openai'), (e) => ended.push(e))).text();
+    const chunks = out
+      .split('\n\n')
+      .filter((l) => l && !l.includes('[DONE]'))
+      .map((l) => JSON.parse(l.slice(6)));
+    expect(chunks[0]).toEqual({ choices: [], searching: true });
+    expect(chunks.flatMap((c) => c.choices.map((x: { delta: { content?: string } }) => x.delta.content ?? '')).join('')).toBe(
+      'Paris.\n\n**Sources**\n\n1. [P](<https://example.com/p>)\n',
+    );
+    expect(chunks.at(-1).usage).toEqual({ prompt_tokens: 40, completion_tokens: 4, prompt_tokens_details: { cached_tokens: 30 } });
+    // Every call counts, opening a page too: max_tool_calls caps them all.
+    expect(ended[0]!.searches).toBe(2);
+  });
+
+  it('settles a stopped or broken answer’s searches too', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'server_tool_use', name: 'web_search' } })}\n\n`));
+      },
+    });
+    const ended: Ending[] = [];
+    const reader = relay(body, readerFor('anthropic'), (e) => ended.push(e)).getReader();
+    await reader.read();
+    await reader.cancel();
+    expect(ended.map((e) => e.searches)).toEqual([1]);
+
+    // A vendor's stream that breaks is settled too, once.
+    const broken = new ReadableStream<Uint8Array>({
+      pull(c) {
+        c.error(new Error('reset'));
+      },
+    });
+    const after: Ending[] = [];
+    await expect(new Response(relay(broken, readerFor('anthropic'), (e) => after.push(e))).text()).rejects.toThrow();
+    expect(after).toHaveLength(1);
   });
 });
 

@@ -40,6 +40,8 @@ export interface UserItem {
   text: string;
   /** The selections sent with this question. */
   selections: string[];
+  /** Asked with web search on: asked again, it searches again. */
+  search?: true;
 }
 
 export interface AssistantItem {
@@ -48,6 +50,8 @@ export interface AssistantItem {
   at: number;
   text: string;
   streaming?: boolean;
+  /** While it streams: a web search is under way. */
+  searching?: boolean;
   usage?: Usage;
   model?: ModelRef;
   error?: string;
@@ -63,6 +67,8 @@ export interface Chat {
   /** Renamed by the student, so later selections do not retitle it. */
   titleEdited?: boolean;
   temporary?: boolean;
+  /** The globe turned on or off in this chat; absent: as Settings → Asking says (searchByDefault). */
+  search?: boolean;
   createdAt: number;
   /** When it was last used: the menu's order, and what the limit keeps. */
   updatedAt: number;

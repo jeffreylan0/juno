@@ -28,9 +28,25 @@ export const WHAT_I_READ_INSTRUCTION =
   'If part of a selection is unreadable, say so in that line instead of guessing. A follow-up gets its answer straight away, with no "Read:" line. ' +
   'Refer to earlier selections the way a person would: "the first problem", "the table".';
 
+/**
+ * How an answer is written, and the blocks the panel draws from JSON
+ * (desktop/src/lib/blocks): each described by an example, so a model
+ * writes them the way they are read.
+ */
 export const FORMAT_INSTRUCTION =
   'Write Markdown. Use $...$ for inline math and $$...$$ for display math (KaTeX). ' +
-  'Write chemistry with \\ce{...} (mhchem). Keep units explicit. Do not use HTML.';
+  'Write chemistry with \\ce{...} (mhchem). Keep units explicit. Do not use HTML. Use Markdown tables for tabular data.\n\n' +
+  'When a picture makes the answer clearer, draw it with a fenced block named for its kind, holding only JSON:\n' +
+  '- plot, graphs of y = f(x): {"fns":[{"f":"x^2-1","label":"f(x)"}],"x":[-3,3],"y":[-2,8],"points":[[1,0,"root"]]} ' +
+  '(f in x with + - * / ^, sin, ln, sqrt, pi, e and the like; "y" and "points" optional)\n' +
+  '- chart, data: {"type":"bar","labels":["A","B"],"series":[{"name":"2024","values":[3,5]}],"x":"Group","y":"Count"} ' +
+  '(type bar, line, scatter with [x,y] pairs as values, or pie with one series)\n' +
+  '- diagram, processes, cycles, hierarchies, cause and effect: ' +
+  '{"dir":"down","nodes":[{"id":"a","label":"Light"},{"id":"b","label":"Chlorophyll"}],"edges":[{"from":"a","to":"b","label":"absorbed by"}]} ("right" to run across)\n' +
+  '- form, when the student should choose (what they need, or practice questions to try); their choices come back as their next message: ' +
+  '{"questions":[{"q":"…","options":["…","…"],"multi":false}]}\n' +
+  '- slides, several categories or stages one at a time: {"slides":[{"title":"…","body":"Markdown"}]}\n' +
+  'Any block may have a "title". Still explain in words, and draw only what helps.';
 
 export const MODE_PROMPTS: Record<Mode, string> = {
   ask:

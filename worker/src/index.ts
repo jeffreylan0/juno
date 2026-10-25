@@ -8,7 +8,7 @@
  * Routes:
  *   POST /auth/google       Google sign-in's code → an ID token (google.ts)
  *   GET  /me                what the account gets (plan, cloud storage, hosted answers, billing)
- *   POST /ask               a streamed answer (OpenAI-compatible SSE), counted against the plan
+ *   POST /ask               a streamed answer (OpenAI-compatible SSE), counted against the plan (web searches too)
  *   GET  /billing/prices    plans on offer          (billing.ts, as are the next five)
  *   POST /billing/checkout  a Stripe Checkout page
  *   POST /billing/portal    Stripe's customer portal
@@ -31,8 +31,9 @@ import { stillSignedIn, verifySession, type Session } from './auth';
 import { BillingError, checkout, close, donePage, portal, prices, webhook } from './billing';
 import { googleToken } from './google';
 import { readBody } from './body';
-import { ANSWER_COST } from '@selection-ai/shared/models';
-import { BadRequest, cacheScope, callVendor, parseAsk } from './models';
+import { ANSWER_COST, SEARCH_COST } from '@selection-ai/shared/models';
+import { MAX_SEARCHES } from '@selection-ai/shared/vendors';
+import { BadRequest, cacheScope, callVendor, parseAsk, readerFor, relay } from './models';
 import { refundAnswer, useAnswer } from './quota';
 import { accountOf } from './supabase';
 import { unlockCheckout, unlockClaim, unlockDone, unlockPrice, unlockRestore } from './unlock';
@@ -40,6 +41,8 @@ import { unlockCheckout, unlockClaim, unlockDone, unlockPrice, unlockRestore } f
 export interface Env {
   /** Cloudflare account id of an AI Gateway named "juno"; empty to call the vendors directly. */
   AI_GATEWAY_ID: string;
+  /** The gateway's own token, when it is an authenticated gateway (a Worker secret); unset: none sent. */
+  AI_GATEWAY_TOKEN?: string;
   ANTHROPIC_API_KEY: string;
   OPENAI_API_KEY: string;
   SUPABASE_URL: string;
@@ -93,7 +96,7 @@ const CORS = {
 };
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
@@ -118,7 +121,7 @@ export default {
 
       if (request.method === 'GET' && url.pathname === '/me') return json(await accountOf(env, session.userId));
       if (request.method === 'POST') {
-        if (url.pathname === '/ask') return await ask(request, session, env);
+        if (url.pathname === '/ask') return await ask(request, session, env, ctx);
         // Each reaches Stripe: a few a minute per account, as a person clicks.
         if (url.pathname.startsWith('/billing/') && env.ASK_LIMIT && !(await env.ASK_LIMIT.limit({ key: `billing:${session.userId}` })).success) {
           return error(429, 'Too many tries. Wait a minute, then try again.', 'rate-limited');
@@ -138,7 +141,15 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-async function ask(request: Request, session: Session, env: Env): Promise<Response> {
+/**
+ * A hosted answer. What it takes from the month is its model's ANSWER_COST,
+ * and, when it may search the web, as many searches (SEARCH_COST each, at
+ * most MAX_SEARCHES) as the month has room for, all up front, in the same
+ * checked statement. The model may make only those (the vendor is told the
+ * number), and those it didn't make are given back when the answer ends or
+ * the student stops it: nothing is ever taken after the check.
+ */
+async function ask(request: Request, session: Session, env: Env, ctx?: ExecutionContext): Promise<Response> {
   if (env.ASK_LIMIT && !(await env.ASK_LIMIT.limit({ key: session.userId })).success) {
     return error(429, "You're asking very quickly. Wait a minute, then try again.", 'rate-limited');
   }
@@ -151,17 +162,27 @@ async function ask(request: Request, session: Session, env: Env): Promise<Respon
   }
   const { vendor, model, body } = parseAsk(parsed);
 
-  const cost = ANSWER_COST[model] ?? 1;
-  const use = await useAnswer(session, cost, env);
-  if (!use.ok) {
-    return use.quota > 0
-      ? error(402, cost > 1 && use.quota - use.used > 0 ? "Not enough of this month's answers left for this model. Pick a faster one." : "You've used all your hosted answers this month.", 'quota')
-      : error(403, "Your account doesn't include hosted answers.", 'no-plan');
+  const answer = ANSWER_COST[model] ?? 1;
+  const perSearch = body.search ? SEARCH_COST[model] : 0;
+  if (perSearch === undefined) throw new BadRequest("Web search isn't offered with this model.");
+  let searches = perSearch ? MAX_SEARCHES : 0;
+  let use = await useAnswer(session, answer + searches * perSearch, env);
+  if (!use.ok && perSearch && use.quota > 0) {
+    // Not room for every search: as many as there is room for.
+    const fit = Math.min(MAX_SEARCHES - 1, Math.floor((use.quota - use.used - answer) / perSearch));
+    if (fit >= 1) use = await useAnswer(session, answer + (searches = fit) * perSearch, env);
   }
+  if (!use.ok) {
+    const left = use.quota - use.used;
+    if (use.quota <= 0) return error(403, "Your account doesn't include hosted answers.", 'no-plan');
+    if (perSearch && left >= answer) return error(402, "Not enough of this month's answers left to search the web with this model. Turn off web search or pick a faster model.", 'quota');
+    return error(402, answer > 1 && left > 0 ? "Not enough of this month's answers left for this model. Pick a faster one." : "You've used all your hosted answers this month.", 'quota');
+  }
+  const cost = answer + searches * perSearch;
 
   let upstream: Response;
   try {
-    upstream = await callVendor(vendor, model, body, env, await cacheScope(session.userId, body.messages));
+    upstream = await callVendor(vendor, model, body, env, await cacheScope(session.userId, body.messages), searches);
   } catch (err) {
     await refundAnswer(session, use.period, cost, env);
     throw err;
@@ -177,7 +198,11 @@ async function ask(request: Request, session: Session, env: Env): Promise<Respon
     if (upstream.status === 400 || upstream.status === 413) return error(400, 'The AI refused that request. Try a smaller selection.', 'refused');
     return error(502, "The AI didn't answer. Try again.", 'upstream');
   }
-  return new Response(upstream.body, {
+  const stream = relay(upstream.body, readerFor(vendor), (end) => {
+    const unused = (searches - Math.min(end.searches, searches)) * perSearch;
+    if (unused > 0) ctx?.waitUntil(refundAnswer(session, use.period, unused, env));
+  });
+  return new Response(stream, {
     status: 200,
     headers: { ...CORS, 'content-type': 'text/event-stream', 'cache-control': 'no-store' },
   });

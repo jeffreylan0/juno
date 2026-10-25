@@ -449,6 +449,17 @@ it('asking sends the screenshot to the AI, and the answer streams into the panel
     if (chat.title.length > 3) expect(JSON.stringify(body.messages)).not.toContain(chat.title);
     // The answer is rendered, maths included.
     await waitFor('KaTeX in the answer', () => app.read('panel', `!!document.querySelector('.turn.assistant .katex')`));
+
+    // A local model can't search the web: no globe. A company's model can, starting as Settings → Asking says.
+    expect(await app.read('panel', `!!document.querySelector('[data-testid=web-search]')`)).toBe(false);
+    await app.eval(
+      'core',
+      `browser.storage.local.get('settings').then(({ settings }) => browser.storage.local.set({ settings: { ...settings, provider: 'byok', searchByDefault: true } }))`,
+    );
+    const globe = `document.querySelector('[data-testid=web-search]')`;
+    await waitFor('the globe, on', () => app.read('panel', `${globe}?.getAttribute('aria-pressed') === 'true'`));
+    await app.eval('panel', `${globe}.click()`);
+    await waitFor('the globe, off for this chat', () => app.read('panel', `${globe}.getAttribute('aria-pressed') === 'false'`));
   } finally {
     await model.close();
   }
@@ -500,6 +511,31 @@ async function answered(after?: string) {
     return last?.kind === 'assistant' && !last.streaming && last.text && last.id !== after ? c : null;
   });
 }
+
+it('an answer draws its graphs and diagrams, and a form it holds asks the next question', async () => {
+  const blocks = [
+    '```plot\n{"fns":["x^2"],"x":[-2,2]}\n```',
+    '```diagram\n{"nodes":["Light","Sugar"],"edges":[{"from":"Light","to":"Sugar"}]}\n```',
+    '```form\n{"questions":[{"q":"Which?","options":["A","B"]}]}\n```',
+  ];
+  const model = await fakeModelServer(`Here.\n\n${blocks.join('\n\n')}`);
+  onTestFinished(() => model.close());
+  await answerWith(model.url);
+  await app.summon();
+  await armed();
+  await box(150, 150, 250, 250);
+  await selections(1);
+  await waitFor('the panel', () => app.read('panel', `!!document.querySelector('[data-testid=selection] img')`));
+  await app.eval('panel', `[...document.querySelectorAll('button.macro')].find((b) => b.textContent === 'Explain').click()`);
+  const first = await answered();
+  await waitFor('the drawings', () => app.read('panel', `document.querySelectorAll('.turn.assistant svg.jb-svg').length === 2`));
+  expect(await app.read('panel', `document.querySelectorAll('.turn.assistant path.jb-line').length`)).toBe(1);
+  expect(await app.read('panel', `document.querySelectorAll('.turn.assistant rect.jb-node').length`)).toBe(2);
+  // The form's choice goes back as the next question.
+  await app.eval('panel', `(() => { const b = document.querySelectorAll('.jb-option input')[1]; b.click(); b.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.jb-send').click(); })()`);
+  const next = await answered(first.items.at(-1)!.id);
+  expect(next.items.filter((i) => i.kind === 'user').at(-1)).toMatchObject({ text: 'My answers to the form:\n\nWhich?\nB' });
+});
 
 it('questions are rounded bubbles: copy any, and edit or retry the latest', async () => {
   const model = await fakeModelServer('4');
@@ -982,6 +1018,17 @@ it('the app’s windows load only its own pages: a link can’t take the panel t
   );
   await new Promise((r) => setTimeout(r, 1500));
   expect(await app.read<string>('panel', 'location.href')).toBe(before);
+});
+
+it('opening a page or System Settings from a card says, for a moment, that Escape puts Juno away', async () => {
+  const tip = (label: string) => app.read<string | null>(label, `document.querySelector('.esc-tip.on')?.textContent ?? null`);
+  for (const label of ['settings', 'panel']) {
+    expect(await tip(label)).toBeNull();
+    // What platform/links.ts says when it opens a page (the test opens none).
+    await app.eval(label, `dispatchEvent(new Event('juno:opened-elsewhere'))`);
+    await waitFor(`the tip in ${label}`, async () => (await tip(label)) === 'Esc to close');
+  }
+  await waitFor('the tip gone', async () => (await tip('settings')) === null, 8_000);
 });
 
 it('each window may ask only for what it uses: a card drags only itself, and only the panel and settings open links', async () => {

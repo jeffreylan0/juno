@@ -49,6 +49,8 @@ export interface Settings {
   modelOverride: ModelRef | null;
   /** The model hosted answers use (a key of ANSWER_COST); null: the fast one. */
   hostedModel: string | null;
+  /** The panel's globe starts on: answers may search the web (each search costs; a plan counts it). */
+  searchByDefault: boolean;
   /** What sits in the question box when a selection lands. Short, so it fits. */
   defaultPrompt: string;
   /** The buttons above the question box. Each fills the box and sends. */
@@ -89,12 +91,16 @@ export interface Settings {
   setupDone: boolean;
 }
 
+/** Whether who answers can search the web: the companies' models can (a key or a plan); a local model can't. */
+export const canSearch = (s: Pick<Settings, 'provider'>): boolean => s.provider === 'byok' || s.provider === 'gateway';
+
 export const DEFAULT_SETTINGS: Settings = {
   version: SETTINGS_VERSION,
   provider: 'mock',
   vendor: 'anthropic',
   modelOverride: null,
   hostedModel: null,
+  searchByDefault: false,
   defaultPrompt: DEFAULT_PROMPT,
   macros: DEFAULT_MACROS.map((m) => ({ ...m })),
   sendBehavior: 'prefill',
@@ -206,6 +212,7 @@ export function migrateSettings(stored: unknown): Settings {
   if ((s.version ?? 1) < 6) merged.setupDone = s.provider !== undefined && s.provider !== 'mock';
   if (merged.hostedModel !== null && !Object.hasOwn(ANSWER_COST, merged.hostedModel)) merged.hostedModel = null;
   merged.temporaryByDefault = merged.temporaryByDefault === true;
+  merged.searchByDefault = merged.searchByDefault === true;
   // Set up before there was an intro: it is behind them too.
   if (s.introSeen === undefined) merged.introSeen = merged.setupDone;
   if ((merged.sendBehavior as string) === 'auto-box') merged.sendBehavior = 'auto';

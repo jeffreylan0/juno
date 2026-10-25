@@ -65,6 +65,13 @@ export interface ChatSendMsg {
   question: string;
 }
 
+/** Panel → core: the globe, turned on or off for this chat (web search). */
+export interface ChatSearchMsg {
+  type: 'chat:search';
+  chatId: string;
+  on: boolean;
+}
+
 /**
  * Panel → core: ask the latest question again, in place of it and its
  * answer: as it was (retry), or reworded (`question`: edit).
@@ -195,6 +202,7 @@ export type RuntimeMessage =
   | ChatFinishMsg
   | BarControlMsg
   | ChatSendMsg
+  | ChatSearchMsg
   | ChatStopMsg
   | ChatRetryMsg
   | ChatTemporaryMsg

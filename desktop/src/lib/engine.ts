@@ -50,6 +50,7 @@ import {
   DEFAULT_SETTINGS,
   GATEWAY_URL,
   answerChoiceOf,
+  canSearch,
   hostedModelOf,
   fallbackQuestion,
   getSettings,
@@ -76,6 +77,7 @@ export function reply(work: Promise<unknown>, sendResponse: (value: unknown) => 
 /** The messages the core leaves to the engine (ChatEngine.handle). */
 const SHARED: ReadonlySet<string> = new Set([
   'chat:send',
+  'chat:search',
   'chat:retry',
   'chat:stop',
   'chat:rename',
@@ -221,6 +223,11 @@ export class ChatEngine {
       case 'chat:send':
         void this.sendChat(msg.chatId, msg.question);
         return;
+      case 'chat:search':
+        return reply(
+          serial(async () => void (await updateChat(msg.chatId, (c) => ({ ...c, search: msg.on }), { touch: false }))),
+          sendResponse,
+        );
       case 'chat:retry':
         void this.retryChat(msg.chatId, msg.question);
         return;
@@ -356,19 +363,29 @@ export class ChatEngine {
    * answered question (select, select, ask sends both); earlier questions go
    * along as history, each with the selections it carried. The answer streams
    * into the chat, so it survives the panel closing and shows in the menu.
+   * The model may search the web for it if the chat's globe is on (or, asked
+   * again, if the question first was: `search`).
    */
-  async sendChat(chatId: string, question: string): Promise<void> {
+  async sendChat(chatId: string, question: string, search?: boolean): Promise<void> {
     if (this.streams.has(chatId)) return; // one answer at a time; the panel shows Stop meanwhile
     const controller = new AbortController();
     this.streams.set(chatId, controller);
 
     let answerId = '';
     let text = '';
+    let searching = false;
     const finish = (done: Partial<AssistantItem>, opts = { touch: false, index: false }) =>
       this.serial(() =>
         updateChat(
           chatId,
-          (c) => ({ ...c, items: c.items.map((i) => (i.id === answerId && i.kind === 'assistant' ? { ...i, text, ...done } : i)) }),
+          (c) => ({
+            ...c,
+            items: c.items.map((i) => {
+              if (i.id !== answerId || i.kind !== 'assistant') return i;
+              const { searching: _, ...answer } = i;
+              return { ...answer, text, ...(done.streaming && searching ? { searching } : {}), ...done };
+            }),
+          }),
           opts,
         ),
       );
@@ -380,12 +397,13 @@ export class ChatEngine {
         const settled: Chat = { ...chat, items: chat.items.map(settle) };
         const pending = pendingSelections(settled);
         const q = question.trim() || fallbackQuestion(this.settings);
-        const user: UserItem = { kind: 'user', id: crypto.randomUUID(), at: Date.now(), text: q, selections: pending.map((s) => s.id) };
+        const searching = search ?? (canSearch(this.settings) && (chat.search ?? this.settings.searchByDefault));
+        const user: UserItem = { kind: 'user', id: crypto.randomUUID(), at: Date.now(), text: q, selections: pending.map((s) => s.id), ...(searching ? { search: true } : {}) };
         const answer: AssistantItem = { kind: 'assistant', id: crypto.randomUUID(), at: Date.now(), text: '', streaming: true };
         const saved = await saveChat({ ...settled, items: [...settled.items, user, answer] });
         await replaceGone(saved.dropped.map((c) => c.id));
         await this.noteDropped(saved.dropped);
-        return { chat: settled, pending, q, answerId: answer.id, temporary: !!chat.temporary };
+        return { chat: settled, pending, q, answerId: answer.id, temporary: !!chat.temporary, search: searching };
       });
       if (!setup) return;
       answerId = setup.answerId;
@@ -402,6 +420,7 @@ export class ChatEngine {
         plan: { ...latest.plan, parts: attachments.flatMap((a) => a.parts), question: setup.q, route },
         attachments,
         history,
+        ...(setup.search ? { search: true } : {}),
       };
 
       let dirty = false;
@@ -425,6 +444,9 @@ export class ChatEngine {
           // A temporary chat asks the vendor to keep as little as it allows.
           ephemeral: setup.temporary,
           signal: controller.signal,
+          onSearch: () => {
+            searching = dirty = true;
+          },
         };
         for await (const chunk of callModel(request, route, ctx, {
           provider: current.provider,
@@ -433,6 +455,7 @@ export class ChatEngine {
         })) {
           if (chunk.type === 'delta') {
             text += chunk.text;
+            searching = false;
             dirty = true;
           } else if (chunk.type === 'done') {
             Object.assign(done, { usage: chunk.usage, model: chunk.model });
@@ -479,9 +502,9 @@ export class ChatEngine {
       const asked = chat?.items.at(-2);
       if (!chat || answer?.kind !== 'assistant' || answer.streaming || asked?.kind !== 'user') return null;
       await saveChat({ ...chat, items: chat.items.slice(0, -2) }, { touch: false });
-      return question?.trim() || asked.text;
+      return { text: question?.trim() || asked.text, search: !!asked.search };
     });
-    if (ask !== null) await this.sendChat(chatId, ask);
+    if (ask !== null) await this.sendChat(chatId, ask.text, ask.search);
   }
 
   /** A selection taken back before any question carried it. */
