@@ -1,22 +1,25 @@
 /**
  * Bring-your-own-key provider: Anthropic (Messages API) and OpenAI
- * (chat.completions) with the student's own key. Requests go through the
+ * (Responses API) with the student's own key. Requests go through the
  * Vault (types.ts), which adds the key: in the app the native core does
- * (src-tauri/src/vault.rs), so the key is never in a page.
+ * (src-tauri/src/vault.rs), so the key is never in a page. Both answers are
+ * read by the same code the hosted service uses (shared/vendors.ts), web
+ * search included.
  *
  * Neither vendor trains on API traffic by default. What each keeps, and what
  * a temporary chat changes, is noted at each call below.
  */
 import { SERVER_FALLBACK } from '@shared/models';
 import type { AskRequest, ModelRef } from '@shared/payload';
+import { anthropicReader, anthropicSearch, openAISearch, responsesReader, toAnthropic, toResponses, type AnswerReader } from '@shared/vendors';
 import { COMPANY, estimateCostUsd } from '../router';
-import { cutOff, declined, describeStreamError, ensureVendorOk, vendorFetch } from './errors';
-import { sseData, streamOpenAIChat, toChatMessages, type ChatMessage, type ContentPart } from './openai-compat';
+import { cutOff, declined, describeStreamError, ensureVendorOk, vendorFetch, type VendorName } from './errors';
+import { sseData, toChatMessages, type ChatMessage } from './openai-compat';
 import { ProviderError, type KeyStatus, type KeyVendor, type ProviderContext, type ProviderDriver, type StreamResult, type Vault } from './types';
 
 export const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 export const ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models';
-export const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+export const OPENAI_URL = 'https://api.openai.com/v1/responses';
 export const OPENAI_MODELS_URL = 'https://api.openai.com/v1/models';
 const ANTHROPIC_VERSION = '2023-06-01';
 /** What lets a request carry `fallbacks` (below); the native core sends the same (vault.rs). */
@@ -31,17 +34,6 @@ export const MAX_OUTPUT_TOKENS = 32_000;
 
 /** Models the key's account turned the fallback down for: asked again without it, and remembered. */
 const NO_FALLBACK = new Set<string>();
-
-type CacheControl = { type: 'ephemeral' };
-
-type AnthropicBlock =
-  | { type: 'text'; text: string; cache_control?: CacheControl }
-  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string }; cache_control?: CacheControl };
-
-interface AnthropicMessage {
-  role: 'user' | 'assistant';
-  content: string | AnthropicBlock[];
-}
 
 /** Each company's key headers (the native core adds the same: vault.rs). */
 function keyHeaders(vendor: KeyVendor, key: string): Record<string, string> {
@@ -66,64 +58,42 @@ async function keyed(vault: Vault, vendor: KeyVendor): Promise<typeof fetch> {
   return (input, init) => vault.fetch(vendor, String(input), init ?? {});
 }
 
-function dataUrlToSource(url: string): { media_type: string; data: string } {
-  const m = /^data:([^;]+);base64,(.*)$/s.exec(url);
-  if (!m) throw new ProviderError('Image part is not a base64 data URL', 'unsupported');
-  return { media_type: m[1]!, data: m[2]! };
+/** An Anthropic request for a chat (shared/vendors.ts toAnthropic: the latest question is cached). */
+export function toAnthropicBody(messages: ChatMessage[], model: string, maxTokens = MAX_OUTPUT_TOKENS) {
+  return { model, max_tokens: maxTokens, ...toAnthropic(messages), stream: true as const };
 }
+
+/** A web search costs $10 per 1,000 at either company, on top of the tokens. */
+const SEARCH_USD = 0.01;
 
 /**
- * Converts the shared OpenAI-compatible shape into an Anthropic request body.
- *
- * The last user message carries a prompt-cache breakpoint. A conversation is
- * one growing prefix — system, the selection (often a screenshot), then the
- * turns — so each follow-up reads everything before it from cache at a tenth
- * of the input price instead of paying for the image again. Below the model's
- * minimum (512 tokens on Sonnet, 4096 on Haiku) the marker is simply ignored.
+ * Reads a vendor's streamed answer (shared/vendors.ts): its text, then the
+ * sources it cited; a search starting is passed on (ctx.onSearch). How it
+ * ended decides whether it was an answer at all.
  */
-export function toAnthropicBody(messages: ChatMessage[], model: string, maxTokens = MAX_OUTPUT_TOKENS) {
-  let system = '';
-  const out: AnthropicMessage[] = [];
-  for (const m of messages) {
-    if (m.role === 'system') {
-      system += (system ? '\n\n' : '') + (typeof m.content === 'string' ? m.content : '');
-      continue;
-    }
-    if (typeof m.content === 'string') {
-      out.push({ role: m.role, content: m.content });
-      continue;
-    }
-    const blocks: AnthropicBlock[] = m.content.map((c: ContentPart) =>
-      c.type === 'text'
-        ? { type: 'text', text: c.text }
-        : { type: 'image', source: { type: 'base64', ...dataUrlToSource(c.image_url.url) } },
-    );
-    // In the order toChatMessages puts them: images before the question about them, as Anthropic prefers.
-    out.push({ role: m.role, content: blocks });
+async function* readAnswer(
+  res: Response,
+  reader: AnswerReader,
+  vendor: VendorName,
+  model: string,
+  ctx: ProviderContext,
+): AsyncGenerator<string, StreamResult, void> {
+  for await (const data of sseData(res)) {
+    const step = reader.read(data);
+    if (step.error) throw describeStreamError(vendor, step.error);
+    if (step.searching) ctx.onSearch?.();
+    if (step.text) yield step.text;
   }
-
-  const last = out[out.length - 1];
-  if (last?.role === 'user') {
-    const blocks: AnthropicBlock[] = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : last.content;
-    blocks[blocks.length - 1] = { ...blocks[blocks.length - 1]!, cache_control: { type: 'ephemeral' } };
-    last.content = blocks;
-  }
-  return { model, max_tokens: maxTokens, system, messages: out, stream: true as const };
-}
-
-interface AnthropicUsage {
-  input_tokens?: number;
-  output_tokens?: number;
-  cache_creation_input_tokens?: number;
-  cache_read_input_tokens?: number;
-}
-
-interface AnthropicEvent {
-  type: string;
-  message?: { usage?: AnthropicUsage };
-  delta?: { type?: string; text?: string; stop_reason?: string | null; stop_details?: { category?: string | null } | null };
-  usage?: AnthropicUsage;
-  error?: { type?: string; message?: string };
+  const end = reader.end();
+  // A fallback that answered ends normally; only a decline nothing rescued says `refusal`.
+  if (end.stop === 'refusal') throw declined(vendor === 'Anthropic' ? 'Claude' : 'ChatGPT', end.category);
+  // Even an answer cut short keeps the sources it cited.
+  if (end.sawText && end.sources) yield end.sources;
+  if (end.stop === 'length') throw cutOff(end.sawText);
+  if (!end.sawText) throw new ProviderError(`${vendor} sent back an empty answer. Try again.`, 'empty');
+  const { input, output, cacheRead, cacheWrite } = end.usage;
+  const cost = estimateCostUsd(model, input, output, { read: cacheRead, write: cacheWrite });
+  return { usage: { inputTokens: input, outputTokens: output, costUsd: cost === undefined ? undefined : cost + end.searches * SEARCH_USD } };
 }
 
 /**
@@ -139,7 +109,7 @@ async function* streamAnthropic(
   ctx: ProviderContext,
 ): AsyncGenerator<string, StreamResult, void> {
   const send = await keyed(ctx.vault, 'anthropic');
-  const body = toAnthropicBody(toChatMessages(req), model.model);
+  const body = { ...toAnthropicBody(toChatMessages(req), model.model), ...(req.search ? anthropicSearch() : {}) };
   const call = async (b: object) => {
     const res = await vendorFetch(send, 'Anthropic', ANTHROPIC_URL, {
       method: 'POST',
@@ -164,58 +134,7 @@ async function* streamAnthropic(
   } else {
     res = await call(body);
   }
-  // `input_tokens` counts only what came after the last cache breakpoint;
-  // the cached share is reported separately and billed at its own rate.
-  let plain = 0;
-  let cacheWrite = 0;
-  let cacheRead = 0;
-  let outputTokens = 0;
-  let sawText = false;
-  let stop: string | null | undefined;
-  let category: string | null | undefined;
-  for await (const data of sseData(res)) {
-    let ev: AnthropicEvent;
-    try {
-      ev = JSON.parse(data) as AnthropicEvent;
-    } catch {
-      continue;
-    }
-    switch (ev.type) {
-      case 'message_start': {
-        const u = ev.message?.usage ?? {};
-        plain = u.input_tokens ?? 0;
-        cacheWrite = u.cache_creation_input_tokens ?? 0;
-        cacheRead = u.cache_read_input_tokens ?? 0;
-        outputTokens = u.output_tokens ?? 0;
-        break;
-      }
-      case 'content_block_delta':
-        if (ev.delta?.type === 'text_delta' && ev.delta.text) {
-          sawText = true;
-          yield ev.delta.text;
-        }
-        break;
-      case 'message_delta':
-        outputTokens = ev.usage?.output_tokens ?? outputTokens;
-        stop = ev.delta?.stop_reason ?? stop;
-        category = ev.delta?.stop_details?.category ?? category;
-        break;
-      case 'error':
-        throw describeStreamError('Anthropic', ev.error);
-    }
-  }
-  // A fallback that answered ends normally; only a decline nothing rescued says `refusal`.
-  if (stop === 'refusal') throw declined('Claude', category);
-  if (stop === 'max_tokens') throw cutOff(sawText);
-  if (!sawText) throw new ProviderError('Anthropic sent back an empty answer. Try again.', 'empty');
-  const inputTokens = plain + cacheWrite + cacheRead;
-  return {
-    usage: {
-      inputTokens,
-      outputTokens,
-      costUsd: estimateCostUsd(model.model, inputTokens, outputTokens, { read: cacheRead, write: cacheWrite }),
-    },
-  };
+  return yield* readAnswer(res, anthropicReader(), 'Anthropic', model.model, ctx);
 }
 
 /**
@@ -233,29 +152,38 @@ async function* streamOpenAI(
   const send = await keyed(ctx.vault, 'openai');
   // OpenAI caches long prompt prefixes by itself; nothing to mark. It never
   // trains on API traffic unless the key's organisation opted in. `store:
-  // false` keeps the answer out of its stored completions; a temporary chat
+  // false` keeps the answer out of its stored responses; a temporary chat
   // also asks for the prompt cache to stay in memory, where the model allows.
-  const base = { model: model.model, messages: toChatMessages(req), max_completion_tokens: MAX_OUTPUT_TOKENS, store: false };
+  const body = {
+    model: model.model,
+    input: toResponses(toChatMessages(req)),
+    max_output_tokens: MAX_OUTPUT_TOKENS,
+    store: false,
+    stream: true,
+    ...(req.search ? openAISearch() : {}),
+  };
+  const call = async (b: object) => {
+    const res = await vendorFetch(send, 'OpenAI', OPENAI_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(b),
+      signal: ctx.signal,
+    });
+    await ensureVendorOk(res, 'OpenAI', model.model);
+    return res;
+  };
   const memoryOnly = ctx.ephemeral && !NO_MEMORY_ONLY_CACHE.has(model.model);
-  const call = (body: Record<string, unknown>) =>
-    streamOpenAIChat(send, OPENAI_URL, 'OpenAI', {}, body, ctx.signal);
-  let usage: { inputTokens: number; outputTokens: number; cacheRead?: number };
+  let res: Response;
   try {
-    usage = yield* call(memoryOnly ? { ...base, prompt_cache_retention: 'in_memory' } : base);
+    res = await call(memoryOnly ? { ...body, prompt_cache_retention: 'in_memory' } : body);
   } catch (err) {
     // Refused before a word was streamed, so asking again cannot repeat anything.
     const e = err as ProviderError;
     if (!memoryOnly || e.status !== 400 || !/prompt_cache_retention/.test(`${e.detail ?? ''} ${e.message}`)) throw err;
     NO_MEMORY_ONLY_CACHE.add(model.model);
-    usage = yield* call(base);
+    res = await call(body);
   }
-  return {
-    usage: {
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      costUsd: estimateCostUsd(model.model, usage.inputTokens, usage.outputTokens, { read: usage.cacheRead }),
-    },
-  };
+  return yield* readAnswer(res, responsesReader(), 'OpenAI', model.model, ctx);
 }
 
 export const byokDriver: ProviderDriver = {

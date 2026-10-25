@@ -26,6 +26,8 @@ export const ICON_PATHS = {
   // Round arrow: ask again.
   retry: [['path', {d:"M4 12a8 8 0 1 0 2.6-5.9L4 8.5"}], ['path', {d:"M4 4v4.5h4.5"}]],
   check: [['path', {d:"m5 12.5 4.5 4.5L19 7.5"}]],
+  // Web search.
+  globe: [['circle', {cx:"12",cy:"12",r:"9"}], ['path', {d:"M3 12h18"}], ['path', {d:"M12 3c-2.4 2.5-3.6 5.5-3.6 9s1.2 6.5 3.6 9c2.4-2.5 3.6-5.5 3.6-9S14.4 5.5 12 3z"}]],
 } satisfies Record<string, Shapes>;
 
 export type IconName = keyof typeof ICON_PATHS;

@@ -38,6 +38,8 @@ export interface ProviderContext {
    */
   ephemeral?: boolean;
   signal?: AbortSignal;
+  /** A web search began, for the panel to say so ("Searching the web…"). */
+  onSearch?: () => void;
 }
 
 export interface StreamResult {

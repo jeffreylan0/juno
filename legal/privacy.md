@@ -32,6 +32,8 @@ Juno looks at your screen only when you select something. On macOS it needs Scre
 | A local model | Only the model on your computer (or the address you gave it) | Nothing reaches us or any AI company |
 | Hosted answers (with an account) | Our server on Cloudflare, which passes it to Anthropic or OpenAI with our key | The same as above. Our server keeps no copy of what you asked or the answer, and caches no answer; it counts one answer against your plan |
 
+**If you turn on web search** (the globe), the AI company answering may also search the web for you: the search terms it writes from your question go to its search provider, and what it finds comes back in the answer, with its sources. A local model never searches.
+
 **If you make an account** (optional):
 
 - **Email codes**: your email address, to send you a sign-in code through our email provider ([email provider]).

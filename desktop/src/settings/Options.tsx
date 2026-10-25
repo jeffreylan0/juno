@@ -455,6 +455,20 @@ function AskingSection({ settings, save }: { settings: Settings; save: (patch: P
           }}
         />
       </label>
+
+      <div className="field">
+        <span className="field-label">Web search</span>
+        <label className="check">
+          <input type="checkbox" checked={settings.searchByDefault} data-testid="search-default" onChange={(e) => void save({ searchByDefault: e.target.checked })} />
+          Search the web by default
+        </label>
+        <small className="help">The globe beside the macros turns it on or off for one chat. Answers that search list their sources.</small>
+        {ACCOUNTS && (
+          <small className="help warn" data-testid="search-cost">
+            Your plan's answers left may go down faster with search on: each search takes extra answers to cover what it costs.
+          </small>
+        )}
+      </div>
     </Section>
   );
 }
@@ -624,6 +638,9 @@ function PrivacySection({
               <b>Hosted</b>: through our server, which keeps no copy.
             </li>
           )}
+          <li>
+            <b>Web search</b>: when it's on, the AI's search terms go to its search provider.
+          </li>
           <li>
             <b>Local model</b>: nothing leaves this computer.
           </li>

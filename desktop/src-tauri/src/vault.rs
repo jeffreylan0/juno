@@ -90,7 +90,7 @@ impl Vendor {
     fn ask_path(self) -> &'static str {
         match self {
             Vendor::Anthropic => "/v1/messages",
-            Vendor::OpenAi => "/v1/chat/completions",
+            Vendor::OpenAi => "/v1/responses",
         }
     }
 }
@@ -319,11 +319,12 @@ mod tests {
         let ok = |v, m, u: &str| allowed(v, m, u).is_some();
         assert!(ok(Vendor::Anthropic, "POST", "https://api.anthropic.com/v1/messages"));
         assert!(ok(Vendor::Anthropic, "GET", "https://api.anthropic.com/v1/models?limit=100"));
-        assert!(ok(Vendor::OpenAi, "POST", "https://api.openai.com/v1/chat/completions"));
+        assert!(ok(Vendor::OpenAi, "POST", "https://api.openai.com/v1/responses"));
+        assert!(!ok(Vendor::OpenAi, "POST", "https://api.openai.com/v1/chat/completions"));
         assert!(ok(Vendor::OpenAi, "GET", "https://api.openai.com/v1/models"));
 
         // Another company's address, another host, plain HTTP, another port, a login in the URL.
-        assert!(!ok(Vendor::Anthropic, "POST", "https://api.openai.com/v1/chat/completions"));
+        assert!(!ok(Vendor::Anthropic, "POST", "https://api.openai.com/v1/responses"));
         assert!(!ok(Vendor::OpenAi, "POST", "https://api.anthropic.com/v1/messages"));
         assert!(!ok(Vendor::Anthropic, "POST", "https://api.anthropic.com.example.com/v1/messages"));
         assert!(!ok(Vendor::Anthropic, "POST", "https://example.com/v1/messages"));

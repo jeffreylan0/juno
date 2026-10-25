@@ -1,9 +1,11 @@
 /**
- * OpenAI-compatible chat message shape, used verbatim by OpenAI, Ollama and the
- * Worker, and converted by byok.ts for Anthropic.
+ * The OpenAI chat shape a conversation is built in: sent as it is to a local
+ * model (Ollama) and the Worker, and turned into Anthropic's Messages or
+ * OpenAI's Responses for a key (shared/vendors.ts).
  */
 import type { AskRequest, Attachment, Mode } from '@shared/payload';
 import { DEFAULT_PROMPTS, partToText, splitWhatIRead, systemPrompt } from '@shared/prompts';
+import { sseSplitter } from '@shared/vendors';
 import { cutOff, declined, ensureVendorOk, vendorFetch, type VendorName } from './errors';
 import { ProviderError } from './types';
 
@@ -70,23 +72,12 @@ export async function* sseData(res: Response): AsyncGenerator<string, void, void
   if (!res.body) throw new ProviderError('Response has no body', 'empty', res.status);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  const split = sseSplitter();
   try {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buffer.indexOf('\n\n')) !== -1) {
-        const event = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
-        const data = event
-          .split('\n')
-          .filter((l) => l.startsWith('data:'))
-          .map((l) => l.slice(5).trimStart())
-          .join('\n');
-        if (data) yield data;
-      }
+      yield* split(decoder.decode(value, { stream: true }));
     }
   } finally {
     reader.releaseLock();
@@ -95,12 +86,15 @@ export async function* sseData(res: Response): AsyncGenerator<string, void, void
 
 interface OpenAIChunk {
   choices?: { delta?: { content?: string | null; refusal?: string | null }; finish_reason?: string | null }[];
+  /** The hosted service's own: a web search began (worker/src/models.ts). */
+  searching?: boolean;
   usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | null;
   error?: { message?: string; type?: string; code?: string };
 }
 
 /**
- * Streams an OpenAI-style chat.completions response.
+ * Streams an OpenAI-style chat.completions response: a local model's, or
+ * the hosted service's (which also says when a web search begins: `onSearch`).
  *
  * `vendor` names the server in error messages only. It is deliberately not a
  * request header: any non-standard header makes the browser send a CORS
@@ -113,6 +107,7 @@ export async function* streamOpenAIChat(
   headers: Record<string, string>,
   body: Record<string, unknown>,
   signal?: AbortSignal,
+  onSearch?: () => void,
 ): AsyncGenerator<string, { inputTokens: number; outputTokens: number; cacheRead?: number }, void> {
   const res = await vendorFetch(fetchImpl, vendor, url, {
     method: 'POST',
@@ -135,6 +130,7 @@ export async function* streamOpenAIChat(
       continue;
     }
     if (chunk.error) throw new ProviderError(`${vendor} stopped partway: ${chunk.error.message ?? 'unknown error'}. Try again.`, 'http');
+    if (chunk.searching) onSearch?.();
     finish = chunk.choices?.[0]?.finish_reason ?? finish;
     const delta = chunk.choices?.[0]?.delta;
     const text = delta?.content || delta?.refusal;

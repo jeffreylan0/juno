@@ -91,9 +91,23 @@ export function renderMarkdownFragment(src: string): DocumentFragment {
 
 const SANITIZE = { USE_PROFILES: { html: true, mathMl: true, svg: true }, FORBID_TAGS, FORBID_ATTR };
 
+/**
+ * Code as it is written: fenced blocks (to their closing fence, or the end
+ * of an answer still arriving) and inline spans. Maths is read everywhere
+ * else, never inside code, where `$` and `\(` are just characters (and a
+ * drawn block's JSON: lib/blocks). As in CommonMark, a backtick fence's
+ * first line has no other backtick (```x``` is a span); a span's backticks
+ * are counted only so far, which keeps a long run of them quick.
+ */
+const CODE = /^ {0,3}(?:(`{3,})[^`\n]*|(~{3,})[^\n]*)(?:\n[\s\S]*?)?(?:\n {0,3}(?:\1|\2)[`~]*[ \t]*$|(?![\s\S]))|(`{1,16})[^`\n]+?\3(?!`)/gm;
+
 function markdownHtml(src: string): string {
   const math: string[] = [];
-  let text = src;
+  const code: string[] = [];
+  let text = src.replace(CODE, (m: string) => {
+    code.push(m);
+    return `\u0000CODE${code.length - 1}\u0000`;
+  });
   // Display math first: $$...$$ and \[...\]
   text = text.replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g, (_m, a: string | undefined, b: string | undefined) => {
     math.push(renderMath((a ?? b ?? '').trim(), true));
@@ -104,6 +118,7 @@ function markdownHtml(src: string): string {
     math.push(renderMath((a ?? b ?? '').trim(), false));
     return PLACEHOLDER(math.length - 1);
   });
+  text = text.replace(/\u0000CODE(\d+)\u0000/g, (_m, i: string) => code[Number(i)] ?? '');
   let html = marked.parse(text, { async: false }) as string;
   return html.replace(/\u0000MATH(\d+)\u0000/g, (_m, i: string) => math[Number(i)] ?? '');
 }

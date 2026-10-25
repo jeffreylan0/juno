@@ -23,8 +23,10 @@ export const gatewayDriver: ProviderDriver = {
           messages: toChatMessages(req),
           // A temporary chat: nothing cached anywhere it can be avoided (worker/src/models.ts).
           ...(ctx.ephemeral ? { ephemeral: true } : {}),
+          ...(req.search ? { search: true } : {}),
         },
         ctx.signal,
+        ctx.onSearch,
       );
       return { usage };
     } catch (err) {

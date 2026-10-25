@@ -16,6 +16,7 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 import { browser } from './platform/install';
+import { OPENED_ELSEWHERE } from './platform/links';
 import { MAC } from './os';
 
 /** What on the top bar is a control, not a place to drag the window by. */
@@ -52,6 +53,9 @@ export function cardWindow(opts: CardOptions): void {
 
   // The page's ✕.
   if (opts.onClose) window.close = opts.onClose;
+
+  // Another app's window just opened (OPENED_ELSEWHERE), maybe under this card.
+  addEventListener(OPENED_ELSEWHERE, showEscapeTip);
 
   // Shown by the core again (the panel): its entrance plays again.
   browser.runtime.onMessage.addListener((msg) => {
@@ -98,4 +102,27 @@ export function playEntrance(): void {
     void el.offsetWidth;
     el.style.animation = '';
   }
+}
+
+/** How long "Esc to close" stays. */
+const TIP_MS = 4000;
+let tipTimer = 0;
+
+/** "Esc to close", at the card's top left for a moment (app.css .esc-tip). */
+function showEscapeTip(): void {
+  let tip = document.querySelector<HTMLElement>('.esc-tip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.className = 'esc-tip';
+    tip.setAttribute('role', 'status');
+    tip.dataset.testid = 'esc-tip';
+    tip.textContent = 'Esc to close';
+    document.body.append(tip);
+  }
+  // Laid out before it turns on, so it fades in even while no frame is drawn (a card out of sight).
+  void tip.offsetWidth;
+  tip.classList.add('on');
+  const shown = tip;
+  clearTimeout(tipTimer);
+  tipTimer = window.setTimeout(() => shown.classList.remove('on'), TIP_MS);
 }

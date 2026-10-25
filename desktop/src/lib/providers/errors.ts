@@ -90,6 +90,10 @@ export function describeHttpError(
   if (status >= 500) {
     return make('http', `${vendor} had a server error (${status}). Try again.`);
   }
+  // Web search turned off for the key's organisation, or a model without it.
+  if (/web.?search/i.test(detail)) {
+    return make('unsupported', `${vendor} won't search the web with this key${opts.model ? ` and "${opts.model}"` : ''}. Turn off the globe, or allow web search in ${vendor === 'Anthropic' ? 'the Claude Console' : 'your OpenAI settings'}.`);
+  }
   // A 400 we did not anticipate: the vendor's own words are the best we have.
   return make('http', `${vendor} refused the request${body.message ? `: ${body.message}` : ` (HTTP ${status})`}.`);
 }

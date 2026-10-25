@@ -50,6 +50,14 @@ function sseResponse(events: string[]): Response {
   return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
+/** OpenAI's Responses stream: the text in pieces, then its usage. */
+function openAIAnswer(texts: string[], usage = { input_tokens: 0, output_tokens: 0 }): Response {
+  return sseResponse([
+    ...texts.map((delta) => JSON.stringify({ type: 'response.output_text.delta', delta })),
+    JSON.stringify({ type: 'response.completed', response: { usage } }),
+  ]);
+}
+
 describe('message shape', () => {
   const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA', detail: 'high' } };
   const shot = { parts: [plan().parts[1]!] };
@@ -226,11 +234,7 @@ describe('callModel', () => {
     let calls = 0;
     const fetchMock = (async () => {
       calls++;
-      return sseResponse([
-        JSON.stringify({ choices: [{ delta: { content: 'Read: hi\n\n' } }] }),
-        JSON.stringify({ choices: [{ delta: { content: 'Answer: 4' } }], usage: { prompt_tokens: 10, completion_tokens: 5 } }),
-        '[DONE]',
-      ]);
+      return openAIAnswer(['Read: hi\n\n', 'Answer: 4'], { input_tokens: 10, output_tokens: 5 });
     }) as unknown as typeof fetch;
     const c = ctx({ fetch: fetchMock }, { anthropic: '', openai: 'sk-test' });
     const opts = { provider: 'byok' as const, vendor: 'openai' as const };
@@ -249,7 +253,7 @@ describe('callModel', () => {
     let calls = 0;
     const fetchMock = (async () => {
       calls++;
-      return sseResponse([JSON.stringify({ choices: [{ delta: { content: 'Answer: 4' } }] }), '[DONE]']);
+      return openAIAnswer(['Answer: 4']);
     }) as unknown as typeof fetch;
     const opts = { provider: 'byok' as const, vendor: 'openai' as const };
     const keys = { anthropic: '', openai: 'sk-test' };
@@ -267,7 +271,7 @@ describe('callModel', () => {
   it('explicit model override wins over the route table', async () => {
     const fetchMock = (async (_u: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)) as { model: string };
-      return sseResponse([JSON.stringify({ choices: [{ delta: { content: body.model } }] }), '[DONE]']);
+      return openAIAnswer([body.model]);
     }) as unknown as typeof fetch;
     const c = ctx({ fetch: fetchMock }, { anthropic: '', openai: 'k' });
     const { text } = await collect(

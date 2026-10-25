@@ -217,7 +217,10 @@ describe('settings from before v7', () => {
 
   it('a new install keeps chats in the account; a picked plan model and temporary chats are kept', () => {
     expect(migrateSettings(null).cloudSync).toBe(true);
-    const s = migrateSettings({ version: 7, cloudSync: false, hostedModel: 'claude-opus-5-5', temporaryByDefault: true });
-    expect([s.cloudSync, s.hostedModel, s.temporaryByDefault]).toEqual([false, 'claude-opus-5-5', true]);
+    const s = migrateSettings({ version: 7, cloudSync: false, hostedModel: 'claude-opus-5-5', temporaryByDefault: true, searchByDefault: true });
+    expect([s.cloudSync, s.hostedModel, s.temporaryByDefault, s.searchByDefault]).toEqual([false, 'claude-opus-5-5', true, true]);
+    // Web search is off until turned on: each search costs.
+    expect(migrateSettings({ version: 7 }).searchByDefault).toBe(false);
+    expect(migrateSettings({ version: 7, searchByDefault: 'yes' }).searchByDefault).toBe(false);
   });
 });

@@ -1,7 +1,10 @@
 /**
- * Asks OpenAI or Anthropic with the service's own keys (Worker secrets, never
- * sent anywhere else) and streams the answer back in the OpenAI chat-chunk
- * shape the app already reads (openai-compat.ts), so it has one parser.
+ * Asks OpenAI (Responses) or Anthropic (Messages) with the service's own
+ * keys (Worker secrets, never sent anywhere else) and streams the answer
+ * back in the OpenAI chat-chunk shape the app already reads
+ * (openai-compat.ts), so it has one parser. Both are read by the same code
+ * as the student's own key is (shared/vendors.ts), web search and its
+ * sources included.
  *
  * What may be asked is checked before anything is spent: only the models a
  * plan offers (each answer taking what it costs from the allowance:
@@ -22,6 +25,19 @@
  */
 import { ANSWER_COST, SERVER_FALLBACK, vendorOf } from '@selection-ai/shared/models';
 import { systemPrompt } from '@selection-ai/shared/prompts';
+import {
+  anthropicReader,
+  anthropicSearch,
+  openAISearch,
+  responsesReader,
+  sseSplitter,
+  toAnthropic,
+  toResponses,
+  type AnswerReader,
+  type ChatMessage,
+  type ChatPart,
+  type Ending,
+} from '@selection-ai/shared/vendors';
 import type { Env } from './index';
 
 export interface AskBody {
@@ -30,12 +46,8 @@ export interface AskBody {
   messages: ChatMessage[];
   /** A temporary chat: nothing cached anywhere it can be avoided. */
   ephemeral?: boolean;
-}
-
-type ContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string; detail?: string } };
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string | ContentPart[];
+  /** The student asked with web search on (shared/vendors.ts); each search is paid for (index.ts). */
+  search?: boolean;
 }
 
 /** Models hosted answers may use, by vendor: the ones a plan offers, nothing else. */
@@ -85,7 +97,7 @@ const SYSTEM = systemPrompt('ask');
  * content types, remote image URLs, extra fields) is refused, never passed on.
  */
 export function parseAsk(raw: unknown): { vendor: 'anthropic' | 'openai'; model: string; body: AskBody } {
-  const body = raw as { model?: unknown; messages?: unknown; ephemeral?: unknown } | null;
+  const body = raw as { model?: unknown; messages?: unknown; ephemeral?: unknown; search?: unknown } | null;
   if (!body || typeof body.model !== 'string' || !Array.isArray(body.messages) || body.messages.length === 0) {
     throw new BadRequest('A model and messages are needed.');
   }
@@ -107,7 +119,7 @@ export function parseAsk(raw: unknown): { vendor: 'anthropic' | 'openai'; model:
     if (!Array.isArray(content)) throw malformed();
     return {
       role: role as ChatMessage['role'],
-      content: content.map((p): ContentPart => {
+      content: content.map((p): ChatPart => {
         const part = (p ?? {}) as { type?: unknown; text?: unknown; image_url?: { url?: unknown; detail?: unknown } };
         if (part.type === 'text' && typeof part.text === 'string') {
           text += part.text.length;
@@ -129,7 +141,12 @@ export function parseAsk(raw: unknown): { vendor: 'anthropic' | 'openai'; model:
   return {
     vendor,
     model,
-    body: { model: body.model, messages: [{ role: 'system', content: SYSTEM }, ...messages], ...(body.ephemeral === true ? { ephemeral: true } : {}) },
+    body: {
+      model: body.model,
+      messages: [{ role: 'system', content: SYSTEM }, ...messages],
+      ...(body.ephemeral === true ? { ephemeral: true } : {}),
+      ...(body.search === true ? { search: true } : {}),
+    },
   };
 }
 
@@ -140,7 +157,12 @@ function base(env: Env, vendor: 'anthropic' | 'openai'): string {
 
 function gatewayHeaders(env: Env): Record<string, string> {
   if (!env.AI_GATEWAY_ID) return {};
-  return { 'cf-aig-collect-log': 'false', 'cf-aig-skip-cache': 'true' };
+  return {
+    'cf-aig-collect-log': 'false',
+    'cf-aig-skip-cache': 'true',
+    // An authenticated gateway takes only requests carrying its token (supabase/README.md, step 5).
+    ...(env.AI_GATEWAY_TOKEN ? { 'cf-aig-authorization': `Bearer ${env.AI_GATEWAY_TOKEN}` } : {}),
+  };
 }
 
 /**
@@ -165,22 +187,26 @@ export function scoped(messages: ChatMessage[], scope: string): ChatMessage[] {
   return [{ role: 'system', content: `Chat ${scope}.` }, ...messages];
 }
 
-/** The vendor's response: an error as is, or a 200 whose body is OpenAI-shaped SSE. */
-export async function callVendor(vendor: 'anthropic' | 'openai', model: string, body: AskBody, env: Env, scope: string): Promise<Response> {
+/**
+ * The vendor's own response: an error to say in the student's terms, or its
+ * stream (relay). With `searches`, the model may search the web that many
+ * times at most: what was paid for (index.ts).
+ */
+export async function callVendor(vendor: 'anthropic' | 'openai', model: string, body: AskBody, env: Env, scope: string, searches = 0): Promise<Response> {
   if (vendor === 'openai') {
     const send = (memoryOnly: boolean) =>
-      fetch(`${base(env, 'openai')}/chat/completions`, {
+      fetch(`${base(env, 'openai')}/responses`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${env.OPENAI_API_KEY}`, ...gatewayHeaders(env) },
         body: JSON.stringify({
           model,
-          messages: scoped(body.messages, scope),
-          max_completion_tokens: MAX_OUTPUT_TOKENS,
+          input: toResponses(scoped(body.messages, scope)),
+          max_output_tokens: MAX_OUTPUT_TOKENS,
           store: false,
           stream: true,
-          stream_options: { include_usage: true },
           prompt_cache_key: scope,
           ...(memoryOnly ? { prompt_cache_retention: 'in_memory' } : {}),
+          ...(searches ? openAISearch(searches) : {}),
         }),
       });
     // A temporary chat asks for the prompt cache to stay in memory, as with
@@ -196,7 +222,7 @@ export async function callVendor(vendor: 'anthropic' | 'openai', model: string, 
   }
 
   const { system, messages } = toAnthropic(scoped(body.messages, scope));
-  const res = await fetch(`${base(env, 'anthropic')}/messages`, {
+  return await fetch(`${base(env, 'anthropic')}/messages`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -213,99 +239,73 @@ export async function callVendor(vendor: 'anthropic' | 'openai', model: string, 
       max_tokens: MAX_OUTPUT_TOKENS,
       output_config: { effort: 'low' },
       ...(SERVER_FALLBACK.has(model) ? { fallbacks: 'default' } : {}),
+      ...(searches ? anthropicSearch(searches) : {}),
       stream: true,
     }),
   });
-  if (!res.ok || !res.body) return res;
-  return new Response(res.body.pipeThrough(anthropicToOpenAI()), { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
-type AnthropicBlock =
-  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
-  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string }; cache_control?: { type: 'ephemeral' } };
+/** How a vendor's stream is read (shared/vendors.ts). */
+export const readerFor = (vendor: 'anthropic' | 'openai'): AnswerReader => (vendor === 'openai' ? responsesReader() : anthropicReader());
 
-/** OpenAI messages to Anthropic's: system apart, images as base64 blocks, the last turn cached. */
-export function toAnthropic(input: ChatMessage[]): { system: string; messages: { role: 'user' | 'assistant'; content: string | AnthropicBlock[] }[] } {
-  const text = (c: ChatMessage['content']) => (typeof c === 'string' ? c : c.map((p) => (p.type === 'text' ? p.text : '')).join('\n'));
-  const system = input.filter((m) => m.role === 'system').map((m) => text(m.content)).join('\n\n');
-  const messages = input
-    .filter((m) => m.role !== 'system')
-    .map((m) => {
-      if (typeof m.content === 'string') return { role: m.role as 'user' | 'assistant', content: m.content };
-      const blocks: AnthropicBlock[] = m.content.flatMap((p): AnthropicBlock[] => {
-        if (p.type === 'text') return [{ type: 'text', text: p.text }];
-        const match = /^data:([^;]+);base64,(.*)$/s.exec(p.image_url.url);
-        return match ? [{ type: 'image', source: { type: 'base64', media_type: match[1]!, data: match[2]! } }] : [];
-      });
-      return { role: m.role as 'user' | 'assistant', content: blocks };
-    });
-  // A conversation is one growing prefix: cache up to the latest question.
-  const last = messages[messages.length - 1];
-  if (last && last.role === 'user') {
-    if (typeof last.content === 'string') last.content = [{ type: 'text', text: last.content, cache_control: { type: 'ephemeral' } }];
-    else if (last.content.length) last.content[last.content.length - 1]!.cache_control = { type: 'ephemeral' };
-  }
-  return { system, messages };
-}
-
-/** Anthropic's message events, re-emitted as OpenAI chat chunks with usage at the end. */
-export function anthropicToOpenAI(): TransformStream<Uint8Array, Uint8Array> {
+/**
+ * The vendor's stream, said again as OpenAI chat chunks: the text (with its
+ * sources at the end), a search starting (`searching`, Juno's own), why it
+ * stopped early, then usage and [DONE]. `ended` hears how it went once,
+ * when the stream ends or the student stops it, to settle what the searches
+ * cost.
+ */
+export function relay(upstream: ReadableStream<Uint8Array>, reader: AnswerReader, ended: (end: Ending) => void): ReadableStream<Uint8Array> {
+  const source = upstream.getReader();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
-  let buffer = '';
-  let input = 0;
-  let cached = 0;
-  let output = 0;
-  const send = (c: TransformStreamDefaultController<Uint8Array>, data: unknown) =>
-    c.enqueue(encoder.encode(`data: ${typeof data === 'string' ? data : JSON.stringify(data)}\n\n`));
-
-  return new TransformStream({
-    transform(chunk, controller) {
-      buffer += decoder.decode(chunk, { stream: true });
-      let idx: number;
-      while ((idx = buffer.indexOf('\n\n')) !== -1) {
-        const event = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
-        const data = event
-          .split('\n')
-          .filter((l) => l.startsWith('data:'))
-          .map((l) => l.slice(5).trimStart())
-          .join('\n');
-        if (!data) continue;
-        let msg: {
-          type?: string;
-          delta?: { type?: string; text?: string; stop_reason?: string | null };
-          message?: { usage?: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } };
-          usage?: { output_tokens?: number };
-          error?: { type?: string; message?: string };
-        };
+  const split = sseSplitter();
+  let over = false;
+  const end = () => {
+    const ending = reader.end();
+    if (!over) ended(ending);
+    over = true;
+    return ending;
+  };
+  return new ReadableStream<Uint8Array>({
+    // Reads until there is something to send: a pull that sends nothing isn't called again.
+    async pull(controller) {
+      let sent = false;
+      const send = (data: unknown) => {
+        controller.enqueue(encoder.encode(`data: ${typeof data === 'string' ? data : JSON.stringify(data)}\n\n`));
+        sent = true;
+      };
+      while (true) {
+        let next: ReadableStreamReadResult<Uint8Array>;
         try {
-          msg = JSON.parse(data);
-        } catch {
-          continue;
+          next = await source.read();
+        } catch (err) {
+          // The vendor's stream broke: what it did so far is settled all the same.
+          end();
+          return controller.error(err);
         }
-        if (msg.type === 'message_start') {
-          const u = msg.message?.usage ?? {};
-          cached = u.cache_read_input_tokens ?? 0;
-          input = (u.input_tokens ?? 0) + cached + (u.cache_creation_input_tokens ?? 0);
-        } else if (msg.type === 'content_block_delta' && msg.delta?.type === 'text_delta' && msg.delta.text) {
-          send(controller, { choices: [{ index: 0, delta: { content: msg.delta.text } }] });
-        } else if (msg.type === 'message_delta') {
-          output = msg.usage?.output_tokens ?? output;
-          // Why it stopped, as OpenAI says it: cut off at the limit, or declined by a safeguard.
-          const reason = { max_tokens: 'length', refusal: 'content_filter' }[msg.delta?.stop_reason ?? ''];
-          if (reason) send(controller, { choices: [{ index: 0, delta: {}, finish_reason: reason }] });
-        } else if (msg.type === 'error') {
-          send(controller, { error: { message: msg.error?.message ?? 'The AI stopped partway.', type: msg.error?.type } });
+        if (over) return; // stopped by the student meanwhile
+        const { value, done } = next;
+        if (done) break;
+        for (const data of split(decoder.decode(value, { stream: true }))) {
+          const step = reader.read(data);
+          if (step.searching) send({ choices: [], searching: true });
+          if (step.text) send({ choices: [{ index: 0, delta: { content: step.text } }] });
+          if (step.error) send({ error: { message: step.error.message ?? 'The AI stopped partway.', type: step.error.type } });
         }
+        if (sent) return;
       }
+      const { sources, sawText, stop, usage } = end();
+      if (sawText && sources) send({ choices: [{ index: 0, delta: { content: sources } }] });
+      // Why it stopped, as OpenAI says it: cut off at the limit, or declined by a safeguard.
+      if (stop) send({ choices: [{ index: 0, delta: {}, finish_reason: stop === 'length' ? 'length' : 'content_filter' }] });
+      send({ choices: [], usage: { prompt_tokens: usage.input, completion_tokens: usage.output, prompt_tokens_details: { cached_tokens: usage.cacheRead } } });
+      send('[DONE]');
+      controller.close();
     },
-    flush(controller) {
-      send(controller, {
-        choices: [],
-        usage: { prompt_tokens: input, completion_tokens: output, prompt_tokens_details: { cached_tokens: cached } },
-      });
-      send(controller, '[DONE]');
+    async cancel(reason) {
+      end();
+      await source.cancel(reason);
     },
   });
 }

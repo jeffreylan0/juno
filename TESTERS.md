@@ -75,6 +75,9 @@ In the panel:
 - **⌘⇧O** on a Mac or **Ctrl+Shift+O** on Windows starts a new chat: the current one is finished (and kept in the chat menu), and the bar comes up for the next selection.
 - Scroll up while an answer is coming in and the panel stays where you are; scroll back to the bottom and it follows the answer again.
 - Resize the panel by its edges and it keeps that size from then on. Settings → **Selecting** shows the saved size, with a link to let it grow with the chat again.
+- The **globe** beside the macros lets the answer search the web (with your own Anthropic or OpenAI key, or a plan; not with a local model). Click it to turn it on or off for this chat; Settings → **Asking** → *Search the web by default* chooses how it starts. While it searches, *Searching the web…* shows under the answer, and the answer ends with its **Sources**, numbered and clickable. Each search costs a little: about $0.01 on your own key, and on a plan your answers left go down faster.
+- Answers can **draw**: graphs of functions (point at one to read off its values), bar, line, scatter and pie charts, diagrams with arrows, slides with tabs (click through them), and forms: pick your answers and press **Send**, and your choices go back as your next question. Try "graph y = x² − 4 and mark its roots", "draw the stages of mitosis as a diagram", or "give me three practice questions on this". Wide tables scroll sideways.
+- When Juno opens something outside it (signing in with Google, billing, a link, System Settings), the panel and settings stay in front and show *Esc to close* at their top left for a few seconds.
 - Notices (no key, no connection, an old chat deleted) go by themselves after 5 seconds. Settings → **Chats & privacy** → *Notices in the panel* turns them off; the first one you ever see has a link there.
 
 Settings → **Selecting** → *Where the bar and the panel go* picks a part of the screen for each: click one of the nine squares. The bar sits at that part's outer edge (the bottom of the screen to start), and the panel in its corner or side (top right to start).
@@ -89,7 +92,7 @@ Settings → **Chats & privacy** keeps your chats. With a plan that includes clo
 
 - **Installing:** where did you hesitate or get stuck?
 - **Different apps:** select over PDFs, slides, videos and video calls, websites, full-screen apps and a second monitor.
-- **Answers:** are they to the point? Does math display properly?
+- **Answers:** are they to the point? Does math display properly? Are the graphs, diagrams and forms right, and do they help? With the globe on, are the sources there and useful?
 - **Speed:** how long from letting go to the panel opening, and to the first words of the answer?
 - **Anything else:** anything that flickers, looks off, feels slow or is confusing in settings.
 

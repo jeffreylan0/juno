@@ -82,9 +82,23 @@ npx wrangler secret put OPENAI_API_KEY        # optional, the same way
 npx wrangler deploy
 ```
 
+Web search (the panel's globe) runs on these same keys. Anthropic allows it unless an organization admin turned it off: check **Claude Console → Settings → Capabilities** (web search on; leave domain limits empty). OpenAI's needs nothing to turn on. Each search is billed by the company ($10 per 1,000, plus the pages read) and taken from the student's month by the Worker (README.md, *Plans*), so the spend limits above cover it.
+
 It prints `https://juno.<account>.workers.dev`. Better, give it your own address: Cloudflare → Workers → juno → **Settings → Domains & Routes → Add custom domain** (`api.humanbn.com`). That address is the apps' `WXT_GATEWAY_URL` (step 7) and Stripe's webhook (step 6).
 
-Optional: an **AI Gateway** named `juno` (Cloudflare → AI → AI Gateway) gives rate limits and spend analytics; put your Cloudflare account id in `AI_GATEWAY_ID` in `wrangler.toml` and deploy again. Logging and the response cache are switched off on every request; leave *Cache responses* off in the gateway's settings as well (SECURITY.md, *Prompt caching*).
+Optional: a **Cloudflare AI Gateway** in front of the AI companies shows what hosted answers cost: requests, tokens and dollars per model, day by day. The Worker works the same without it.
+
+1. Cloudflare dashboard → **AI → AI Gateway → Create Gateway**. Name it exactly `juno` (the Worker sends to `…/<account id>/juno/<company>`). Leave *Workers AI Billing* on standard: Juno doesn't use Workers AI.
+2. The gateway → **Settings**:
+   - **Logs**: off. The Worker also asks for no log on every request (`cf-aig-collect-log: false`), so no question, screenshot or answer is ever kept there; the analytics (requests, tokens, cost) don't need logs.
+   - **Cache responses**: off. The Worker skips the cache on every request too: a cached answer could reach another student (SECURITY.md, *Prompt caching*).
+   - **Rate limiting**: off, or a generous backstop (say 600 requests a minute); the Worker's per-account limit is the real one.
+   - **Authenticated Gateway**: select **Create authentication token**, copy the token (it is shown once), and in `worker/` run `npx wrangler secret put AI_GATEWAY_TOKEN` with it. Then turn **Authenticated Gateway** on. Without it, anyone who learns your account id can send requests through the gateway with their own keys, filling its analytics.
+   - Leave **Guardrails**, **DLP** and **provider keys (BYOK)** alone: the Worker sends its own keys with each request, and the others would process students' questions.
+3. Your account id: the dashboard's right-hand column on **Workers & Pages**, or `npx wrangler whoami`. Put it in `AI_GATEWAY_ID` in `worker/wrangler.toml`, then `npx wrangler deploy`.
+4. Check: ask one hosted question in a build. The gateway's **Analytics** shows the request, its tokens and its cost; **Logs** stays empty. If the answer fails with a 401, the token and the *Authenticated Gateway* switch don't match: put the token again, or turn the switch off.
+
+To stop using it, empty `AI_GATEWAY_ID` and deploy: the Worker calls the companies directly again.
 
 ## 6. Stripe
 

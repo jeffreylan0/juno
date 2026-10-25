@@ -7,6 +7,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { BRAND } from '@/brand';
+import { OPENED_ELSEWHERE } from '@/platform/links';
 
 type Access = 'granted' | 'denied' | 'not-needed';
 
@@ -32,7 +33,7 @@ export function Permissions() {
             Off: turn on {BRAND.name} under Screen &amp; System Audio Recording, then restart.
           </p>
           <span className="key-row">
-            <button type="button" className="secondary" onClick={() => void invoke('open_privacy_settings')}>
+            <button type="button" className="secondary" onClick={() => void invoke('open_privacy_settings').then(() => dispatchEvent(new Event(OPENED_ELSEWHERE)))}>
               Open System Settings
             </button>
             <button type="button" className="secondary" onClick={() => void invoke('relaunch')}>

@@ -1,5 +1,6 @@
 /**
- * An answer, rendered from its Markdown (lib/render.ts). While it streams,
+ * An answer, rendered from its Markdown (lib/render.ts), its graphs,
+ * diagrams, forms and slides drawn (lib/blocks). While it streams,
  * its text comes out at an even pace rather than in the bursts the network
  * brings: never far behind (it catches up within about a third of a
  * second), and done as soon as the answer is. An answer already there (one
@@ -7,6 +8,7 @@
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { splitWhatIRead } from '@shared/prompts';
+import { enhanceBlocks } from '@/lib/blocks';
 import { renderMarkdownFragment } from '@/lib/render';
 import { WhatIRead } from './WhatIRead';
 
@@ -21,13 +23,16 @@ export function Answer({ text, streaming, onPaced }: { text: string; streaming: 
   const ref = useRef<HTMLDivElement>(null);
   const after = useRef(onPaced);
   after.current = onPaced;
+  const done = !streaming && paced.length >= text.length;
   // Sanitized nodes, appended; no HTML string is ever assigned to the page.
   useLayoutEffect(() => {
-    ref.current?.replaceChildren(renderMarkdownFragment(body));
+    const nodes = renderMarkdownFragment(body);
+    enhanceBlocks(nodes, done);
+    ref.current?.replaceChildren(nodes);
     after.current?.();
-  }, [body]);
+  }, [body, done]);
   return (
-    <div className={`answer${streaming || paced.length < text.length ? ' streaming' : ''}`}>
+    <div className={`answer${done ? '' : ' streaming'}`}>
       {read !== null && <WhatIRead text={read} />}
       <div className="markdown" ref={ref} />
     </div>

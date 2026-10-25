@@ -3,7 +3,8 @@
  * the fast models: a bigger model's answer takes more (ANSWER_COST). The
  * count and the check are one statement (public.use_answer), so two answers
  * at once cannot both take the last of it; a failed answer is given back
- * (public.refund_answer).
+ * (public.refund_answer). Web searches are taken with their answer, and those
+ * not made given back (index.ts).
  */
 import type { Env } from './index';
 import type { Session } from './auth';
