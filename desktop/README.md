@@ -87,7 +87,7 @@ Because the builds aren't signed with a Developer ID, macOS asks testers to *Ope
 
 ### Updates
 
-Installed copies update themselves from the repository's Releases (Tauri's updater): each looks at `latest.json` in the release called `updates` a minute after it starts and every 6 hours, and installs a newer version only if it carries a valid signature from the update key, once Juno isn't in use. The key's private half never reaches a build, where every package's build code runs: the builds leave the update files unsigned, and the *Test build* workflow's `sign` job signs them with the Tauri CLI alone, under the `release` environment, then checks every signature against the public half before anything is published.
+Installed copies update themselves from the repository's Releases (Tauri's updater): each looks at `latest.json` in the release called `updates` a minute after it starts and every 6 hours, and installs a newer version only if it carries a valid signature from the update key, once Juno isn't in use. The key's private half never reaches a build, where every package's build code runs: the builds leave the update files unsigned, and the *Test build* workflow's `sign` job signs them with the Tauri CLI alone, under the `release` environment, then checks every signature against the public half the builds carry (each build records the one it was made with) before anything is published.
 
 Once:
 
@@ -106,6 +106,12 @@ Each update:
 2. Tag it with a higher version than the last, and push the tag: `git fetch origin main && git tag desktop-v0.2.0 origin/main && git push origin desktop-v0.2.0`. (Not a release made on GitHub's Releases page: the workflow makes the release itself.)
 3. Actions → *Test build* → the run for that tag: the Mac and Windows builds take about 15 minutes, then *Sign the update files* waits. Open it → *Review deployments* → tick `release` → *Approve and deploy*.
 4. It signs, checks the signatures, publishes the prerelease `desktop-v0.2.0` (installers, update files, `SHA256SUMS`) and points `latest.json` in `updates` at it. Installed copies take it within 6 hours; Settings → Juno → *Check now* looks at once.
+
+**If *Sign the update files* fails** with "signed with update key A, but the builds carry the public half of key B", the private key the release signs with and the public half the builds were made with are not one pair. Each key has an id, which its `.pub` names on its first line (`base64 -d < ~/.tauri/juno-updates.key.pub`, or the `TAURI_UPDATER_PUBKEY` variable's value through `base64 -d`); the error names both. Then:
+
+- **Your key file's `.pub` is key B** (the builds are right): the release signed with another private key. Put the contents of `juno-updates.key` in the `release` environment's `TAURI_SIGNING_PRIVATE_KEY`, with its password in `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and delete any repository secret of either name (Settings → Secrets and variables → Actions → *Secrets*), which a job uses when its environment has none. Then the run → *Re-run failed jobs*: only the signing runs again, and the builds stay as they are.
+- **Your key file is key A, or B's private half is lost**: set `TAURI_UPDATER_PUBKEY` to the contents of the `.pub` that goes with the private key in the environment, and push a new tag with a higher version. The builds carry the public half they were made with, so they have to be made again; re-running only the signing would be checked against the old one and fail again.
+- **Neither file is to hand**: make a new pair (step 1) and set both halves from it (steps 2 and 3), then push a new tag. Copies installed from builds that carried the old public half reinstall once.
 
 A tag whose key or public half is missing still builds and publishes the installers, with no update, and the run says so. The releases must stay public: installed copies download without signing in. A version lower than the installed one is never installed. Builds made before step 3 have no key, so testers reinstall once; every later build updates itself. Until the Mac app is signed with a Developer ID, each update is a new app to macOS, which asks for Screen Recording again after it (the bar says so); a Developer ID ends that.
 

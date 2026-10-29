@@ -26,7 +26,11 @@ name: Test build
 # for an owner's approval; the release then gets the update files and
 # latest.json goes to the `updates` release, where installed apps look for a
 # new version. Any other run signs with a throwaway key, to show the signing
-# works. Every signature is checked against the public half first.
+# works. Every signature is checked first against the public half the builds
+# carry (each records what it was built with), which is what installed copies
+# will check: never the variable as it is at signing, which may have changed
+# since. A key fixed after a failed signing therefore needs only the signing
+# re-run if it was the private half; a new public half needs new builds.
 on:
   workflow_dispatch:
   push:
@@ -137,6 +141,12 @@ jobs:
           name: installer-${{ matrix.asset }}
           path: out/*
           if-no-files-found: error
+      # What this build was made with (its version, and the update key's public half it trusts), for `sign` to check against.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: build-config-${{ matrix.asset }}
+          path: desktop/src-tauri/release.conf.json
+          if-no-files-found: error
       - if: matrix.app != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -174,6 +184,23 @@ jobs:
         with:
           name: installer-windows-setup.exe
           path: windows
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: build-config-mac.dmg
+          path: config/mac
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: build-config-windows-setup.exe
+          path: config/windows
+      - name: The update key's public half the builds carry
+        run: |
+          # Each build's own, else tauri.conf.json's (what a build without the variable used); the two builds must agree.
+          node -e '
+            const fs = require("fs");
+            const fallback = require("./desktop/src-tauri/tauri.conf.json").plugins?.updater?.pubkey ?? "";
+            const [mac, windows] = ["mac", "windows"].map((b) => JSON.parse(fs.readFileSync(`config/${b}/release.conf.json`, "utf8")).plugins?.updater?.pubkey ?? fallback);
+            if (mac !== windows) { console.log("::error::The Mac and Windows builds carry different update keys: build again from a new tag."); process.exit(1); }
+            fs.writeFileSync(process.env.GITHUB_ENV, `BUILT_PUBKEY=${mac}\n`, { flag: "a" });'
       - name: The Tauri CLI, alone, at the lockfile's version
         run: |
           v=$(node -e 'const m = /\x27@tauri-apps\/cli\x27:\s*\n\s*specifier:[^\n]*\n\s*version:\s*([0-9.]+)/.exec(require("fs").readFileSync("pnpm-lock.yaml", "utf8")); if (!m) process.exit(1); console.log(m[1])')
@@ -188,11 +215,14 @@ jobs:
           PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
         run: |
           if [ "$RELEASE" = true ]; then
-            pubkey=${PUBKEY:-$(node -p "require('./desktop/src-tauri/tauri.conf.json').plugins.updater.pubkey")}
+            pubkey=$BUILT_PUBKEY
             if [ -z "$KEY" ] || [ -z "$pubkey" ]; then
-              echo "::warning::No update for this version: the update key's private half (the release environment's TAURI_SIGNING_PRIVATE_KEY secret) or its public half (the TAURI_UPDATER_PUBKEY variable) is missing (desktop/README.md, Updates)."
+              echo "::warning::No update for this version: the update key's private half (the release environment's TAURI_SIGNING_PRIVATE_KEY secret) is missing, or the builds were made without its public half (the TAURI_UPDATER_PUBKEY variable) (desktop/README.md, Updates)."
               echo "signed=false" >> "$GITHUB_OUTPUT"
               exit 0
+            fi
+            if [ -n "$PUBKEY" ] && [ "$PUBKEY" != "$pubkey" ]; then
+              echo "::warning::TAURI_UPDATER_PUBKEY has changed since these builds were made; they carry the key they were built with, and this version is checked against that. The next tag builds with the new one."
             fi
             export TAURI_SIGNING_PRIVATE_KEY="$KEY" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$KEY_PASSWORD"
           else

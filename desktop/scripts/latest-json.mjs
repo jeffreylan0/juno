@@ -3,9 +3,11 @@
  * from the signed update files in a release folder: the Mac app as a .tar.gz
  * (one universal build for both kinds of Mac) and the Windows installer, each
  * with its .sig. Every signature is checked first against the update key's
- * public half, as installed apps will check it: a file signed with the wrong
- * key, or changed after signing, stops the release here rather than leaving
- * every installed copy unable to update.
+ * public half, the one the builds carry, as installed apps will check it: a
+ * file signed with another key, or changed after signing, stops the release
+ * here rather than leaving every installed copy unable to update. A file
+ * signed with another key says which key each is (as minisign names keys),
+ * so the half that's wrong can be found.
  *
  *   node desktop/scripts/latest-json.mjs <folder> <release tag> <owner/repo> <public key>
  */
@@ -22,30 +24,40 @@ const bytes = (line) => Buffer.from(line.trim(), 'base64');
 
 const key = bytes(lines(pubkey)[1] ?? ''); // "Ed", key id (8), Ed25519 public key (32)
 if (key.length !== 42) throw new Error('the public key is not a minisign key');
+/** A key id as minisign and `tauri signer` print it: its 8 bytes, last first, in hex. */
+const idOf = (keyNum) => Buffer.from(keyNum).reverse().toString('hex').toUpperCase();
 const publicKey = createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: key.subarray(10).toString('base64url') }, format: 'jwk' });
 
-/** Whether `file` carries a good signature by this key: minisign's, as the updater checks it. */
-function signedByKey(file, sigText) {
+/**
+ * Why `file`'s signature isn't a good one by this key, as the updater checks
+ * it (minisign's); null when it is.
+ */
+function badSignature(file, sigText) {
   const [, sigLine = '', trusted = '', globalLine = ''] = lines(sigText);
   const sig = bytes(sigLine); // "ED" (hashed) or "Ed", key id (8), signature (64)
   const algorithm = sig.subarray(0, 2).toString();
-  if (sig.length !== 74 || !['ED', 'Ed'].includes(algorithm) || !sig.subarray(2, 10).equals(key.subarray(2, 10))) return false;
-  if (!trusted.startsWith('trusted comment: ')) return false;
+  if (sig.length !== 74 || !['ED', 'Ed'].includes(algorithm) || !trusted.startsWith('trusted comment: ')) return 'its signature is not a minisign signature';
+  if (!sig.subarray(2, 10).equals(key.subarray(2, 10))) {
+    return (
+      `it was signed with update key ${idOf(sig.subarray(2, 10))}, but the builds carry the public half of key ${idOf(key.subarray(2, 10))}. ` +
+      'The private key the release signs with (TAURI_SIGNING_PRIVATE_KEY, in the `release` environment, or a repository secret of that name if the environment has none) ' +
+      'and the public half (the TAURI_UPDATER_PUBKEY variable) are not one pair: desktop/README.md, Updates, says how to tell which is wrong'
+    );
+  }
   const data = readFileSync(file);
   const message = algorithm === 'ED' ? createHash('blake2b512').update(data).digest() : data;
   const signature = sig.subarray(10);
   const comment = trusted.slice('trusted comment: '.length);
-  return (
-    verify(null, message, publicKey, signature) &&
-    verify(null, Buffer.concat([signature, Buffer.from(comment)]), publicKey, bytes(globalLine))
-  );
+  const good = verify(null, message, publicKey, signature) && verify(null, Buffer.concat([signature, Buffer.from(comment)]), publicKey, bytes(globalLine));
+  return good ? null : `its signature by key ${idOf(key.subarray(2, 10))} doesn't match it: the file changed after it was signed`;
 }
 
 const files = readdirSync(dir);
 const signed = (ending) => files.find((f) => f.endsWith(`${ending}.sig`))?.slice(0, -'.sig'.length);
 const entry = (file) => {
   const signature = readFileSync(join(dir, `${file}.sig`), 'utf8').trim();
-  if (!signedByKey(join(dir, file), signature)) throw new Error(`${file}: its signature doesn't match the update key's public half`);
+  const bad = badSignature(join(dir, file), signature);
+  if (bad) throw new Error(`${file}: ${bad}.`);
   return { signature, url: `https://github.com/${repo}/releases/download/${tag}/${file}` };
 };
 
